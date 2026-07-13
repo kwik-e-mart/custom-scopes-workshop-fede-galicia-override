@@ -1,0 +1,7 @@
+# Copy to backend_override.tf (gitignored) to enable remote S3 state.
+# The empty backend block is filled at init time from backend.tfbackend:
+#   tofu init -backend-config=backend.tfbackend
+# Without this override the config uses local state (fine for a quick workshop run).
+terraform {
+  backend "s3" {}
+}

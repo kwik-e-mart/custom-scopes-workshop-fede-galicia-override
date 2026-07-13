@@ -157,3 +157,18 @@ testing/docker/certs/
 
 # Superpowers specs and implementation plans (local-only)
 docs/superpowers/
+
+# Terraform / OpenTofu state & secrets
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.tfbackend
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+backend-local.tf

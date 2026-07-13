@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+
+# Central router: parses the notification and dispatches to the service or link handler.
+
+if [ -z "${NP_ACTION_CONTEXT:-}" ]; then
+  echo "NP_ACTION_CONTEXT is not set. Exiting." >&2
+  exit 1
+fi
+
+CLEAN_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
+export NP_ACTION_CONTEXT="$CLEAN_CONTEXT"
+
+export CONTEXT=$(echo "$CLEAN_CONTEXT" | jq '.notification')
+export SERVICE_ACTION=$(echo "$CONTEXT" | jq -r '.slug')
+export SERVICE_ACTION_TYPE=$(echo "$CONTEXT" | jq -r '.type')
+export NOTIFICATION_ACTION=$(echo "$CONTEXT" | jq -r '.action')
+export LINK=$(echo "$CONTEXT" | jq '.link')
+
+# A link action carries a non-null .link; everything else is a service action.
+ACTION_SOURCE=service
+IS_LINK_ACTION=$(echo "$CONTEXT" | jq '.link != null')
+if [ "$IS_LINK_ACTION" = "true" ]; then
+  ACTION_SOURCE=link
+fi
+
+export WORKING_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SERVICE_PATH=""
+OVERRIDES_PATH=""
+for arg in "$@"; do
+  case $arg in
+    --service-path=*)
+      SERVICE_PATH="${arg#*=}"
+      ;;
+    --overrides-path=*)
+      OVERRIDES_PATH="${arg#*=}"
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
+
+SERVICE_PATH="${SERVICE_PATH:-$(dirname "$WORKING_DIRECTORY")}"
+OVERRIDES_PATH="${OVERRIDES_PATH:-$SERVICE_PATH/overrides}"
+
+export SERVICE_PATH
+export OVERRIDES_PATH
+export ACTION_SOURCE
+
+np service-action exec --live-output --live-report --script="$WORKING_DIRECTORY/$ACTION_SOURCE"

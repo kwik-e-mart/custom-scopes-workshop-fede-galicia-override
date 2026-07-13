@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+
+# No-op action: logs ok so the action completes successfully without doing anything.
+echo "✅ jwt ${NOOP_ACTION:-action}: ok (no-op)"

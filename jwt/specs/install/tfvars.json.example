@@ -1,0 +1,9 @@
+{
+  "np_api_key": "REPLACE_WITH_PROVIDER_API_KEY",
+  "agent_api_key": "REPLACE_WITH_AGENT_API_KEY",
+  "nrn": "organization=REPLACE:account=REPLACE",
+  "tags_selectors": { "environment": "REPLACE" },
+  "repository_service_spec_repo": "custom-scopes-workshop-fede-galicia-override",
+  "service_path": "jwt",
+  "extra_visible_to_nrns": []
+}

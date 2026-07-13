@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "Executing service action=$SERVICE_ACTION type=$SERVICE_ACTION_TYPE"
+
+# Default actions (create/update/delete/read) map by type; custom actions map by slug.
+ACTION_TO_EXECUTE="$SERVICE_ACTION_TYPE"
+case "$SERVICE_ACTION_TYPE" in
+  "custom")
+    ACTION_TO_EXECUTE="$SERVICE_ACTION"
+    ;;
+esac
+
+# The action name becomes part of a filesystem path and a command; it comes from the
+# notification payload, so allowlist it to avoid path traversal / command injection.
+if [[ ! "$ACTION_TO_EXECUTE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "❌ Invalid action name: '$ACTION_TO_EXECUTE'" >&2
+  echo "💡 Action names must match ^[a-zA-Z0-9_-]+$ (came from the notification slug/type)." >&2
+  exit 1
+fi
+
+WORKFLOW_PATH="$SERVICE_PATH/workflows/$ACTION_TO_EXECUTE.yaml"
+OVERRIDES_WORKFLOW_PATH="$OVERRIDES_PATH/workflows/$ACTION_TO_EXECUTE.yaml"
+VALUES_PATH="$SERVICE_PATH/values.yaml"
+
+echo "Executing workflow: $WORKFLOW_PATH"
+if [[ -f "$OVERRIDES_WORKFLOW_PATH" ]]; then
+  np service workflow exec --workflow "$WORKFLOW_PATH" --values "$VALUES_PATH" --overrides "$OVERRIDES_WORKFLOW_PATH"
+else
+  np service workflow exec --workflow "$WORKFLOW_PATH" --values "$VALUES_PATH"
+fi

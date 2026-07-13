@@ -1,0 +1,7 @@
+# Copy to backend.tfbackend and use with: tofu init -backend-config=backend.tfbackend
+# Requires an S3 backend block enabled (see backend_override.tf.example).
+bucket  = "REPLACE_WITH_TFSTATE_BUCKET"
+key     = "nullplatform/jwt/terraform.tfstate"
+region  = "us-east-1"
+profile = "REPLACE_WITH_AWS_PROFILE"
+encrypt = true
