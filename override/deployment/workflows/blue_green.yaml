@@ -1,0 +1,5 @@
+steps:
+  - name: mount_certificates
+    type: script
+    after: create deployment
+    file: "$OVERRIDES_PATH/deployment/scripts/mount_certificates"

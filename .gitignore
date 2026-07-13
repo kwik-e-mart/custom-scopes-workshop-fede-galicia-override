@@ -1,5 +1,5 @@
 # Logs
-logs
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -132,3 +132,28 @@ dist
 # Intellij
 
 .idea
+k8s/output
+np-agent-manifest.yaml
+.minikube_mount_pid
+
+# Git worktrees
+.worktrees/
+.DS_Store
+# Integration test runtime data
+frontend/deployment/tests/integration/volume/
+
+# Terraform/OpenTofu
+.terraform/
+.terraform.lock.hcl
+
+# Generated test certificates
+testing/docker/certs/
+
+# Claude Code
+.claude/
+
+# Visual Studio Code
+.vscode/
+
+# Superpowers specs and implementation plans (local-only)
+docs/superpowers/
