@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "local-mcp": {
+            "command": "node",
+            "args": [
+		        "/usr/src/app/index_cmd.js"
+            ]
+        }
+    }
+}

@@ -1,0 +1,32 @@
+trigger:
+- main
+
+pool: Default
+
+variables:
+- group: nullplatform-${{ variables['Build.DefinitionName'] }}
+
+jobs:
+- job: build
+  steps:
+  - script: curl https://cli.nullplatform.com/install.sh | sh
+    displayName: 'Install nullplatform CLI'
+
+  - script: np build start
+    displayName: 'Start nullplatform CI'
+    env:
+      NULLPLATFORM_API_KEY: $(NULLPLATFORM_API_KEY)
+
+  - script: docker build -t main .
+    displayName: 'Build asset'
+
+  - script: np asset push --type docker-image --source main
+    displayName: 'Push asset'
+    env:
+      NULLPLATFORM_API_KEY: $(NULLPLATFORM_API_KEY)
+
+  - script: np build update --status $(if [ "$(Agent.JobStatus)" = "Failed" ] || [ "$(Agent.JobStatus)" = "Canceled" ]; then echo "failed"; else echo "successful"; fi)
+    displayName: 'End nullplatform CI'
+    condition: always()
+    env:
+      NULLPLATFORM_API_KEY: $(NULLPLATFORM_API_KEY)

@@ -1,0 +1,23 @@
+default:
+  tags:
+    - $RUNNER_TAG
+
+build:
+  stage: build
+  image: public.ecr.aws/nullplatform/np-cli:kaniko
+  script:
+    - /np build start
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --no-push --tarPath image.tar --destination foo:1
+    - /np asset push --type docker-image --source image.tar
+    - /np build update --status=successful
+  except:
+    - tags
+
+build-failed:
+  stage: build
+  image: public.ecr.aws/nullplatform/np-cli:kaniko
+  script:
+    - /np build update --status=failed
+  except:
+    - tags
+  when: on_failure

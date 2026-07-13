@@ -1,0 +1,28 @@
+name: ci-nullplatform
+env:
+  NULLPLATFORM_API_KEY: ${{ secrets.NULLPLATFORM_API_KEY }}
+on:
+  push:
+    branches:
+      - main
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install nullplatform cli
+        run: curl https://cli.nullplatform.com/install.sh | sh
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Start nullplatform CI
+        run: np build start
+      - name: Build asset
+        run: docker build -t main . 
+      - name: Push asset
+        run: np asset push --type docker-image --source main
+      - name: End nullplatform CI
+        if: ${{ always() }}
+        run: np build update --status ${{ contains(fromJSON('["failure", "cancelled"]'), job.status) && 'failed' || 'successful' }}
