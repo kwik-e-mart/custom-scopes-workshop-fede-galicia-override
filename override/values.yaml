@@ -1,5 +1,5 @@
 configuration:
-  MOUNTS:
+  CABANCO_MOUNTS:
     - name: cakeystore
       secretName: secret-cabanco-keystore
       mode: 420

@@ -38,4 +38,4 @@ if ! has_jwt_link_for_scope; then
   exit 0
 fi
 
-mount_files "jwt secret" "$MOUNTS"
+mount_files "jwt secret" "$JWT_MOUNTS"

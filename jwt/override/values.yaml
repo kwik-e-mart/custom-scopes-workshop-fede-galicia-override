@@ -1,6 +1,6 @@
 configuration:
   LINK_SPECIFICATION_ID: 3daa410c-0068-49cf-ba87-170c561288b9
-  MOUNTS:
+  JWT_MOUNTS:
     - name: jwt-secret
       secretName: jwt-secret
       mode: 420
