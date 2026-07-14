@@ -8,7 +8,7 @@
     },
     "values": {}
   },
-  "name": "Acceso a servicios pom",
+  "name": "Servicios POM",
   "unique": false,
   "use_default_actions": true
 }

@@ -9,14 +9,14 @@
     "values": {}
   },
   "dimensions": {},
-  "name": "Acceso a servicios pom",
+  "name": "Servicios POM",
   "selectors": {
-    "category": "any",
+    "category": "APIs y servicios del banco",
     "imported": false,
     "provider": "any",
-    "sub_category": "any"
+    "sub_category": "JWT para acceso a servicios POM"
   },
-  "slug": "pom-services-pom",
+  "slug": "pom-services",
   "type": "dependency",
   "use_default_actions": true
 }

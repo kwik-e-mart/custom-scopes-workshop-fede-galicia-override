@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "✅ pom-services: ok (no-op)"

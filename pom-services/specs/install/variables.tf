@@ -28,7 +28,7 @@ variable "repository_service_spec_repo" {
 
 variable "service_path" {
   type        = string
-  default     = "pom-services-pom"
+  default     = "pom-services"
   description = "Path to the service directory within the repository."
 }
 

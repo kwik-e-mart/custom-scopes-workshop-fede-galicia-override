@@ -1,4 +1,4 @@
-# Registers the pom-services-pom service specification + link specification from the
+# Registers the pom-services service specification + link specification from the
 # local specs/, then associates a notification channel so an agent handles its actions.
 # Modules: nullplatform/tofu-modules//nullplatform/{service_definition,service_definition_agent_association}
 
@@ -6,7 +6,7 @@ module "service_definition" {
   source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition?ref=v6.3.0"
 
   nrn          = var.nrn
-  service_name = "Acceso a servicios pom"
+  service_name = "Servicios POM"
   service_path = var.service_path
 
   # Read the specs from this repo instead of fetching them from git.
@@ -16,7 +16,7 @@ module "service_definition" {
 
   # No custom actions — the service and link use their default actions.
   available_actions = []
-  available_links   = ["pom-services-pom"]
+  available_links   = ["pom-services"]
 
   extra_visibile_to_nrns = var.extra_visible_to_nrns
 }

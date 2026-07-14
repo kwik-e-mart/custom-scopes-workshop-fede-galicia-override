@@ -11,7 +11,7 @@ has_link_for_scope() {
   dimensions=$(echo "$CONTEXT" | jq -c '.scope.dimensions // {}')
 
   existing_links=$(np link list --nrn "$application_nrn" --format json --show-descendants | jq -c \
-    --arg spec "$POM_SERVICES_POM_LINK_SPECIFICATION_ID" \
+    --arg spec "$POM_SERVICES_LINK_SPECIFICATION_ID" \
     --arg app "$application_nrn" \
     --arg scope "$scope_nrn" \
     --argjson dims "$dimensions" '
@@ -34,8 +34,8 @@ has_link_for_scope() {
 }
 
 if ! has_link_for_scope; then
-  echo "ℹ️ No pom-services-pom link associated to this scope — skipping jwt-secret mount"
+  echo "ℹ️ No pom-services link associated to this scope — skipping jwt-secret mount"
   exit 0
 fi
 
-mount_files "pom-services-pom" "$POM_SERVICES_POM_MOUNTS"
+mount_files "pom-services" "$POM_SERVICES_MOUNTS"
