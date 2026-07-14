@@ -9,5 +9,5 @@ tags_selectors = {
 }
 
 repository_service_spec_repo = "custom-scopes-workshop-fede-galicia-override"
-service_path                 = "jwt"
+service_path                 = "pom-services-pom"
 extra_visible_to_nrns        = []

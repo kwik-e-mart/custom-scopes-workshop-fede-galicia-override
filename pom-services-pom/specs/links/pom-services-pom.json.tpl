@@ -8,7 +8,7 @@
     },
     "values": {}
   },
-  "name": "jwt",
+  "name": "Acceso a servicios pom",
   "unique": false,
   "use_default_actions": true
 }

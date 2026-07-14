@@ -1,6 +1,6 @@
 configuration:
-  LINK_SPECIFICATION_ID: 3daa410c-0068-49cf-ba87-170c561288b9
-  JWT_MOUNTS:
+  POM_SERVICES_POM_LINK_SPECIFICATION_ID: 3daa410c-0068-49cf-ba87-170c561288b9
+  POM_SERVICES_POM_MOUNTS:
     - name: jwt-secret
       secretName: jwt-secret
       mode: 420

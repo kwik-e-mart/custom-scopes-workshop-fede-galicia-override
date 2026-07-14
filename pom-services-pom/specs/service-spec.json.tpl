@@ -9,14 +9,14 @@
     "values": {}
   },
   "dimensions": {},
-  "name": "jwt",
+  "name": "Acceso a servicios pom",
   "selectors": {
     "category": "any",
     "imported": false,
     "provider": "any",
     "sub_category": "any"
   },
-  "slug": "jwt",
+  "slug": "pom-services-pom",
   "type": "dependency",
   "use_default_actions": true
 }
