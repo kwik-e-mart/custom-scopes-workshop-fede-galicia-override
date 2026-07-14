@@ -24,8 +24,9 @@ mount_files() {
   local secret_names unique_missing missing=()
 
   MOUNT_FILES_VOLUMES=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "secret": {"secretName": .secretName, "defaultMode": .mode}}]')
-  export MOUNT_FILES_VOLUMES
   MOUNT_FILES_VOLUME_MOUNTS=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "readOnly": .readOnly, "mountPath": .path}]')
+
+  export MOUNT_FILES_VOLUMES
   export MOUNT_FILES_VOLUME_MOUNTS
 
   secret_names=$(echo "$mounts" | yq eval '.[] | select(.secretName) | .secretName')
