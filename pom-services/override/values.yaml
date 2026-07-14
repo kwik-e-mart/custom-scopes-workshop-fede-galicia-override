@@ -1,5 +1,5 @@
 configuration:
-  POM_SERVICES_LINK_SPECIFICATION_ID: c0d9a623-323d-4f4e-b010-0c4c33bf076b
+  POM_SERVICES_LINK_SPECIFICATION_ID: 76aad5e0-aecf-48e3-80b1-be50bb8302c9
   POM_SERVICES_MOUNTS:
     - name: jwt-secret
       secretName: jwt-secret
