@@ -3,7 +3,7 @@
 # Modules: nullplatform/tofu-modules//nullplatform/{service_definition,service_definition_agent_association}
 
 module "service_definition" {
-  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition?ref=v6.2.1"
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition?ref=v6.3.0"
 
   nrn          = var.nrn
   service_name = "jwt"
@@ -22,7 +22,7 @@ module "service_definition" {
 }
 
 module "service_definition_agent_association" {
-  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition_agent_association?ref=v6.2.1"
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition_agent_association?ref=v6.3.0"
 
   nrn                          = var.nrn
   api_key                      = var.agent_api_key
