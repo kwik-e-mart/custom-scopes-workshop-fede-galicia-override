@@ -18,16 +18,16 @@ fi
 if ! type -t mount_files >/dev/null 2>&1; then
 mount_files() {
   local description="$1"
-  local volumes="$2"
-  local volume_mounts="$3"
+  local mounts="$2"
 
-  export MOUNT_FILES_VOLUMES="$volumes"
-  export MOUNT_FILES_VOLUME_MOUNTS="$volume_mounts"
+  export MOUNT_FILES_VOLUMES MOUNT_FILES_VOLUME_MOUNTS
+  MOUNT_FILES_VOLUMES=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "secret": {"secretName": .secretName, "defaultMode": .mode}}]')
+  MOUNT_FILES_VOLUME_MOUNTS=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "readOnly": .readOnly, "mountPath": .path}]')
 
   local deployment_file kind pod_spec app_container namespace secret_name m
   local secret_names unique_missing missing=()
 
-  secret_names=$(echo "$volumes" | yq eval '.[] | select(.secret.secretName) | .secret.secretName')
+  secret_names=$(echo "$mounts" | yq eval '.[] | select(.secretName) | .secretName')
 
   for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
     [ -f "$deployment_file" ] || continue

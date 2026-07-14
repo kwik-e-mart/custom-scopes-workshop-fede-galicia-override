@@ -1,45 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Load the shared mount_files logic relative to this script's location.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../../shared/scripts/mount_files"
 
-# Certificate volumes shared at the pod level (Deployment or CronJob pod spec).
-# Defined as block YAML so env() parses them with plain keys and block style.
-CERT_VOLUMES='
-- name: cakeystore
-  secret:
-    secretName: secret-cabanco-keystore
-    defaultMode: 420
-- name: caroot
-  secret:
-    secretName: secret-cabanco-root
-    defaultMode: 420
-- name: caintermedia
-  secret:
-    secretName: secret-cabanco-intermedia
-    defaultMode: 420
-- name: cabanco-chain
-  secret:
-    secretName: secret-cabanco-chain
-    defaultMode: 420
-'
-
-# Mounts injected only into the container named "application".
-CERT_VOLUME_MOUNTS='
-- name: cakeystore
-  readOnly: true
-  mountPath: /opt/cabanco/keystore
-- name: caroot
-  readOnly: true
-  mountPath: /opt/cabanco/caroot
-- name: caintermedia
-  readOnly: true
-  mountPath: /opt/cabanco/caintermedia
-- name: cabanco-chain
-  readOnly: true
-  mountPath: /opt/cabanco/cabanco-chain
-'
-
-mount_files "cabanco certificates" "$CERT_VOLUMES" "$CERT_VOLUME_MOUNTS"
+mount_files "cabanco certificates" "$MOUNTS"

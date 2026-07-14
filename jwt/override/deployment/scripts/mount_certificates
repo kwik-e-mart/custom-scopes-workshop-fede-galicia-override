@@ -4,8 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../../../shared/scripts/mount_files"
 
-LINK_SPECIFICATION_ID=3daa410c-0068-49cf-ba87-170c561288b9
-
 has_jwt_link_for_scope() {
   local application_nrn scope_nrn dimensions existing_links
   application_nrn=$(echo "$CONTEXT" | jq -r .application.nrn)
@@ -40,17 +38,4 @@ if ! has_jwt_link_for_scope; then
   exit 0
 fi
 
-JWT_VOLUMES='
-- name: jwt-secret
-  secret:
-    secretName: jwt-secret
-    defaultMode: 420
-'
-
-JWT_VOLUME_MOUNTS='
-- name: jwt-secret
-  readOnly: true
-  mountPath: /opt/jwt
-'
-
-mount_files "jwt secret" "$JWT_VOLUMES" "$JWT_VOLUME_MOUNTS"
+mount_files "jwt secret" "$MOUNTS"

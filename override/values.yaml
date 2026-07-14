@@ -1,0 +1,22 @@
+configuration:
+  MOUNTS:
+    - name: cakeystore
+      secretName: secret-cabanco-keystore
+      mode: 420
+      path: /opt/cabanco/keystore
+      readOnly: true
+    - name: caroot
+      secretName: secret-cabanco-root
+      mode: 420
+      path: /opt/cabanco/caroot
+      readOnly: true
+    - name: caintermedia
+      secretName: secret-cabanco-intermedia
+      mode: 420
+      path: /opt/cabanco/caintermedia
+      readOnly: true
+    - name: cabanco-chain
+      secretName: secret-cabanco-chain
+      mode: 420
+      path: /opt/cabanco/cabanco-chain
+      readOnly: true
