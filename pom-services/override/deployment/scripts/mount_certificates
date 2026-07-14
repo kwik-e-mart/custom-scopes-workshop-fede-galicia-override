@@ -35,7 +35,7 @@ has_link_for_scope() {
 
 if ! has_link_for_scope; then
   echo "ℹ️ No pom-services link associated to this scope — skipping jwt-secret mount"
-  exit 0
+  return 0
 fi
 
 mount_files "pom-services" "$POM_SERVICES_MOUNTS"
