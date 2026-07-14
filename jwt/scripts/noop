@@ -1,6 +1,4 @@
 #!/bin/bash
 set -euo pipefail
 
-# No-op action: logs ok so the action completes successfully without doing anything.
-# The platform already logs which action/type is running, so no label is needed here.
 echo "✅ jwt: ok (no-op)"

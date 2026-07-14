@@ -1,0 +1,56 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../../shared/scripts/mount_files"
+
+LINK_SPECIFICATION_ID=3daa410c-0068-49cf-ba87-170c561288b9
+
+has_jwt_link_for_scope() {
+  local application_nrn scope_nrn dimensions existing_links
+  application_nrn=$(echo "$CONTEXT" | jq -r .application.nrn)
+  scope_nrn=$(echo "$CONTEXT" | jq -r .scope.nrn)
+  dimensions=$(echo "$CONTEXT" | jq -c '.scope.dimensions // {}')
+
+  existing_links=$(np link list --nrn "$application_nrn" --format json --show-descendants | jq -c \
+    --arg spec "$LINK_SPECIFICATION_ID" \
+    --arg app "$application_nrn" \
+    --arg scope "$scope_nrn" \
+    --argjson dims "$dimensions" '
+    (.results? // .) | map(select(
+      .specification_id == $spec
+      and (
+        .entity_nrn == $scope
+        or (
+          .entity_nrn == $app
+          and ([ (.dimensions // {}) | to_entries[] | .value == ($dims[.key]) ] | all)
+        )
+      )
+    ))
+  ') || {
+    echo "❌ Failed to list links for $application_nrn" >&2
+    exit 1
+  }
+
+  [[ "$(echo "$existing_links" | jq 'length')" -gt 0 ]]
+}
+
+if ! has_jwt_link_for_scope; then
+  echo "ℹ️ No jwt link associated to this scope — skipping jwt-secret mount"
+  exit 0
+fi
+
+JWT_VOLUMES='
+- name: jwt-secret
+  secret:
+    secretName: jwt-secret
+    defaultMode: 420
+'
+
+JWT_VOLUME_MOUNTS='
+- name: jwt-secret
+  readOnly: true
+  mountPath: /opt/jwt
+'
+
+mount_files "jwt secret" "$JWT_VOLUMES" "$JWT_VOLUME_MOUNTS"

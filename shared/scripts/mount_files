@@ -1,58 +1,71 @@
 #!/bin/bash
 set -euo pipefail
 
-# mount_files — shared logic to inject volumes into the pod spec and volumeMounts
-# into the "application" container of every rendered deployment manifest.
-#
-# Usage (source it, then call the function):
-#   source "<repo>/shared/scripts/mount_files"
-#   mount_files "cabanco certificates" "$VOLUMES_YAML" "$VOLUME_MOUNTS_YAML"
-#
-# Parameters:
-#   $1 description   — human-readable label used in log messages
-#   $2 volumes       — block YAML list appended to <pod_spec>.volumes
-#   $3 volume_mounts — block YAML list appended to the "application" container's volumeMounts
-#
-# Reads $OUTPUT_DIR for the deployment-*.yaml files to patch.
+if ! type -t mount_files_secret_exists >/dev/null 2>&1; then
+mount_files_secret_exists() {
+  kubectl get secret "$1" -n "$2" >/dev/null 2>&1
+}
+fi
 
-# Guard so tests can mock the function without it being redefined on source.
+if ! type -t mount_files_namespace_for >/dev/null 2>&1; then
+mount_files_namespace_for() {
+  local ns
+  ns=$(yq eval '.metadata.namespace // ""' "$1")
+  echo "${ns:-${K8S_NAMESPACE:-default}}"
+}
+fi
+
 if ! type -t mount_files >/dev/null 2>&1; then
 mount_files() {
   local description="$1"
   local volumes="$2"
   local volume_mounts="$3"
 
-  # yq's env() reads node content from the environment, so expose the params there.
   export MOUNT_FILES_VOLUMES="$volumes"
   export MOUNT_FILES_VOLUME_MOUNTS="$volume_mounts"
 
-  local deployment_file kind pod_spec app_container
+  local deployment_file kind pod_spec app_container namespace secret_name m
+  local secret_names unique_missing missing=()
+
+  secret_names=$(echo "$volumes" | yq eval '.[] | select(.secret.secretName) | .secret.secretName')
+
+  for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
+    [ -f "$deployment_file" ] || continue
+    namespace=$(mount_files_namespace_for "$deployment_file")
+    while IFS= read -r secret_name; do
+      [ -n "$secret_name" ] || continue
+      if ! mount_files_secret_exists "$secret_name" "$namespace"; then
+        missing+=("$namespace/$secret_name")
+      fi
+    done <<< "$secret_names"
+  done
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    unique_missing=$(printf '%s\n' "${missing[@]}" | sort -u)
+    echo "❌ Cannot mount '$description': the following secrets do not exist in the cluster:" >&2
+    while IFS= read -r m; do echo "   - $m" >&2; done <<< "$unique_missing"
+    echo "🔧 Create the missing secrets, then retry: kubectl get secret -n <namespace>" >&2
+    exit 1
+  fi
+
   for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
     if [ -f "$deployment_file" ]; then
       kind=$(yq eval '.kind' "$deployment_file")
-
       echo "📝 Mounting $description into $deployment_file (kind: $kind)"
 
-      # A CronJob nests the pod spec one level deeper than a Deployment.
       if [ "$kind" = "CronJob" ]; then
         pod_spec=".spec.jobTemplate.spec.template.spec"
       else
         pod_spec=".spec.template.spec"
       fi
 
-      # Fail loudly if there is no "application" container to mount into.
       app_container=$(yq eval "${pod_spec}.containers[] | select(.name == \"application\") | .name" "$deployment_file")
       if [ -z "$app_container" ]; then
         echo "❌ No container named 'application' found in $deployment_file (kind: $kind)" >&2
-        echo "💡 Possible causes:" >&2
-        echo "   - The container was renamed or the manifest uses a different pod-spec path" >&2
-        echo "🔧 How to fix:" >&2
-        echo "   - Inspect containers: yq eval '${pod_spec}.containers[].name' $deployment_file" >&2
+        echo "🔧 Inspect containers: yq eval '${pod_spec}.containers[].name' $deployment_file" >&2
         exit 1
       fi
 
-      # Volumes go on the shared pod spec; volumeMounts only on the "application" container.
-      # unique_by(.name) keeps this idempotent: re-running never duplicates an entry.
       yq eval -i "${pod_spec}.volumes |= ((. // []) + env(MOUNT_FILES_VOLUMES) | unique_by(.name))" "$deployment_file"
       yq eval -i "(${pod_spec}.containers[] | select(.name == \"application\") | .volumeMounts) |= ((. // []) + env(MOUNT_FILES_VOLUME_MOUNTS) | unique_by(.name))" "$deployment_file"
 
