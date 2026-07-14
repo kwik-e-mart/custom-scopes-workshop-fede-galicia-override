@@ -2,5 +2,3 @@ steps:
   - name: "ok"
     type: script
     file: "$SERVICE_PATH/scripts/noop"
-    configuration:
-      NOOP_ACTION: "service read"

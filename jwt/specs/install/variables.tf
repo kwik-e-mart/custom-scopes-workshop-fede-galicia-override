@@ -22,7 +22,7 @@ variable "tags_selectors" {
 
 variable "repository_service_spec_repo" {
   type        = string
-  default     = "custom-scopes-workshop-fede-galicia-override"
+  default     = "kwik-e-mart/custom-scopes-workshop-fede-galicia-override"
   description = "Repository name the agent clones; used to build the entrypoint cmdline path."
 }
 
