@@ -21,11 +21,12 @@ mount_files() {
   local mounts="$2"
 
   local deployment_file kind pod_spec app_container namespace secret_name m
-  local secret_names unique_missing missing=() volumes_json mounts_json
+  local secret_names unique_missing missing=()
 
-  volumes_json=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "secret": {"secretName": .secretName, "defaultMode": .mode}}]')
-  mounts_json=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "readOnly": .readOnly, "mountPath": .path}]')
-  export MOUNT_FILES_VOLUMES="$volumes_json" MOUNT_FILES_VOLUME_MOUNTS="$mounts_json"
+  MOUNT_FILES_VOLUMES=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "secret": {"secretName": .secretName, "defaultMode": .mode}}]')
+  export MOUNT_FILES_VOLUMES
+  MOUNT_FILES_VOLUME_MOUNTS=$(echo "$mounts" | yq -o=json -I=0 '[.[] | {"name": .name, "readOnly": .readOnly, "mountPath": .path}]')
+  export MOUNT_FILES_VOLUME_MOUNTS
 
   secret_names=$(echo "$mounts" | yq eval '.[] | select(.secretName) | .secretName')
 
