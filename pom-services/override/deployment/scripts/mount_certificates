@@ -5,18 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../../../shared/scripts/mount_files"
 
 has_link_for_scope() {
-  local application_nrn scope_nrn dimensions existing_links
+  local application_nrn scope_nrn dimensions provider existing_links
   application_nrn=$(echo "$CONTEXT" | jq -r .application.nrn)
   scope_nrn=$(echo "$CONTEXT" | jq -r .scope.nrn)
   dimensions=$(echo "$CONTEXT" | jq -c '.scope.dimensions // {}')
+  provider=$(jq -r '.selectors.provider' "$SCRIPT_DIR/../../../specs/service-spec.json.tpl")
 
   existing_links=$(np link list --nrn "$application_nrn" --status active --format json --show-descendants | jq -c \
-    --arg spec "$POM_SERVICES_LINK_SPECIFICATION_ID" \
+    --arg provider "$provider" \
     --arg app "$application_nrn" \
     --arg scope "$scope_nrn" \
     --argjson dims "$dimensions" '
     (.results? // .) | map(select(
-      .specification_id == $spec
+      .selectors.provider == $provider
       and (
         .entity_nrn == $scope
         or (

@@ -10,5 +10,11 @@
   },
   "name": "Servicios POM",
   "unique": false,
+  "selectors": {
+    "category": "APIs y servicios del banco",
+    "imported": false,
+    "provider": "Servicios POM",
+    "sub_category": "JWT para acceso a servicios POM"
+  },
   "use_default_actions": true
 }

@@ -13,7 +13,7 @@
   "selectors": {
     "category": "APIs y servicios del banco",
     "imported": false,
-    "provider": "any",
+    "provider": "Servicios POM",
     "sub_category": "JWT para acceso a servicios POM"
   },
   "slug": "pom-services",
