@@ -1,4 +1,5 @@
 configuration:
+  POM_SERVICES_PROVIDER: "Servicios POM"
   POM_SERVICES_MOUNTS:
     - name: jwt-secret
       secretName: jwt-secret

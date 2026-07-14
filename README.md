@@ -104,9 +104,9 @@ scope tiene un link del servicio asociado — sea **a nivel scope** (`entity_nrn
 o **a nivel application con dimensiones que matchean** el scope. Si no hay link, loguea y
 hace skip sin tocar el deployment.
 
-El link se identifica por `selectors.provider` (que sale del `provider` del
-`service-spec.json.tpl`), **no** por el `specification_id`. Así el override no queda
-acoplado a un id que cambia cada vez que se corre el Terraform en un cliente distinto.
+El link se identifica por `selectors.provider` (configurado en `POM_SERVICES_PROVIDER`
+del `values.yaml` del override), **no** por el `specification_id`. Así el override no
+queda acoplado a un id que cambia cada vez que se corre el Terraform en un cliente distinto.
 
 ---
 
