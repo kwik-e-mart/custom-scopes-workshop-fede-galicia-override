@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../shared/scripts/provider_env"
+
+CONFIG_JSON=$(echo "$CONTEXT" | jq .providers.metrics)
+
+if [ "$CONFIG_JSON" = "null" ] || [ -z "$CONFIG_JSON" ]; then
+  echo "ℹ️ No AppDynamics config found in CONTEXT.providers.metrics — skipping env injection"
+  return 0
+fi
+
+RUNTIME=$(echo "$CONTEXT" | jq -r .build.metadata.technology.runtime)""
+
+MERGED_VARIABLES=$(echo "$CONFIG_JSON" | jq -c --arg runtime "$RUNTIME" '
+  ((.global.variables // []) + ((.[$runtime].variables) // []))
+  | reverse | unique_by(.name) | reverse')
+
+if [ "$(echo "$MERGED_VARIABLES" | jq 'length')" -eq 0 ]; then
+  echo "ℹ️ No AppDynamics variables to inject (global + '${RUNTIME:-<none>}' are empty) — skipping"
+  return 0
+fi
+
+echo "🔍 Injecting AppDynamics env vars | environment=${APPDYNAMICS_ENVIRONMENT:-<unset>} | runtime=${RUNTIME:-<none>} | variables=$(echo "$MERGED_VARIABLES" | jq 'length')"
+
+inject_provider_env "AppDynamics (${RUNTIME:-global}/${APPDYNAMICS_ENVIRONMENT:-?})" "$MERGED_VARIABLES"

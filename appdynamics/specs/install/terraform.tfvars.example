@@ -1,0 +1,31 @@
+# Copy to terraform.tfvars and fill in. Apply with:
+#   tofu apply   (tofu auto-loads terraform.tfvars)
+nrn        = "organization=REPLACE:account=REPLACE"
+np_api_key = "REPLACE_WITH_PROVIDER_API_KEY"
+
+# One provider config per environment. Key is a stable identifier.
+# `attributes` = global variables + optional per-language groups (see variables.tf).
+# NOTE: $${env.X} keeps the literal ${env.X} (legacy nullplatform interpolation).
+#       Kubernetes does NOT resolve ${...}; decide how APP_NAME / PROYECTO_OCP /
+#       K8S_URL should resolve (concrete value, or $(VAR) if present in the pod).
+instances = {
+  dev = {
+    nrn        = "organization=REPLACE:account=REPLACE"
+    dimensions = { environment = "dev" } # confirm your dimension key/value
+    attributes = {
+      global = {
+        variables = [
+          { name = "APPDYNAMICS_AGENT_TIER_NAME", type = "Text", value = "$${env.APP_NAME}" },
+          { name = "APPDYNAMICS_AGENT_APPLICATION_NAME", type = "Text", value = "$${env.PROYECTO_OCP}" },
+          { name = "APPDYNAMICS_AGENT_ACCOUNT_ACCESS_KEY", type = "Secret", value = "REPLACE_SECRET_NAME" },
+          { name = "APPDYNAMICS_CONTROLLER_HOST_NAME", type = "Text", value = "bancogalicia-nonprod.saas.appdynamics.com" },
+          { name = "APPDYNAMICS_AGENT_ACCOUNT_NAME", type = "Text", value = "bancogalicia-nonprod" },
+          { name = "STARTUP_INFO", type = "Text", value = "$${env.K8S_URL}/pod_info/process_json" },
+        ]
+      }
+      python = { variables = [{ name = "APPD_NODE_NAME", type = "Reference", value = "metadata.name" }] }
+      node   = { variables = [{ name = "APPDYNAMICS_AGENT_NODE_NAME", type = "Reference", value = "metadata.name" }] }
+      java   = { variables = [{ name = "APPDYNAMICS_AGENT_NODE_NAME", type = "Reference", value = "metadata.name" }] }
+    }
+  }
+}

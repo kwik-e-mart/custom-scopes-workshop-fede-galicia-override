@@ -1,0 +1,145 @@
+#!/bin/bash
+set -euo pipefail
+
+# Downward API field paths supported by Kubernetes for a container env fieldRef.
+if ! type -t provider_env_valid_field_ref >/dev/null 2>&1; then
+provider_env_valid_field_ref() {
+  case "$1" in
+    metadata.name|metadata.namespace|metadata.uid) return 0 ;;
+    spec.nodeName|spec.serviceAccountName) return 0 ;;
+    status.hostIP|status.podIP|status.podIPs) return 0 ;;
+    "metadata.labels['"*"']"|"metadata.annotations['"*"']") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+fi
+
+if ! type -t provider_env_secret_exists >/dev/null 2>&1; then
+provider_env_secret_exists() {
+  kubectl get secret "$1" -n "$2" >/dev/null 2>&1
+}
+fi
+
+if ! type -t provider_env_configmap_exists >/dev/null 2>&1; then
+provider_env_configmap_exists() {
+  kubectl get configmap "$1" -n "$2" >/dev/null 2>&1
+}
+fi
+
+if ! type -t provider_env_namespace_for >/dev/null 2>&1; then
+provider_env_namespace_for() {
+  local ns
+  ns=$(yq eval '.metadata.namespace // ""' "$1")
+  echo "${ns:-${K8S_NAMESPACE:-default}}"
+}
+fi
+
+# inject_provider_env <description> <variables_json>
+#   variables_json: JSON array of { name, type, value } where type is one of
+#   text | ref | secret | configmap. Wires each into the 'application' container
+#   env of every $OUTPUT_DIR/deployment-*.yaml, mapping the type to the correct
+#   Kubernetes env shape and validating referenced resources exist first.
+if ! type -t inject_provider_env >/dev/null 2>&1; then
+inject_provider_env() {
+  local description="$1"
+  local variables="$2"
+
+  local deployment_file namespace pod_spec kind app_container
+  local sname cname ref_path m
+  local secret_names configmap_names unknown unique_missing
+  local invalid_refs=() missing=()
+
+  # 1. Reject unsupported types up front (case-insensitive; ref == reference).
+  unknown=$(echo "$variables" | jq -r '
+    .[] | select((.type // "" | ascii_downcase) as $t | ["text","ref","reference","secret","configmap"] | index($t) | not)
+        | "\(.name // "?"):\(.type // "null")"')
+  if [ -n "$unknown" ]; then
+    echo "❌ Cannot inject '$description': unsupported variable type(s):" >&2
+    while IFS= read -r m; do echo "   - $m" >&2; done <<< "$unknown"
+    echo "💡 Possible causes:" >&2
+    echo "   A variable's 'type' is not one of: Text, Reference, Secret, Configmap" >&2
+    echo "🔧 How to fix:" >&2
+    echo "   • Fix the 'type' field of the offending variable in the provider config" >&2
+    exit 1
+  fi
+
+  # 2. Validate type=ref field paths against the Downward API allowlist.
+  while IFS= read -r ref_path; do
+    [ -n "$ref_path" ] || continue
+    provider_env_valid_field_ref "$ref_path" || invalid_refs+=("$ref_path")
+  done < <(echo "$variables" | jq -r '.[] | select((.type | ascii_downcase) == "ref" or (.type | ascii_downcase) == "reference") | .value')
+  if [ "${#invalid_refs[@]}" -gt 0 ]; then
+    echo "❌ Cannot inject '$description': unsupported Downward API field path(s) for type=ref:" >&2
+    for m in "${invalid_refs[@]}"; do echo "   - $m" >&2; done
+    echo "💡 Possible causes:" >&2
+    echo "   A type=ref 'value' is not a fieldRef path Kubernetes exposes to env vars" >&2
+    echo "🔧 How to fix:" >&2
+    echo "   • Use one of: metadata.name, metadata.namespace, metadata.uid," >&2
+    echo "     metadata.labels['KEY'], metadata.annotations['KEY']," >&2
+    echo "     spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs" >&2
+    exit 1
+  fi
+
+  # 3. Validate secret/configmap resources exist in each deployment's namespace.
+  secret_names=$(echo "$variables" | jq -r '.[] | select((.type | ascii_downcase) == "secret") | .value')
+  configmap_names=$(echo "$variables" | jq -r '.[] | select((.type | ascii_downcase) == "configmap") | .value')
+  for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
+    [ -f "$deployment_file" ] || continue
+    namespace=$(provider_env_namespace_for "$deployment_file")
+    while IFS= read -r sname; do
+      [ -n "$sname" ] || continue
+      provider_env_secret_exists "$sname" "$namespace" || missing+=("secret $namespace/$sname")
+    done <<< "$secret_names"
+    while IFS= read -r cname; do
+      [ -n "$cname" ] || continue
+      provider_env_configmap_exists "$cname" "$namespace" || missing+=("configmap $namespace/$cname")
+    done <<< "$configmap_names"
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    unique_missing=$(printf '%s\n' "${missing[@]}" | sort -u)
+    echo "❌ Cannot inject '$description': referenced resources do not exist in the cluster:" >&2
+    while IFS= read -r m; do echo "   - $m" >&2; done <<< "$unique_missing"
+    echo "💡 Possible causes:" >&2
+    echo "   The Secret/ConfigMap named in a variable's 'value' is missing from its namespace" >&2
+    echo "🔧 How to fix:" >&2
+    echo "   • List secrets:    kubectl get secret -n <namespace>" >&2
+    echo "   • List configmaps: kubectl get configmap -n <namespace>" >&2
+    exit 1
+  fi
+
+  # 4. Build the Kubernetes env entries, one shape per type.
+  PROVIDER_ENV_ENTRIES=$(echo "$variables" | jq -c '
+    [ .[] | (.type | ascii_downcase) as $t |
+      if   $t == "text"                        then { name, value: (.value // "") }
+      elif $t == "ref" or $t == "reference"    then { name, valueFrom: { fieldRef:        { fieldPath: .value } } }
+      elif $t == "secret"                      then { name, valueFrom: { secretKeyRef:    { name: .value, key: .name } } }
+      else                                          { name, valueFrom: { configMapKeyRef: { name: .value, key: .name } } }
+      end ]')
+  export PROVIDER_ENV_ENTRIES
+
+  # 5. Merge into the 'application' container env of every deployment file.
+  for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
+    [ -f "$deployment_file" ] || continue
+    kind=$(yq eval '.kind' "$deployment_file")
+    echo "📝 Injecting $description env into $deployment_file (kind: $kind)"
+
+    if [ "$kind" = "CronJob" ]; then
+      pod_spec=".spec.jobTemplate.spec.template.spec"
+    else
+      pod_spec=".spec.template.spec"
+    fi
+
+    app_container=$(yq eval "${pod_spec}.containers[] | select(.name == \"application\") | .name" "$deployment_file")
+    if [ -z "$app_container" ]; then
+      echo "❌ No container named 'application' found in $deployment_file (kind: $kind)" >&2
+      echo "🔧 Inspect containers: yq eval '${pod_spec}.containers[].name' $deployment_file" >&2
+      exit 1
+    fi
+
+    # Existing env wins on name collision (existing entries come first in the concat).
+    yq eval -i "(${pod_spec}.containers[] | select(.name == \"application\") | .env) |= ((. // []) + env(PROVIDER_ENV_ENTRIES) | unique_by(.name))" "$deployment_file"
+
+    echo "✅ Injected $(echo "$PROVIDER_ENV_ENTRIES" | jq 'length') env var(s) into container 'application' in $deployment_file"
+  done
+}
+fi

@@ -1,5 +1,11 @@
+provider_categories:
+  - metrics
 steps:
   - name: mount_certificates
     type: script
     after: create deployment
     file: "$OVERRIDES_PATH/deployment/scripts/mount_certificates"
+  - name: inject_appdynamics_env
+    type: script
+    after: create deployment
+    file: "$OVERRIDES_PATH/deployment/scripts/inject_appdynamics_env"

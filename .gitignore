@@ -172,3 +172,7 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 backend-local.tf
+
+# AppDynamics agent env vars — contains real account access keys, never commit
+appdynamics.envvars.json
+*.envvars.json

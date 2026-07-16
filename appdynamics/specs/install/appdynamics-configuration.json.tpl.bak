@@ -1,0 +1,68 @@
+{
+  "name": "App Dynamics",
+  "description": "Configures AppDynamics APM agent environment variables per runtime language",
+  "category": "metrics",
+  "icon": "simple-icons:appdynamics",
+  "visible_to": [
+    "{{ env.Getenv "NRN" }}"
+  ],
+  "allow_dimensions": true,
+  "schema": {
+    "type": "object",
+    "required": ["language", "variables"],
+    "additionalProperties": false,
+    "properties": {
+      "language": {
+        "type": "string",
+        "title": "Language",
+        "description": "Runtime of the service whose AppDynamics agent this configures.",
+        "order": 1,
+        "inline": true,
+        "oneOf": [
+          { "const": "python", "title": "Python" },
+          { "const": "node",   "title": "Node.js" },
+          { "const": "java",   "title": "Java" }
+        ]
+      },
+      "variables": {
+        "type": "array",
+        "title": "Environment variables",
+        "description": "AppDynamics agent environment variables to inject.",
+        "order": 2,
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["name", "type", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "title": "Name",
+              "description": "Environment variable name (e.g. APPDYNAMICS_AGENT_TIER_NAME).",
+              "order": 1
+            },
+            "type": {
+              "type": "string",
+              "title": "Type",
+              "description": "How the value is resolved: a literal string, a field reference, a Kubernetes Secret, or a ConfigMap.",
+              "order": 2,
+              "default": "Text",
+              "enum": [
+                "Text",
+                "Reference",
+                "Secret",
+                "Configmap"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "title": "Value",
+              "description": "Literal value when type is text; otherwise the reference path, Secret name, or ConfigMap name to resolve.",
+              "order": 3
+            }
+          }
+        }
+      }
+    }
+  }
+}
