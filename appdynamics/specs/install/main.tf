@@ -15,14 +15,6 @@ resource "nullplatform_provider_config" "appdynamics_configurations" {
   type       = nullplatform_provider_specification.appdynamics_specification.slug
   dimensions = each.value.dimensions
   attributes = jsonencode(each.value.attributes)
-
-  lifecycle {
-    # The API strips nested attribute keys on read-back, and patching attributes
-    # once the config is in use by an active scope fails with a 500. Ignore changes
-    # to avoid perpetual drift / failed patches. To iterate the attributes before
-    # the config is in use, recreate it: tofu apply -replace='nullplatform_provider_config.scope_configuration["<key>"]'
-    ignore_changes = [attributes]
-  }
 }
 
 resource "nullplatform_metadata_specification" "metadata_application" {

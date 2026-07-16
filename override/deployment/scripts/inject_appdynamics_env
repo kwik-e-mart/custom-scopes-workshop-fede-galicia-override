@@ -11,7 +11,10 @@ if [ "$CONFIG_JSON" = "null" ] || [ -z "$CONFIG_JSON" ]; then
   return 0
 fi
 
-RUNTIME=$(echo "$CONTEXT" | jq -r .build.metadata.technology.runtime)""
+BUILD_ID=$(echo "$CONTEXT" | jq -r .release.build_id)
+BUILD=$(np build read --id "$BUILD_ID" --format json)
+
+RUNTIME=$(echo "$BUILD" | jq -r '.metadata.technology.runtime // ""')
 
 MERGED_VARIABLES=$(echo "$CONFIG_JSON" | jq -c --arg runtime "$RUNTIME" '
   ((.global.variables // []) + ((.[$runtime].variables) // []))
@@ -22,6 +25,6 @@ if [ "$(echo "$MERGED_VARIABLES" | jq 'length')" -eq 0 ]; then
   return 0
 fi
 
-echo "🔍 Injecting AppDynamics env vars | environment=${APPDYNAMICS_ENVIRONMENT:-<unset>} | runtime=${RUNTIME:-<none>} | variables=$(echo "$MERGED_VARIABLES" | jq 'length')"
+echo "🔍 Injecting AppDynamics env vars | runtime=${RUNTIME:-<none>} | variables=$(echo "$MERGED_VARIABLES" | jq 'length')"
 
-inject_provider_env "AppDynamics (${RUNTIME:-global}/${APPDYNAMICS_ENVIRONMENT:-?})" "$MERGED_VARIABLES"
+inject_provider_env "AppDynamics${RUNTIME:+ ($RUNTIME)}" "$MERGED_VARIABLES"
