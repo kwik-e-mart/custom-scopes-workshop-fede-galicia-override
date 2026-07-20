@@ -1,4 +1,6 @@
 configuration:
+  IMAGE_PULL_SECRETS:
+    ENABLED: false
   CABANCO_MOUNTS:
     - name: cakeystore
       secretName: secret-cabanco-keystore
