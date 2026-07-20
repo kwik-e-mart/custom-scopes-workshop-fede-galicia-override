@@ -8,6 +8,6 @@ tags_selectors = {
   environment = "REPLACE"
 }
 
-repository_service_spec_repo = "custom-scopes-workshop-fede-galicia-override"
+repository_service_spec_repo = "galicia-integrations/terraform_np_installation"
 service_path                 = "pom-services"
 extra_visible_to_nrns        = []

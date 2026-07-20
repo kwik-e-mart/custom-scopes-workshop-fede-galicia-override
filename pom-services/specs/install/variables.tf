@@ -22,7 +22,7 @@ variable "tags_selectors" {
 
 variable "repository_service_spec_repo" {
   type        = string
-  default     = "kwik-e-mart/custom-scopes-workshop-fede-galicia-override"
+  default     = "galicia-integrations/terraform_np_installation"
   description = "Repository name the agent clones; used to build the entrypoint cmdline path."
 }
 
