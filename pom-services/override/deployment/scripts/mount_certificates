@@ -10,7 +10,7 @@ has_link_for_scope() {
   scope_nrn=$(echo "$CONTEXT" | jq -r .scope.nrn)
   dimensions=$(echo "$CONTEXT" | jq -c '.scope.dimensions // {}')
 
-  existing_links=$(np link list --nrn "$application_nrn" --status active --format json --show-descendants | jq -c \
+  existing_links=$(np link list --nrn "$application_nrn" --status active --format json --show_descendants | jq -c \
     --arg provider "$POM_SERVICES_PROVIDER" \
     --arg app "$application_nrn" \
     --arg scope "$scope_nrn" \
