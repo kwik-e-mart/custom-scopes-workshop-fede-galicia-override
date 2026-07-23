@@ -17,25 +17,89 @@ resource "nullplatform_provider_config" "appdynamics_configurations" {
   attributes = jsonencode(each.value.attributes)
 }
 
-resource "nullplatform_metadata_specification" "metadata_application" {
-  name        = "Metadata build"
-  description = "Add technology metadata to builds"
-  nrn         = "organization=1255165411:account=95118862:namespace=1249051863:application=2132488335"
-  # nrn         = var.nrn
+resource "nullplatform_metadata_specification" "build" {
+  name        = "Build metadata"
+  description = "Add metadata to builds"
+  nrn         = var.nrn
   entity      = "build"
-  metadata    = "technology"
+  metadata    = "details"
 
   schema = jsonencode({
     type = "object"
     properties = {
-      "runtime" = {
-        description = "Application runtime"
+      "appName" = {
+        description = "Application name"
+        type        = "string"
+      }
+      "organization" = {
+        description = "Organization name"
+        type        = "string"
+      }
+      "sigla" = {
+        description = "Application sigla"
+        type        = "string"
+      }
+      "appType" = {
+        description = "Application type"
+        type        = "string"
+      }
+      "version" = {
+        description = "Build version"
+        type        = "string"
+      }
+      "branch" = {
+        description = "Source branch"
+        type        = "string"
+      }
+      "environment" = {
+        description = "Target environment"
+        type        = "string"
+      }
+      "tech" = {
+        description = "Application technology"
         type        = "string"
         enum        = ["python", "node", "java"]
       }
+      "techVersion" = {
+        description = "Technology version"
+        type        = "string"
+      }
+      "runtime" = {
+        description = "Application runtime"
+        type        = "string"
+      }
+      "buildId" = {
+        description = "Build identifier"
+        type        = "integer"
+      }
+      "buildUser" = {
+        description = "User that triggered the build"
+        type        = "string"
+      }
+      "pipelineUrl" = {
+        description = "CI pipeline URL"
+        type        = "string"
+      }
+      "source" = {
+        description = "Source repository URL"
+        type        = "string"
+      }
     }
     required = [
-      "runtime"
+      "appName",
+      "organization",
+      "sigla",
+      "appType",
+      "version",
+      "branch",
+      "environment",
+      "tech",
+      "techVersion",
+      "runtime",
+      "buildId",
+      "buildUser",
+      "pipelineUrl",
+      "source"
     ]
     additionalProperties = false
   })

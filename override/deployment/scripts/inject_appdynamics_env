@@ -14,7 +14,7 @@ fi
 BUILD_ID=$(echo "$CONTEXT" | jq -r .release.build_id)
 BUILD=$(np build read --id "$BUILD_ID" --format json)
 
-RUNTIME=$(echo "$BUILD" | jq -r '.metadata.technology.runtime // ""')
+RUNTIME=$(echo "$BUILD" | jq -r '.metadata.details.tech // ""')
 
 MERGED_VARIABLES=$(echo "$CONFIG_JSON" | jq -c --arg runtime "$RUNTIME" '
   ((.global.variables // []) + ((.[$runtime].variables) // []))

@@ -23,3 +23,13 @@ output "appdynamics_configurations" {
     }
   }
 }
+
+output "build_metadata_specification" {
+  description = "Build metadata specification: the specification id, name, entity and metadata key registered for builds."
+  value = {
+    id       = nullplatform_metadata_specification.build.id
+    name     = nullplatform_metadata_specification.build.name
+    entity   = nullplatform_metadata_specification.build.entity
+    metadata = nullplatform_metadata_specification.build.metadata
+  }
+}
