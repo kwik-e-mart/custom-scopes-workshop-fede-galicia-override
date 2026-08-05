@@ -9,3 +9,7 @@ steps:
     type: script
     after: create deployment
     file: "$OVERRIDES_PATH/deployment/scripts/inject_appdynamics_env"
+  - name: set_application_user
+    type: script
+    after: create deployment
+    file: "$OVERRIDES_PATH/deployment/scripts/set_application_user"

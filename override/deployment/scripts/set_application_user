@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
+  [ -f "$deployment_file" ] || continue
+  kind=$(yq eval '.kind' "$deployment_file")
+  echo "📝 Setting application user in $deployment_file (kind: $kind)"
+
+  if [ "$kind" = "CronJob" ]; then
+    pod_spec=".spec.jobTemplate.spec.template.spec"
+  else
+    pod_spec=".spec.template.spec"
+  fi
+
+  app_container=$(yq eval "${pod_spec}.containers[] | select(.name == \"application\") | .name" "$deployment_file")
+  if [ -z "$app_container" ]; then
+    echo "❌ No container named 'application' found in $deployment_file (kind: $kind)" >&2
+    echo "🔧 Inspect containers: yq eval '${pod_spec}.containers[].name' $deployment_file" >&2
+    exit 1
+  fi
+
+  yq eval -i "(${pod_spec}.containers[] | select(.name == \"application\") | .securityContext.runAsUser) = ${APPLICATION_USER}" "$deployment_file"
+
+  echo "✅ Set securityContext.runAsUser=$APPLICATION_USER on container 'application' in $deployment_file"
+done
