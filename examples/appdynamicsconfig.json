@@ -1,0 +1,63 @@
+{
+  "global": {
+    "variables": [
+      {
+        "name": "APPDYNAMICS_AGENT_TIER_NAME",
+        "type": "Reference",
+        "value": "${context.application.slug}"
+      },
+      {
+        "name": "APPDYNAMICS_AGENT_APPLICATION_NAME",
+        "type": "Reference",
+        "value": "${context.k8s_namespace}"
+      },
+      {
+        "name": "APPDYNAMICS_AGENT_ACCOUNT_ACCESS_KEY",
+        "type": "Secret",
+        "value": "appdynamics-access-key"
+      },
+      {
+        "name": "APPDYNAMICS_CONTROLLER_HOST_NAME",
+        "type": "Text",
+        "value": "controllerhost"
+      },
+      {
+        "name": "APPDYNAMICS_AGENT_ACCOUNT_NAME",
+        "type": "Text",
+        "value": "accountname"
+      },
+      {
+        "name": "STARTUP_INFO",
+        "type": "Text",
+        "value": "https://<devops-sre-control-host>/pod_info/process_json"
+      }
+    ]
+  },
+  "java": {
+    "variables": [
+      {
+        "name": "APPDYNAMICS_AGENT_NODE_NAME",
+        "type": "Reference",
+        "value": "${metadata.name}"
+      }
+    ]
+  },
+  "node": {
+    "variables": [
+      {
+        "name": "APPDYNAMICS_AGENT_NODE_NAME",
+        "type": "Reference",
+        "value": "${metadata.name}"
+      }
+    ]
+  },
+  "python": {
+    "variables": [
+      {
+        "name": "APPD_NODE_NAME",
+        "type": "Reference",
+        "value": "${metadata.name}"
+      }
+    ]
+  }
+}
