@@ -58,7 +58,7 @@ resource "nullplatform_metadata_specification" "build" {
       "tech" = {
         description = "Application technology"
         type        = "string"
-        enum        = ["python", "node", "java"]
+        enum        = ["python", "node", "java", "dotnet"]
       }
       "techVersion" = {
         description = "Technology version"

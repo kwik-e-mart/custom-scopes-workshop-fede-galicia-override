@@ -17,7 +17,8 @@ variable "instances" {
       { global = { variables = [{ name, type, value }, ...] },
         python = { variables = [...] },   # optional
         node   = { variables = [...] },   # optional
-        java   = { variables = [...] } }  # optional
+        java   = { variables = [...] },   # optional
+        dotnet = { variables = [...] } }  # optional
     Only `global` is required. `attributes` is typed as `any` so callers write the
     object directly; it is JSON-encoded when sent to the provider.
   EOT
