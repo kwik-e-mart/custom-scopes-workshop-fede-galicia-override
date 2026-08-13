@@ -14,6 +14,52 @@ provider_env_valid_field_ref() {
 }
 fi
 
+# Inner expression of every ${...} placeholder in a value, one per line.
+if ! type -t provider_env_ref_placeholders >/dev/null 2>&1; then
+provider_env_ref_placeholders() {
+  grep -o '\${[^}]*}' <<< "$1" | sed -e 's/^\${//' -e 's/}$//' || true
+}
+fi
+
+# True when the value has a '${' that no closing brace terminates.
+if ! type -t provider_env_ref_unterminated >/dev/null 2>&1; then
+provider_env_ref_unterminated() {
+  local stripped
+  stripped=$(sed -e 's/\${[^}]*}//g' <<< "$1")
+  [[ "$stripped" == *'${'* ]]
+}
+fi
+
+# Value of a context.<path> expression read out of $CONTEXT, JSON-encoded when it
+# is an object or array. Returns 1 when the path is absent or null.
+if ! type -t provider_env_context_value >/dev/null 2>&1; then
+provider_env_context_value() {
+  echo "${CONTEXT:-}" | jq -er --arg path "${1#context.}" '
+    ($path | split(".") | map(if test("^[0-9]+$") then tonumber else . end)) as $p
+    | (try getpath($p) catch null)
+    | if . == null then null
+      elif type == "object" or type == "array" then tojson
+      else tostring end'
+}
+fi
+
+# Replaces every ${context.<path>} placeholder in a value with its $CONTEXT value,
+# leaving the surrounding text and any other placeholder untouched.
+if ! type -t provider_env_interpolate_context >/dev/null 2>&1; then
+provider_env_interpolate_context() {
+  local value="$1" marker='${context.' out="" head expr resolved
+  while [[ "$value" == *"$marker"* ]]; do
+    head="${value%%"$marker"*}"
+    value="${value#*"$marker"}"
+    expr="${value%%\}*}"
+    value="${value#*\}}"
+    resolved=$(provider_env_context_value "context.$expr") || return 1
+    out+="$head$resolved"
+  done
+  printf '%s' "$out$value"
+}
+fi
+
 if ! type -t provider_env_secret_exists >/dev/null 2>&1; then
 provider_env_secret_exists() {
   kubectl get secret "$1" -n "$2" >/dev/null 2>&1
@@ -39,15 +85,18 @@ fi
 #   text | ref | secret | configmap. Wires each into the 'application' container
 #   env of every $OUTPUT_DIR/deployment-*.yaml, mapping the type to the correct
 #   Kubernetes env shape and validating referenced resources exist first.
+#   type=ref accepts a Downward API path (metadata.name or ${metadata.name}), a
+#   ${context.*} path resolved here from $CONTEXT, and text mixing placeholders
+#   (${env.K8S_URL}/pod_info/process_json), left as-is for the engine.
 if ! type -t inject_provider_env >/dev/null 2>&1; then
 inject_provider_env() {
   local description="$1"
   local variables="$2"
 
   local deployment_file namespace pod_spec kind app_container
-  local sname cname ref_path m
+  local sname cname m i count vtype vname vvalue inner resolved bad
   local secret_names configmap_names unknown unique_missing
-  local invalid_refs=() missing=()
+  local invalid_refs=() missing_context=() missing=()
 
   # 1. Reject unsupported types up front (case-insensitive; ref == reference).
   unknown=$(echo "$variables" | jq -r '
@@ -63,20 +112,91 @@ inject_provider_env() {
     exit 1
   fi
 
-  # 2. Validate type=ref field paths against the Downward API allowlist.
-  while IFS= read -r ref_path; do
-    [ -n "$ref_path" ] || continue
-    provider_env_valid_field_ref "$ref_path" || invalid_refs+=("$ref_path")
-  done < <(echo "$variables" | jq -r '.[] | select((.type | ascii_downcase) == "ref" or (.type | ascii_downcase) == "reference") | .value')
+  # 2. Resolve type=ref values. A Downward API path — bare or wrapped in a single
+  #    ${...} — stays a fieldRef. ${context.*} is interpolated here from $CONTEXT and
+  #    the variable becomes a literal. Anything else (text mixed with refs, ${env.*})
+  #    is passed through untouched as a literal for the engine to resolve.
+  count=$(echo "$variables" | jq 'length')
+  for ((i = 0; i < count; i++)); do
+    vtype=$(echo "$variables" | jq -r ".[$i].type // \"\" | ascii_downcase")
+    if [ "$vtype" != "ref" ] && [ "$vtype" != "reference" ]; then continue; fi
+
+    vname=$(echo "$variables" | jq -r ".[$i].name // \"?\"")
+    vvalue=$(echo "$variables" | jq -r ".[$i].value // \"\"")
+
+    if [[ "$vvalue" != *'${'* ]]; then
+      if provider_env_valid_field_ref "$vvalue"; then continue; fi
+      if [[ "$vvalue" != context.* ]]; then
+        invalid_refs+=("$vname: $vvalue")
+        continue
+      fi
+      if ! resolved=$(provider_env_context_value "$vvalue"); then
+        missing_context+=("$vname: $vvalue")
+        continue
+      fi
+      variables=$(echo "$variables" | jq -c --argjson idx "$i" --arg v "$resolved" '.[$idx] |= (.type = "text" | .value = $v)')
+      continue
+    fi
+
+    if provider_env_ref_unterminated "$vvalue"; then
+      invalid_refs+=("$vname: $vvalue (unterminated \${...})")
+      continue
+    fi
+
+    bad=0
+    while IFS= read -r inner; do
+      [ -n "$inner" ] || continue
+      case "$inner" in
+        env.*) continue ;;
+        context.*)
+          if ! provider_env_context_value "$inner" >/dev/null; then
+            missing_context+=("$vname: \${$inner}")
+            bad=1
+          fi
+          continue
+          ;;
+      esac
+      if ! provider_env_valid_field_ref "$inner"; then
+        invalid_refs+=("$vname: \${$inner}")
+        bad=1
+      fi
+    done < <(provider_env_ref_placeholders "$vvalue")
+    if [ "$bad" -ne 0 ]; then continue; fi
+
+    if [[ "$vvalue" =~ ^\$\{(.+)\}$ ]] && provider_env_valid_field_ref "${BASH_REMATCH[1]}"; then
+      variables=$(echo "$variables" | jq -c --argjson idx "$i" --arg v "${BASH_REMATCH[1]}" '.[$idx].value = $v')
+      continue
+    fi
+
+    resolved=$(provider_env_interpolate_context "$vvalue")
+    variables=$(echo "$variables" | jq -c --argjson idx "$i" --arg v "$resolved" '.[$idx] |= (.type = "text" | .value = $v)')
+  done
+
   if [ "${#invalid_refs[@]}" -gt 0 ]; then
-    echo "❌ Cannot inject '$description': unsupported Downward API field path(s) for type=ref:" >&2
+    echo "❌ Cannot inject '$description': unsupported reference(s) for type=ref:" >&2
     for m in "${invalid_refs[@]}"; do echo "   - $m" >&2; done
     echo "💡 Possible causes:" >&2
-    echo "   A type=ref 'value' is not a fieldRef path Kubernetes exposes to env vars" >&2
+    echo "   A type=ref 'value' is neither a Downward API field path, a context path," >&2
+    echo "   nor a \${env.*} placeholder" >&2
     echo "🔧 How to fix:" >&2
-    echo "   • Use one of: metadata.name, metadata.namespace, metadata.uid," >&2
+    echo "   • Downward API path, bare or wrapped: metadata.name or \${metadata.name}." >&2
+    echo "     One of: metadata.name, metadata.namespace, metadata.uid," >&2
     echo "     metadata.labels['KEY'], metadata.annotations['KEY']," >&2
     echo "     spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs" >&2
+    echo "   • Deployment context path: context.release.build_id or \${context.release.build_id}" >&2
+    echo "   • Text mixed with placeholders: \${env.K8S_URL}/pod_info/process_json" >&2
+    exit 1
+  fi
+
+  if [ "${#missing_context[@]}" -gt 0 ]; then
+    echo "❌ Cannot inject '$description': context reference(s) not found in \$CONTEXT:" >&2
+    for m in "${missing_context[@]}"; do echo "   - $m" >&2; done
+    echo "💡 Possible causes:" >&2
+    echo "   The path does not exist in the deployment context, or it is added by a step" >&2
+    echo "   that runs after this one" >&2
+    echo "🔧 How to fix:" >&2
+    echo "   • Available top-level keys: $(echo "${CONTEXT:-{\}}" | jq -r 'try (keys | join(", ")) catch "<invalid CONTEXT>"')" >&2
+    echo "   • Inspect a subtree: echo \"\$CONTEXT\" | jq .release" >&2
     exit 1
   fi
 

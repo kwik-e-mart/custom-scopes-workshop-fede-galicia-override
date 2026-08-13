@@ -54,7 +54,7 @@
                   "type": "string",
                   "order": 3,
                   "title": "Value",
-                  "description": "Literal value when type is Text; otherwise the field path (Reference) or the Secret/ConfigMap name to resolve."
+                  "description": "Literal value when type is Text. When type is Reference: a Downward API field path (metadata.name or ${metadata.name}), a deployment context path (${context.build.metadata.details.tech}), or text mixing placeholders (${env.K8S_URL}/pod_info/process_json). When type is Secret or Configmap: the name of the resource holding a key named like this variable."
                 }
               }
             }
@@ -97,7 +97,7 @@
                   "type": "string",
                   "order": 3,
                   "title": "Value",
-                  "description": "Literal value when type is Text; otherwise the field path (Reference) or the Secret/ConfigMap name to resolve."
+                  "description": "Literal value when type is Text. When type is Reference: a Downward API field path (metadata.name or ${metadata.name}), a deployment context path (${context.build.metadata.details.tech}), or text mixing placeholders (${env.K8S_URL}/pod_info/process_json). When type is Secret or Configmap: the name of the resource holding a key named like this variable."
                 }
               }
             }
@@ -140,7 +140,7 @@
                   "type": "string",
                   "order": 3,
                   "title": "Value",
-                  "description": "Literal value when type is Text; otherwise the field path (Reference) or the Secret/ConfigMap name to resolve."
+                  "description": "Literal value when type is Text. When type is Reference: a Downward API field path (metadata.name or ${metadata.name}), a deployment context path (${context.build.metadata.details.tech}), or text mixing placeholders (${env.K8S_URL}/pod_info/process_json). When type is Secret or Configmap: the name of the resource holding a key named like this variable."
                 }
               }
             }
@@ -183,7 +183,7 @@
                   "type": "string",
                   "order": 3,
                   "title": "Value",
-                  "description": "Literal value when type is Text; otherwise the field path (Reference) or the Secret/ConfigMap name to resolve."
+                  "description": "Literal value when type is Text. When type is Reference: a Downward API field path (metadata.name or ${metadata.name}), a deployment context path (${context.build.metadata.details.tech}), or text mixing placeholders (${env.K8S_URL}/pod_info/process_json). When type is Secret or Configmap: the name of the resource holding a key named like this variable."
                 }
               }
             }
@@ -226,7 +226,7 @@
                   "type": "string",
                   "order": 3,
                   "title": "Value",
-                  "description": "Literal value when type is Text; otherwise the field path (Reference) or the Secret/ConfigMap name to resolve."
+                  "description": "Literal value when type is Text. When type is Reference: a Downward API field path (metadata.name or ${metadata.name}), a deployment context path (${context.build.metadata.details.tech}), or text mixing placeholders (${env.K8S_URL}/pod_info/process_json). When type is Secret or Configmap: the name of the resource holding a key named like this variable."
                 }
               }
             }
