@@ -8,7 +8,7 @@ module "service_definition" {
   source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition?ref=v6.3.0"
 
   nrn          = var.nrn
-  service_name = "Egress Interceptor"
+  service_name = "Migrador de tráfico service-to-service a EKS"
   service_path = var.service_path
 
   # Las specs se leen de ESTE repo en vez de traerlas de git. `local_specs_path` apunta al
