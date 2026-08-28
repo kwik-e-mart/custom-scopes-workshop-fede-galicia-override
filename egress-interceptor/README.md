@@ -181,6 +181,51 @@ equivocado.
 y el alias `<svc>-local` son imperativos —se calculan en runtime a partir del `Service` real— y no
 salen de ningún template.
 
+## Instalación
+
+`specs/` tiene dos layers de Terraform que se aplican en momentos distintos y con alcances
+distintos. Confundirlos es el error fácil.
+
+| | alcance | cuándo |
+|---|---|---|
+| `specs/prerequisites/` | **por cluster** | una vez por cada cluster donde va a correr el service |
+| `specs/install/` | **por organización** | una sola vez, registra el service y su channel |
+
+### `specs/prerequisites/` — lo que el cluster tiene que tener
+
+Instala **Gateway API** (opcional: OpenShift ya lo trae) y **Kuadrant**, con el CR `Kuadrant` que
+levanta Authorino y el Limitador. Sin ese CR las `AuthPolicy` quedan aceptadas y **nunca
+enforceadas**: los objetos se ven en verde y el tráfico pasa sin validar.
+
+```bash
+cd specs/prerequisites
+cp terraform.tfvars.example terraform.tfvars   # completar kube_context
+tofu init && tofu apply
+```
+
+⚠️ **Es un ejemplo de referencia, no la instalación del cliente.** Las versiones están pineadas a
+las validadas en la PoC (Kuadrant `1.5.2`, Gateway API `v1.3.0`); el cluster destino puede tener
+otras. Y `manage_gateway_api_crds` tiene que quedar en `false` en OpenShift: ahí los CRDs los
+gestiona su propio operator y reinstalarlos genera drift.
+
+**Lo que este layer NO instala**, y el service igual da por hecho: el `Gateway` de **ingreso** y su
+`AuthPolicy` de validación, la PKI, y los Secrets de firma en `kuadrant-system`. Son decisiones de
+plataforma —qué expone cada cluster, con qué certificados— que no corresponden a un ejemplo.
+
+### `specs/install/` — registrar el service
+
+Registra el service specification leyendo las specs **de este repo** (`git_provider = "local"`) y
+le asocia el notification channel con su API key.
+
+```bash
+cd specs/install
+cp terraform.tfvars.example terraform.tfvars   # completar nrn y las dos api keys
+tofu init && tofu apply
+```
+
+El `tags_selectors` es lo que decide **qué agente** atiende las notificaciones. Con un agente por
+cluster, tiene que matchear los tags con los que arranca cada uno.
+
 ## Puesta en marcha
 
 El service lo ejecuta un **agente de nullplatform** con `runtime host` o in-cluster. Hay dos juegos
