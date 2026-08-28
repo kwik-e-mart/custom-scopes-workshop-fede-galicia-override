@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+# Handler de acciones de service: mapea el tipo de acción → workflow y lo ejecuta.
+echo "Executing service action=$SERVICE_ACTION type=$SERVICE_ACTION_TYPE"
+
+ACTION_TO_EXECUTE="$SERVICE_ACTION_TYPE"
+case "$SERVICE_ACTION_TYPE" in
+  "custom") ACTION_TO_EXECUTE="$SERVICE_ACTION" ;;
+esac
+
+# Anti-inyección: ACTION_TO_EXECUTE viene del CONTEXT (.type/.slug) y se interpola en un path.
+# Validar contra un regex estricto y NO usar eval — invocar np con array argv.
+if [[ ! "$ACTION_TO_EXECUTE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "acción inválida: '$ACTION_TO_EXECUTE'" >&2
+  exit 1
+fi
+
+WORKFLOW_PATH="$SERVICE_PATH/workflows/openshift/$ACTION_TO_EXECUTE.yaml"
+
+np service workflow exec --workflow "$WORKFLOW_PATH" --build-context --include-secrets

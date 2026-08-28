@@ -1,0 +1,387 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Reconcilia el estado deseado del egress-interceptor. ACTION = apply | delete.
+ACTION="${ARGS:-${1:-apply}}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/manifests_lib"
+source "$HERE/gitops_lib"
+
+GATEWAY_NAME="s2s-egress"
+MANAGED_LABEL="egress-interceptor/managed"
+ROLE_LABEL="egress-interceptor/role"
+ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
+MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io,gateway.gateway.networking.k8s.io"
+GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
+
+# `set -euo pipefail` está arriba pero NO alcanza: el runner de workflows del CLI ejecuta cada step
+# de una forma que neutraliza el `errexit`. Verificado en la corrida del 2026-08-27, donde un
+# `kubectl wait` timeouteó, el script siguió de largo, cambió el selector del Service apuntándolo a
+# un Gateway sin pods, y terminó reportando `status 0`.
+# El `exit` explícito SÍ corta la corrida (por eso el delete usa `return 0` al final, a propósito).
+# Conclusión operativa: todo comando cuyo fallo importe se guarda a mano con `|| die`.
+die() { log error "$@"; exit 1; }
+
+# --type=json y no merge: un merge patch FUSIONA el mapa del selector en vez de reemplazarlo, y
+# el Service se queda sin endpoints. Sólo parecía andar mientras ambos selectores compartían la
+# clave `app`.
+set_selector() {  # <svc> <json del selector>
+  kubectl -n "$NAMESPACE" patch svc "$1" --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/spec/selector\",\"value\":$2}]"
+}
+
+current_selector() { kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath='{.spec.selector}' 2>/dev/null || true; }
+
+original_selector() {
+  kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}" 2>/dev/null || true
+}
+
+# El orden importa y la verificación también: la annotation es el ÚNICO lugar donde vive el
+# selector original, así que sacarla antes de confirmar que el selector volvió deja al Service
+# apuntando a un Gateway que se va a borrar, sin ningún dato para recuperarlo.
+revert_service() {
+  local svc="$1" orig current
+  orig=$(original_selector "$svc")
+  current=$(current_selector "$svc")
+
+  if [ -z "$orig" ]; then
+    # Sin annotation y ya apuntando a otra cosa: no hay nada que revertir.
+    [ "$current" != "$GATEWAY_SELECTOR" ] && return 0
+    log error "egress-interceptor: '$svc' apunta al Gateway de egreso pero perdió la annotation"
+    log error "  ${ORIGINAL_SELECTOR_ANNOTATION}: no hay forma de saber cuál era su selector original."
+    log error "  Restauralo a mano ANTES de reintentar, o el Service queda sin endpoints:"
+    log error "    kubectl -n $NAMESPACE patch svc $svc --type=json -p '[{\"op\":\"replace\",\"path\":\"/spec/selector\",\"value\":{...}}]'"
+    exit 1
+  fi
+
+  if [ "$orig" = "$GATEWAY_SELECTOR" ]; then
+    log error "egress-interceptor: la annotation de '$svc' guarda el selector del PROPIO Gateway."
+    log error "  Revertir con eso lo dejaría igual de roto. Restauralo a mano."
+    exit 1
+  fi
+
+  set_selector "$svc" "$orig"
+  # Se relee antes de soltar el dato: un patch que no aplicó y una annotation ya borrada dejan al
+  # Service irrecuperable.
+  if [ "$(current_selector "$svc")" != "$orig" ]; then
+    log error "egress-interceptor: el selector de '$svc' no volvió a '$orig'. La annotation se deja."
+    exit 1
+  fi
+  kubectl -n "$NAMESPACE" annotate svc "$svc" "${ORIGINAL_SELECTOR_ANNOTATION}-"
+}
+
+# En OpenShift el Service ya existe y se le roba el selector. En EKS no hay nada que robar: la app
+# alcanza a su destino por el FQDN de un scope, así que el Service lo crea el interceptor.
+create_gateway_service() {  # <svc>
+  kubectl -n "$NAMESPACE" apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${1}
+  namespace: ${NAMESPACE}
+  labels:
+    ${MANAGED_LABEL}: "true"
+    ${ROLE_LABEL}: gateway-service
+    nullplatform: "true"
+spec:
+  selector:
+    gateway.networking.k8s.io/gateway-name: ${GATEWAY_NAME}
+  ports:
+    - name: http
+      port: ${LISTEN_PORT}
+      targetPort: ${LISTEN_PORT}
+EOF
+}
+
+# `kubectl wait --for=condition=X` NO sirve para un HTTPRoute: sus condiciones viven en
+# `.status.parents[].conditions[]` (una por parentRef) y kubectl mira `.status.conditions`, que en
+# este kind está siempre vacío. Verificado contra el cluster el 2026-08-26: una route con
+# Accepted=True y ResolvedRefs=True hace timeoutear el wait igual.
+# El criterio NO es "todos los parents la reportan True": `.status.parents` tiene una entrada POR
+# CONTROLLER, no por parentRef, y cada uno escribe sólo sus condiciones. Verificado en el cluster:
+#   istio.io/gateway-controller   → Accepted, ResolvedRefs
+#   kuadrant.io/policy-controller → kuadrant.io/AuthPolicyAffected
+# Exigirla en todos falla siempre que Kuadrant haya escrito su entrada — y como la escribe unos
+# segundos después que Istio, el resultado además dependía de cuándo se mirara.
+# El criterio correcto: alguien la reporta True y NADIE la reporta distinto de True.
+wait_route_condition() {  # <ns> <route> <condicion> <timeout-segundos>
+  local ns="$1" route="$2" cond="$3" deadline=$(( SECONDS + $4 )) buenas malas
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    read -r buenas malas < <(kubectl -n "$ns" get "httproute/$route" -o json 2>/dev/null \
+      | jq -r --arg c "$cond" '[.status.parents[]?.conditions[]? | select(.type == $c)] as $cs
+          | "\([$cs[] | select(.status == "True")] | length) \([$cs[] | select(.status != "True")] | length)"' \
+      2>/dev/null || echo "0 0")
+    if [ "${buenas:-0}" -gt 0 ] && [ "${malas:-1}" -eq 0 ]; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+# Las condiciones de la route, para el log de error. Se imprimen todas: cuál falta es el dato.
+route_conditions() {  # <ns> <route>
+  kubectl -n "$1" get "httproute/$2" -o jsonpath='{range .status.parents[*]}{range .conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}{end}' 2>/dev/null || true
+}
+
+intercepted_services() {
+  kubectl -n "$NAMESPACE" get svc -o json \
+    | jq -r ".items[] | select(.metadata.annotations[\"$ORIGINAL_SELECTOR_ANNOTATION\"]) | .metadata.name"
+}
+
+own_gateway_services() {
+  kubectl -n "$NAMESPACE" get svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=gateway-service" \
+    -o jsonpath='{.items[*].metadata.name}'
+}
+
+# Los Services que creó el interceptor se distinguen por su rol, no por el sufijo del nombre. El
+# alias que provisiona Terraform no lleva la label, así que ningún selector de acá lo alcanza:
+# borrarlo dejaría al HTTPRoute del ingreso sin backend, o sea que un delete del EGRESO tumbaría
+# el tráfico de ENTRADA del namespace.
+delete_own_services() {  # <rol>
+  # `!gateway.networking.k8s.io/gateway-name` excluye lo que auto-provisiona Istio para el
+  # Gateway: hereda nuestras labels y no es nuestro para borrar.
+  kubectl -n "$NAMESPACE" delete svc \
+    -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=$1,!gateway.networking.k8s.io/gateway-name" \
+    --ignore-not-found
+}
+
+if [ "$ACTION" = "delete" ]; then
+  gitops_publish_removal \
+    || die "falló la publicación del borrado al repo gitops. No se borró nada del cluster."
+  # Revertir ANTES de borrar el Gateway: al revés, el Service queda apuntando a un selector sin
+  # endpoints y el namespace pierde el servicio.
+  for svc in $(intercepted_services); do
+    revert_service "$svc"
+  done
+  delete_own_services gateway-service || die "falló el borrado de los Services de captura."
+  delete_own_services local-alias      || die "falló el borrado de los alias -local."
+
+  # Última red: borrar el Gateway mientras algún Service todavía lo selecciona lo deja sin
+  # endpoints y sin nada con qué arreglarlo. Es preferible dejar los objetos y fallar.
+  # Se excluye el Service que Istio auto-provisiona para el Gateway: su selector ES el del
+  # Gateway por construcción, e Istio le propaga las labels del Gateway —incluida la nuestra—,
+  # así que sin este filtro el delete se bloquea a sí mismo. Se reconoce por llevar la label
+  # `gateway-name`, que los Services interceptados no tienen (ellos sólo la tienen en el selector).
+  # El listado se captura aparte y con su propio chequeo: si el kubectl falla, la lista sale vacía,
+  # el guard de abajo la lee como "no queda ninguno" y se borra el Gateway con Services todavía
+  # apuntándole. El `|| die` va FUERA del `$(...)`: adentro corre en una subshell y su exit no
+  # cortaría el script.
+  SVC_JSON=$(kubectl -n "$NAMESPACE" get svc -o json) \
+    || die "no se pudo listar los Services de $NAMESPACE. No se borra nada: no hay cómo verificar que ninguno siga apuntando al Gateway."
+  STILL_HIJACKED=$(printf %s "$SVC_JSON" \
+    | jq -r --arg sel "$GATEWAY_SELECTOR" '.items[]
+        | select((.metadata.labels // {})["gateway.networking.k8s.io/gateway-name"] | not)
+        | select((.spec.selector // {}) == ($sel | fromjson)) | .metadata.name') \
+    || die "no se pudo interpretar el listado de Services de $NAMESPACE."
+  if [ -n "$STILL_HIJACKED" ]; then
+    log error "egress-interceptor: estos Services siguen apuntando al Gateway de egreso: $STILL_HIJACKED"
+    log error "  No se borra nada más: sin el Gateway quedarían sin endpoints."
+    exit 1
+  fi
+  kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "${MANAGED_LABEL}=true" --ignore-not-found \
+    || die "falló el borrado de los objetos del interceptor en $NAMESPACE."
+  # La route de ingreso de OpenShift vive en el namespace del Gateway, no en el de la app.
+  kubectl -n "$GATEWAY_NAMESPACE" delete httproute.gateway.networking.k8s.io \
+    -l "${MANAGED_LABEL}=true" --ignore-not-found \
+    || die "falló el borrado de la route de ingreso en $GATEWAY_NAMESPACE."
+  log info "reconcile delete OK en ns $NAMESPACE"
+  # `return` y no `exit`: el workflow sourcea los steps, así que un exit mata la corrida entera y
+  # se saltea los steps siguientes. exit queda sólo para los errores.
+  return 0
+fi
+
+DECLARED_SERVICES=$(echo "$INTERCEPTIONS_JSON" | jq -r '.[].service_name')
+
+if [ "$ORIGIN" != "EKS" ]; then
+  # Con percent < 100 una parte del tráfico va al backend local: si no tiene endpoints, ese
+  # porcentaje se pierde en silencio. En EKS no aplica: la rama local es el FQDN de un scope.
+  for svc in $DECLARED_SERVICES; do
+    PERCENT=$(echo "$INTERCEPTIONS_JSON" | jq -r --arg s "$svc" '.[] | select(.service_name==$s) | .percent')
+    [ "$PERCENT" -lt 100 ] || continue
+    LOCAL_ENDPOINTS=$(kubectl -n "$NAMESPACE" get endpoints "${svc}-local" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+    [ -z "$LOCAL_ENDPOINTS" ] && LOCAL_ENDPOINTS=$(kubectl -n "$NAMESPACE" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+    if [ -z "$LOCAL_ENDPOINTS" ]; then
+      log error "egress-interceptor: '$svc' tiene percent=$PERCENT (<100) pero su destino local no tiene endpoints."
+      log error "  Con ese peso, $((100 - PERCENT))% del tráfico iría a un backend vacío."
+      exit 1
+    fi
+  done
+
+  # El alias hereda puertos y appProtocol del Service real, y queda marcado como propio para que
+  # el delete sepa que puede borrarlo.
+  for svc in $DECLARED_SERVICES; do
+    kubectl -n "$NAMESPACE" get svc "${svc}-local" >/dev/null 2>&1 && continue
+    kubectl -n "$NAMESPACE" get svc "$svc" -o json \
+      | jq --arg n "${svc}-local" --arg managed "$MANAGED_LABEL" --arg role "$ROLE_LABEL" \
+          '.metadata = {name:$n, namespace:.metadata.namespace,
+                        labels:{($managed):"true", ($role):"local-alias", "nullplatform":"true"}}
+           | del(.spec.clusterIP,.spec.clusterIPs,.status,.metadata.resourceVersion,.metadata.uid)' \
+      | kubectl apply -f - \
+      || die "no se pudo crear el alias ${svc}-local; sin él el ingreso se queda sin backend."
+  done
+fi
+
+RENDER_CONTEXT="$NP_OUTPUT_DIR/render-context.json"
+MANIFEST_DIR="$NP_OUTPUT_DIR/manifests"
+jq -n \
+  --arg namespace "$NAMESPACE" \
+  --arg gateway_name "$GATEWAY_NAME" \
+  --arg gateway_class "$GATEWAY_CLASS" \
+  --arg wristband_secret "$WRISTBAND_SECRET" \
+  --arg peer_ca_secret "$PEER_CA_SECRET" \
+  --arg peer_gateway_host "$PEER_GATEWAY_HOST" \
+  --arg local_ingress_host "$LOCAL_INGRESS_HOST" \
+  --arg gateway_namespace "$GATEWAY_NAMESPACE" \
+  --arg cluster_label "$CLUSTER_LABEL" \
+  --arg origin "$ORIGIN" \
+  --arg managed_label "$MANAGED_LABEL" \
+  --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
+  --argjson listen_port "$LISTEN_PORT" \
+  --argjson token_duration "$TOKEN_DURATION" \
+  --argjson interceptions "$INTERCEPTIONS_JSON" \
+  '$ARGS.named' > "$RENDER_CONTEXT" \
+  || die "no se pudo armar el contexto de render."
+
+# Se limpia antes de rendear: un manifiesto que la corrida anterior generó y ésta ya no —porque
+# se quitó una regla o cambió el origen— seguiría en el directorio y se volvería a aplicar.
+# Sólo los .yaml y sin -r: el directorio es nuestro, pero borrarlo entero es un riesgo gratuito.
+mkdir -p "$MANIFEST_DIR"
+rm -f "$MANIFEST_DIR"/*.yaml
+MANIFEST_LIST="$NP_OUTPUT_DIR/manifest-list.txt"
+# La redirección no enmascara el estado de salida (a diferencia de `local x=$(...)`), así que un
+# render fallido aborta acá y no sigue hasta un apply de nada.
+render_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" > "$MANIFEST_LIST" \
+  || die "falló el render de los manifiestos. No se aplicó nada."
+mapfile -t MANIFESTS < "$MANIFEST_LIST"
+if [ "${#MANIFESTS[@]}" -eq 0 ]; then
+  log error "egress-interceptor: el render no produjo ningún manifiesto con contenido."
+  exit 1
+fi
+gitops_publish "$RENDER_CONTEXT" "$MANIFEST_DIR" \
+  || die "falló la publicación de los manifiestos al repo gitops. NO se aplicó nada."
+apply_manifests "${MANIFESTS[@]}" \
+  || die "falló el apply de los manifiestos. El tráfico NO se desvió."
+
+# El data plane tiene que estar arriba ANTES de desviarle el tráfico, o el Service queda
+# apuntando a un selector sin pods. Estos dos waits son los que fallaron en silencio el
+# 2026-08-27: sin el `|| die`, el timeout se imprimía y el script seguía hasta cambiar el selector.
+if ! kubectl -n "$NAMESPACE" wait --for=condition=Programmed "gateway/$GATEWAY_NAME" --timeout=180s; then
+  log error "el Gateway $GATEWAY_NAME no llegó a Programmed=True. El tráfico NO se desvió."
+  log error "$(kubectl -n "$NAMESPACE" get "gateway/$GATEWAY_NAME" \
+    -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}' 2>/dev/null || true)"
+  log error "  Estado de los pods del data plane:"
+  log error "$(kubectl -n "$NAMESPACE" get pods -l "gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME" \
+    -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,FASE:.status.phase --no-headers 2>/dev/null || true)"
+  log error "  En CRC, un pod trabado en ContainerCreating suele ser el token de multus vencido (Gotcha #23):"
+  log error "    kubectl delete pod -n openshift-multus -l app=multus"
+  exit 1
+fi
+if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
+     -l "gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME" --timeout=180s; then
+  die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
+fi
+
+# `Accepted=True` sólo dice que Kuadrant entendió el objeto. Sin esperar `Enforced=True`, el swap
+# manda tráfico por un Gateway que todavía no firma y el destino responde 401.
+if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$GATEWAY_NAME" --timeout=180s; then
+  log error "la AuthPolicy $GATEWAY_NAME no llegó a Enforced=True. El tráfico NO se desvió."
+  log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$GATEWAY_NAME" \
+    -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
+  log error "  Causa típica: el Secret de firma no existe en kuadrant-system, o no está en PKCS#1."
+  exit 1
+fi
+
+# Cada HTTPRoute que aplicamos, verificada UNA POR UNA. `Enforced` de la AuthPolicy sólo garantiza
+# que el Gateway tiene alguna route: con varias intercepciones, una rota entre varias sanas lo deja
+# igual en True. Y el swap del selector viene después, así que una route no aceptada significa
+# desviar el tráfico a un Gateway que no sabe atender ese host — un 404 que nadie ve en producción.
+for svc in $DECLARED_SERVICES; do
+  if ! wait_route_condition "$NAMESPACE" "${GATEWAY_NAME}-${svc}" Accepted 120; then
+    log error "la HTTPRoute de egreso de '$svc' no llegó a Accepted=True. El tráfico NO se desvió."
+    log error "$(route_conditions "$NAMESPACE" "${GATEWAY_NAME}-${svc}")"
+    exit 1
+  fi
+done
+# `ResolvedRefs` NO se chequea acá a propósito: los backendRefs de egreso son `kind: Hostname`
+# (extensión de Istio) y ahí la condición da BackendNotFound aunque el host resuelva perfecto
+# (Gotcha #27). Chequearla haría fallar todos los apply sanos.
+
+if [ "$ORIGIN" != "EKS" ]; then
+  # La route de ingreso vive en el namespace del Gateway y su backendRef SÍ es un Service real y
+  # cross-namespace, así que acá ResolvedRefs sí vale — y es donde aparecería un ReferenceGrant
+  # faltante o un alias que no se creó.
+  for svc in $DECLARED_SERVICES; do
+    for cond in Accepted ResolvedRefs; do
+      if ! wait_route_condition "$GATEWAY_NAMESPACE" "s2s-ingress-${svc}" "$cond" 120; then
+        log error "la HTTPRoute de ingreso de '$svc' no llegó a $cond=True en el ns $GATEWAY_NAMESPACE."
+        log error "$(route_conditions "$GATEWAY_NAMESPACE" "s2s-ingress-${svc}")"
+        log error "  Sin esto el tráfico que llega del otro sustrato no tiene por dónde entrar."
+        if [ "$cond" = "ResolvedRefs" ]; then
+          log error "  Con ResolvedRefs en False mirá el alias ${svc}-local y el ReferenceGrant hacia $NAMESPACE."
+        fi
+        exit 1
+      fi
+    done
+  done
+
+  # Y recién con esa route colgando, Kuadrant enforcea el validador del ingreso: una AuthPolicy que
+  # no está en el camino de ninguna route NO se aplica, y el destino aceptaría tráfico sin validar
+  # el wristband. Antes esta route la provisionaba Terraform de forma permanente y el validador
+  # estaba siempre enforceando; ahora que la trae la intercepción, hay que esperarlo explícitamente.
+  if ! kubectl -n "$GATEWAY_NAMESPACE" wait --for=condition=Enforced \
+       "authpolicy/$INGRESS_AUTHPOLICY" --timeout=180s; then
+    log error "la AuthPolicy de ingreso '$INGRESS_AUTHPOLICY' no llegó a Enforced=True en $GATEWAY_NAMESPACE."
+    log error "$(kubectl -n "$GATEWAY_NAMESPACE" get "authpolicy/$INGRESS_AUTHPOLICY" \
+      -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
+    log error "  El destino estaría aceptando tráfico del otro sustrato SIN validar el token."
+    exit 1
+  fi
+fi
+
+# Converge al selector deseado en vez de actuar sólo la primera vez: un Service ya interceptado
+# apuntando a un Gateway anterior quedaría anotado y roto.
+for svc in $DECLARED_SERVICES; do
+  if ! kubectl -n "$NAMESPACE" get svc "$svc" >/dev/null 2>&1; then
+    create_gateway_service "$svc" \
+      || die "no se pudo crear el Service '$svc' que captura el tráfico; la intercepción no existe."
+    continue
+  fi
+  CURRENT_SELECTOR=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath='{.spec.selector}')
+  [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && continue
+  # El selector original se captura una sola vez: es el dato con el que se revierte.
+  ALREADY_ANNOTATED=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath="{.metadata.annotations.$ORIGINAL_SELECTOR_ANNOTATION}" 2>/dev/null || true)
+  if [ -z "$ALREADY_ANNOTATED" ]; then
+    # Guardar el selector del propio Gateway como "original" haría que el revert no revierta nada.
+    [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }
+    # ANTES del swap y con el fallo cortando: si la annotation no queda y el selector sí cambia,
+    # el Service apunta al Gateway sin ningún registro de su selector original — irrecuperable.
+    kubectl -n "$NAMESPACE" annotate svc "$svc" "$ORIGINAL_SELECTOR_ANNOTATION=$CURRENT_SELECTOR" --overwrite \
+      || die "no se pudo anotar el selector original de '$svc'. NO se desvía: sin ese dato no habría vuelta atrás."
+  fi
+  set_selector "$svc" "$GATEWAY_SELECTOR" \
+    || die "no se pudo apuntar '$svc' al Gateway de egreso."
+  # Se relee: un patch que devuelve 0 sin aplicar dejaría la intercepción declarada pero inactiva.
+  if [ "$(current_selector "$svc")" != "$GATEWAY_SELECTOR" ]; then
+    die "el selector de '$svc' no quedó apuntando al Gateway. La intercepción NO está activa."
+  fi
+done
+
+# Los que ya no están declarados, por los dos caminos: el hijackeado de OpenShift lo delata su
+# annotation, y el que creó el interceptor en EKS su rol. El Gateway y la AuthPolicy quedan:
+# sirven al resto de las reglas.
+STALE_SERVICES=$(printf '%s\n%s\n' "$(intercepted_services)" "$(own_gateway_services | tr ' ' '\n')" | grep -v '^$' | sort -u)
+for svc in $STALE_SERVICES; do
+  echo "$DECLARED_SERVICES" | grep -qx "$svc" && continue
+  revert_service "$svc"
+  kubectl -n "$NAMESPACE" delete svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=gateway-service" \
+    --field-selector "metadata.name=${svc}" --ignore-not-found
+  kubectl -n "$NAMESPACE" delete svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=local-alias" \
+    --field-selector "metadata.name=${svc}-local" --ignore-not-found
+  kubectl -n "$NAMESPACE" delete \
+    "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${svc}" \
+    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${svc}-scope" --ignore-not-found
+  kubectl -n "$GATEWAY_NAMESPACE" delete \
+    "httproute.gateway.networking.k8s.io/s2s-ingress-${svc}" --ignore-not-found
+done
+
+log info "reconcile apply OK en ns $NAMESPACE (gateway $GATEWAY_NAME, $(echo "$DECLARED_SERVICES" | grep -c .) servicio(s))"

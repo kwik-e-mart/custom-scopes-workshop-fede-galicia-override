@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Tras el apply, escribe a los attributes de la instancia el ruteo resuelto, para que el
+# operador vea en la UI a dónde quedó cada servicio. Lee CONTEXT (.service.id) e
+# INTERCEPTIONS_JSON del env (propagado por build_context). NO usa context.env/source.
+SERVICE_ID=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.id // empty')
+[ -z "$SERVICE_ID" ] && { log warn "sin SERVICE_ID, skip write outputs"; return 0; }
+
+RESOLVED=$(echo "${INTERCEPTIONS_JSON:-[]}" | jq -c '[.[] | {
+  service_name: .service_name,
+  fqdn: (.target_fqdn // .target_scope),
+  percent: .percent
+}]')
+np service patch --id "$SERVICE_ID" --body "{\"attributes\":{\"resolved\":$RESOLVED}}"
+log info "outputs escritos para service $SERVICE_ID"

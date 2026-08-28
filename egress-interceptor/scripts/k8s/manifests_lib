@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Render + apply de los manifiestos del egress-interceptor.
+#
+# Cada objeto de Kubernetes vive en su propio template bajo manifests/egress/. El orden de
+# aplicación sale del glob, que es alfabético; el prefijo numérico lo vuelve explícito —el Gateway
+# primero, después lo que lo referencia— en vez de dejarlo librado a cómo caigan los nombres.
+# No es una dependencia dura: los controllers son level-triggered, así que un HTTPRoute aplicado
+# antes que su Gateway queda un momento en Accepted=False y reconcilia solo. El orden es para que
+# el estado intermedio sea limpio y para poder leer la secuencia de un `ls`. Los saltos de 10
+# dejan lugar para insertar un objeto sin renumerar el resto.
+#
+# Se sourcea (desde reconcile y desde los tests). Las funciones se guardan con `type -t` para que
+# un test pueda definir la suya antes de sourcear.
+
+MANIFESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/egress}"
+
+# render_manifests <contexto.json> <outdir>
+# Renderiza cada template al outdir y escribe en stdout, en orden de aplicación, la ruta de los
+# que quedaron con contenido.
+if ! type -t render_manifests >/dev/null 2>&1; then
+render_manifests() {
+  local ctx="$1" outdir="$2" tpl out
+  local -a pairs=() outs=()
+
+  if [ ! -d "$MANIFESTS_DIR" ]; then
+    log error "egress-interceptor: no existe el directorio de manifiestos '$MANIFESTS_DIR'"
+    return 1
+  fi
+
+  mkdir -p "$outdir"
+
+  for tpl in "$MANIFESTS_DIR"/*.yaml.tpl; do
+    # Un glob sin matches se expande a sí mismo: sin esto el loop "procesaría" un archivo
+    # inexistente y el reconcile aplicaría CERO objetos sin decir nada.
+    [ -e "$tpl" ] || break
+    out="$outdir/$(basename "$tpl" .tpl)"
+    pairs+=(-f "$tpl" -o "$out")
+    outs+=("$out")
+  done
+
+  # Sin este guard el fallo no es "no aplica nada": es un CUELGUE. gomplate sin ningún -f lee el
+  # template de stdin, así que un MANIFESTS_DIR mal resuelto dejaría al reconcile esperando para
+  # siempre, sin log y sin timeout. Verificado rompiéndolo a propósito el 2026-08-26.
+  if [ "${#outs[@]}" -eq 0 ]; then
+    log error "egress-interceptor: '$MANIFESTS_DIR' no tiene ningún *.yaml.tpl"
+    return 1
+  fi
+
+  # Una sola invocación con todos los pares -f/-o en vez de una por template: gomplate arranca
+  # una vez (~0,5 s contra ~0,5 s por archivo) y el error sigue nombrando el template y la línea.
+  # El estado de salida se chequea acá y no se delega a `set -e`, porque esto también se sourcea
+  # desde los tests: sin el chequeo, un template que no compila devolvería 0 con archivos faltantes.
+  # `</dev/null` para que gomplate no pueda quedarse leyendo stdin bajo ninguna circunstancia: no
+  # necesita nada de ahí, y colgarse es el peor modo de fallar dentro de un agente.
+  if ! gomplate -c .="$ctx" "${pairs[@]}" </dev/null; then
+    log error "egress-interceptor: falló el render de los manifiestos de '$MANIFESTS_DIR'"
+    return 1
+  fi
+
+  # Los templates condicionales (las dos DestinationRule, la route de ingreso) no producen nada
+  # cuando su condición no se cumple, y `kubectl apply -f` sobre un archivo vacío es un error.
+  # gomplate directamente NO crea el archivo cuando la salida es vacía, así que se contemplan las
+  # dos formas: inexistente y en blanco.
+  for out in "${outs[@]}"; do
+    if [ ! -f "$out" ] || [ -z "$(tr -d '[:space:]' <"$out")" ]; then
+      rm -f "$out"
+      continue
+    fi
+    printf '%s\n' "$out"
+  done
+  # Explícito: la última iteración del loop puede terminar en un `continue` cuyo test dio falso, y
+  # la función devolvería ese estado.
+  return 0
+}
+fi
+
+# apply_manifests <archivo>...
+# kubectl apply archivo por archivo y no `-f <dir>`: así el error nombra el manifiesto que falló.
+if ! type -t apply_manifests >/dev/null 2>&1; then
+apply_manifests() {
+  local file
+  for file in "$@"; do
+    log debug "kubectl apply $(basename "$file")"
+    if ! kubectl apply -f "$file"; then
+      log error "egress-interceptor: falló el apply de $(basename "$file") ($file)"
+      return 1
+    fi
+  done
+}
+fi
