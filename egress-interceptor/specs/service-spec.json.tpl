@@ -1,6 +1,5 @@
 {
   "name": "Migrador de tráfico service-to-service a EKS",
-  "slug": "egress-interceptor",
   "type": "dependency",
   "unique": false,
   "assignable_to": "any",
