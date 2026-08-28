@@ -1,0 +1,5 @@
+# Un update es exactamente un create: el reconcile converge al estado deseado, no aplica un
+# delta. Se importa en vez de duplicar para que el juego de vars que propaga `build_context` no
+# pueda quedar desincronizado entre los dos — que es lo que ya pasó al agregar TARGET_CLUSTER.
+include:
+  - "$SERVICE_PATH/workflows/openshift/create.yaml"

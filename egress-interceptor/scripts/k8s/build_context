@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# $CONTEXT lo arma el CLI con --build-context y sólo trae los recursos que fue a buscar
+# (account, application, namespace, providers). Los datos de la instancia viven en la
+# notificación.
+NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification')
+SERVICE_ATTRS=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})')
+INTERCEPTIONS_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.interceptions // []')
+SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty')
+
+# El namespace del servicio DESTINO: la instancia se cuelga de la aplicación dueña del servicio, no
+# de la que lo consume. Ahí es donde se intercepta, y por eso una regla alcanza para todos los
+# callers.
+NAMESPACE="${NAMESPACE_OVERRIDE:-}"
+if [ -z "$NAMESPACE" ]; then
+  NAMESPACE=$(echo "$CONTEXT" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null || true)
+fi
+NAMESPACE="${NAMESPACE:-nullplatform}"
+
+PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
+LISTEN_PORT="${LISTEN_PORT:-8080}"
+TOKEN_DURATION="${TOKEN_DURATION:-300}"
+GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
+# El ingreso del sustrato opuesto. Es configuración del service y NO un campo del form: el dev
+# declara identidades de nullplatform, nunca direcciones de transporte.
+PEER_GATEWAY_HOST="${PEER_GATEWAY_HOST:-}"
+# El ingreso de ESTE cluster. Con origen EKS la rama no migrada también entra por un Gateway.
+LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
+# Namespace del Gateway de ingreso. Es `gateways` y no `istio-system` porque el template de
+# HTTPRoute de los scopes de nullplatform hardcodea ese namespace en su parentRef.
+GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
+# La AuthPolicy que valida el wristband en el ingreso de ESTE cluster. El service no la crea —es
+# del layer— pero sí espera a que quede Enforced después de colgarle su route de ingreso: Kuadrant
+# no aplica una policy que no esté en el camino de ninguna route, y sin ese wait el destino
+# aceptaría tráfico del otro sustrato sin validar el token.
+INGRESS_AUTHPOLICY="${INGRESS_AUTHPOLICY:-s2s-validator}"
+
+
+# Propiedad del cluster donde corre el agente, no del form.
+export ORIGIN="${ORIGIN:-OS}"
+# Cómo se identifica ESTE cluster en el header x-s2s-cluster. Se calcula DESPUÉS de ORIGIN: con
+# `set -u`, leerlo antes aborta el script con "unbound variable".
+CLUSTER_LABEL="${CLUSTER_LABEL:-$ORIGIN}"
+
+# Estos valores se interpolan en YAML que el cluster aplica y en comandos del reconcile.
+require_match() {  # <value> <regex> <field>
+  local val="$1" re="$2" name="$3"
+  if [[ ! "$val" =~ $re ]]; then
+    log error "egress-interceptor build_context: valor inválido para ${name}: '${val}'"
+    exit 1
+  fi
+}
+require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
+[ -n "$SERVICE_ID" ] && require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
+
+WRISTBAND_SECRET="${WRISTBAND_SECRET_NAME:-}"
+[ -n "$WRISTBAND_SECRET" ] || WRISTBAND_SECRET='{namespace}-wristband-key'
+WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
+require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
+
+gitops_substrate_hint() {
+  if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
+}
+
+GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
+GITOPS_PATH_PREFIX="${GITOPS_PATH_PREFIX:-}"
+GITOPS_PUSH_RETRIES="${GITOPS_PUSH_RETRIES:-5}"
+
+if [ -n "${GITOPS_REPO_URL:-}" ]; then
+  require_match "$GITOPS_BRANCH" '^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$' "gitops_branch"
+  require_match "$GITOPS_PUSH_RETRIES" '^[1-9][0-9]?$' "gitops_push_retries"
+  if [ -n "$GITOPS_PATH_PREFIX" ]; then
+    require_match "$GITOPS_PATH_PREFIX" '^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$' "gitops_path_prefix"
+    case "$GITOPS_PATH_PREFIX" in
+      *..*)
+        log error "egress-interceptor: GITOPS_PATH_PREFIX no puede contener '..'."
+        exit 1 ;;
+    esac
+  fi
+  log info "gitops: se publica en ${GITOPS_PATH_PREFIX:+${GITOPS_PATH_PREFIX%/}/}$(gitops_substrate_hint)/${NAMESPACE} (branch ${GITOPS_BRANCH})"
+fi
+
+export GITOPS_BRANCH GITOPS_PATH_PREFIX GITOPS_PUSH_RETRIES
+
+INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" | jq -c '
+  map(((.service_name // "") | tostring | ascii_downcase | sub("\\.+$"; "")) as $raw
+      | ($raw | split(".")) as $labels
+      | . + { service_input: $raw,
+              service_name: ($labels[0] // ""),
+              service_suffix: ($labels[1:] | join(".")) })') \
+  || { log error "egress-interceptor: no se pudieron normalizar los nombres de las reglas."; exit 1; }
+
+NAME_ERRORS=$(printf %s "$INTERCEPTIONS_JSON" | jq -r --arg ns "$NAMESPACE" '
+  def formas($s): "\($s) | \($s).\($ns) | \($s).\($ns).svc | \($s).\($ns).svc.cluster.local";
+  .[]
+  | .service_input as $in | .service_name as $svc | .service_suffix as $suf
+  | if ($svc | length) == 0 then
+      if ($in | length) == 0
+      then "nombre hay una regla sin nombre de servicio. Cada regla declara el Service del namespace '\''\($ns)'\'' cuyo tráfico se migra."
+      else "nombre '\''\($in)'\'' no empieza con un nombre de servicio."
+      end
+    elif ($svc | test("\\A[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\z") | not) then
+      "nombre '\''\($in)'\'': '\''\($svc)'\'' no es un nombre de Service válido."
+    elif (["", $ns, "\($ns).svc", "\($ns).svc.cluster.local"] | index($suf)) == null then
+      "namespace no se entiende '\''\($in)'\'' como un servicio del namespace '\''\($ns)'\''. Formas válidas: \(formas($svc))"
+    else empty
+    end') \
+  || { log error "egress-interceptor: no se pudieron validar los nombres de las reglas."; exit 1; }
+
+if [ -n "$NAME_ERRORS" ]; then
+  NS_ERROR=""
+  while IFS= read -r NAME_ERROR; do
+    [ "${NAME_ERROR%% *}" = "namespace" ] && NS_ERROR=1
+    log error "egress-interceptor: ${NAME_ERROR#* }"
+  done <<<"$NAME_ERRORS"
+  if [ -n "$NS_ERROR" ]; then
+    log error "  El interceptor sólo migra tráfico INTRA-NAMESPACE: actúa sobre el Service del namespace"
+    log error "  del destino, que es el de la aplicación dueña de esta instancia."
+    log error "  Para exponer un servicio a consumidores de OTROS namespaces, el service es Endpoint Exposer."
+  fi
+  exit 1
+fi
+
+printf %s "$INTERCEPTIONS_JSON" \
+  | jq -r '.[] | select(.service_input != .service_name) | "  regla: \(.service_input) → service \(.service_name)"' \
+  | while IFS= read -r MAP_LINE; do log info "$MAP_LINE"; done
+
+DUP_SERVICES=$(printf %s "$INTERCEPTIONS_JSON" | jq -r '
+  group_by(.service_name) | map(select(length > 1))
+  | .[] | "  \(.[0].service_name) ← \([.[].service_input] | join(" + "))"') \
+  || { log error "egress-interceptor: no se pudo chequear reglas duplicadas."; exit 1; }
+if [ -n "$DUP_SERVICES" ]; then
+  log error "egress-interceptor: hay más de una regla para el mismo servicio."
+  log error "$DUP_SERVICES"
+  log error "  Cada servicio se declara UNA sola vez: el percent es un único dial por destino."
+  exit 1
+fi
+
+INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" | jq -c 'map(del(.service_input, .service_suffix))') \
+  || { log error "egress-interceptor: no se pudieron limpiar los auxiliares de normalización."; exit 1; }
+
+if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq '[.[] | select((.scope // "") == "")] | length')" -gt 0 ]; then
+  log error "egress-interceptor: hay reglas sin scope. Cada regla declara dónde corre el servicio del lado EKS."
+  exit 1
+fi
+
+if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
+  if [ -z "$PEER_GATEWAY_HOST" ]; then
+    log error "egress-interceptor: falta PEER_GATEWAY_HOST en la configuración del workflow."
+    log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
+    exit 1
+  fi
+  require_match "$GATEWAY_NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "gateway_namespace"
+  require_match "$INGRESS_AUTHPOLICY" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "ingress_authpolicy"
+  require_match "$CLUSTER_LABEL" '^[a-zA-Z0-9_.-]{1,63}$' "cluster_label"
+  require_match "$LOCAL_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "local_ingress_host"
+  require_match "$PEER_GATEWAY_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "peer_gateway_host"
+
+  APPLICATION_ID=$(printf %s "$CONTEXT" | jq -r '.application.id // empty')
+  if [ -z "$APPLICATION_ID" ]; then
+    log error "egress-interceptor: el CONTEXT no trae application.id y hay reglas con scope por resolver."
+    log error "  El workflow tiene que correr con --build-context."
+    exit 1
+  fi
+
+  # np sale con exit 1 ante un 403 pero escribe el error en STDOUT, así que sin propagar el status
+  # esto seguiría con un objeto {error} que jq parsea contento y ningún scope resolvería.
+  ACTIVE_SCOPES=$(np scope list --application-id "$APPLICATION_ID" --status active --format json \
+    --query '[ (.results? // .) | .[]? | {slug, domain} ]')
+
+  INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" | jq -c --argjson scopes "$ACTIVE_SCOPES" '
+    map(. as $rule | $rule + {
+      scope_fqdn: ([$scopes[] | select(.slug == $rule.scope) | .domain] | first // "")
+    })')
+
+  while IFS=$'\t' read -r RULE_SCOPE RULE_FQDN; do
+    if [ -z "$RULE_FQDN" ]; then
+      log error "egress-interceptor: el scope '$RULE_SCOPE' no está entre los scopes activos de la aplicación $APPLICATION_ID."
+      log error "  activos: $(printf %s "$ACTIVE_SCOPES" | jq -r 'if length == 0 then "(ninguno)" else [.[].slug] | join(", ") end')"
+      exit 1
+    fi
+    # Un scope creado pero sin desplegar trae este literal, no null ni vacío. Dejarlo pasar rinde un
+    # HTTPRoute que apunta a un hostname inválido y no se queja nadie.
+    if [ "$RULE_FQDN" = "To be defined" ]; then
+      log error "egress-interceptor: el scope '$RULE_SCOPE' existe pero todavía no está desplegado (domain: 'To be defined')."
+      exit 1
+    fi
+    require_match "$RULE_FQDN" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "el FQDN del scope '$RULE_SCOPE'"
+  done < <(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | [.scope, .scope_fqdn] | @tsv')
+fi
+
+export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET PEER_CA_SECRET LISTEN_PORT
+export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
+export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY
+log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') origin=$ORIGIN key=$WRISTBAND_SECRET"
+printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \
+  | while IFS= read -r RULE_LINE; do log info "$RULE_LINE"; done
+# Dato de salida que parsean los tests, no una traza: va con echo para que no lo filtre LOG_LEVEL.
+echo "INTERCEPTIONS_JSON=$INTERCEPTIONS_JSON"

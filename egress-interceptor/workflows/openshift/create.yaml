@@ -1,0 +1,52 @@
+provider_categories:
+  - container-orchestration
+configuration:
+  WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
+  PEER_CA_SECRET: s2s-remote-ca
+  PEER_GATEWAY_HOST: s2s-remote-gateway.tailscale.svc.cluster.local
+  LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
+  GATEWAY_NAMESPACE: gateways
+  INGRESS_AUTHPOLICY: s2s-validator
+  TOKEN_DURATION: "300"
+  GATEWAY_CLASS: istio
+  LISTEN_PORT: "8080"
+  GITOPS_BRANCH: main
+  GITOPS_PATH_PREFIX: ""
+  GITOPS_PUSH_RETRIES: "5"
+steps:
+  - name: load logging
+    type: script
+    file: "$SERVICE_PATH/logging"
+    output:
+      - name: log
+        type: function
+        parameters:
+          level: string
+          message: string
+  - name: build context
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/build_context
+    output:
+      - { name: NAMESPACE, type: environment }
+      - { name: INTERCEPTIONS_JSON, type: environment }
+      - { name: SERVICE_ID, type: environment }
+      - { name: WRISTBAND_SECRET, type: environment }
+      - { name: PEER_CA_SECRET, type: environment }
+      - { name: PEER_GATEWAY_HOST, type: environment }
+      - { name: LOCAL_INGRESS_HOST, type: environment }
+      - { name: GATEWAY_NAMESPACE, type: environment }
+      - { name: INGRESS_AUTHPOLICY, type: environment }
+      - { name: CLUSTER_LABEL, type: environment }
+      - { name: LISTEN_PORT, type: environment }
+      - { name: TOKEN_DURATION, type: environment }
+      - { name: GATEWAY_CLASS, type: environment }
+      - { name: GITOPS_BRANCH, type: environment }
+      - { name: GITOPS_PATH_PREFIX, type: environment }
+      - { name: GITOPS_PUSH_RETRIES, type: environment }
+  - name: reconcile apply
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/reconcile
+    configuration: { ARGS: apply }
+  - name: write outputs
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/write_service_outputs
