@@ -153,6 +153,15 @@ MOCK
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
+@test "mint_key aborta si el target del service excede los 63 caracteres del label" {
+  export NP_MOCK_NAMESPACE='{"slug":"namespace-con-un-nombre-bastante-largo-de-verdad"}'
+  export NP_MOCK_APPLICATION='{"slug":"aplicacion-con-un-nombre-tambien-bastante-largo"}'
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "63 caracteres"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+}
+
 @test "revoke_key borra el secret del link" {
   run bash "$REVOKE"
   [ "$status" -eq 0 ]
