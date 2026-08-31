@@ -25,7 +25,8 @@ export SERVICE_ACTION_TYPE
 NOTIFICATION_ACTION=$(echo "$CONTEXT" | jq -r '.action') || { echo "Notificación no trae action" >&2; exit 1; }
 export NOTIFICATION_ACTION
 
-export WORKING_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKING_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || { echo "No se pudo resolver WORKING_DIRECTORY" >&2; exit 1; }
+export WORKING_DIRECTORY
 
 SERVICE_PATH="$(dirname "$WORKING_DIRECTORY")"
 if [[ "$SERVICE_PATH" != /* ]]; then
