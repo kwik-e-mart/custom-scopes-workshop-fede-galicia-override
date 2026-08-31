@@ -34,14 +34,20 @@ if [ "$NP_MOCK_MODE" = "forbidden" ]; then
 fi
 SUBCMD="$1 $2"
 QUERY=.
+APPLICATION_ID=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --query) QUERY="$2"; shift 2 ;;
+    --application-id) APPLICATION_ID="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 case "$SUBCMD" in
   "scope list")
+    if [ -z "$APPLICATION_ID" ]; then
+      echo '{"error": "flag application_id is required"}'
+      exit 1
+    fi
     printf %s "$NP_MOCK_SCOPES" | jq -c '{results: .}' | jq -c "$QUERY" ;;
   "application read")
     printf %s "$NP_MOCK_APP" | jq -c "$QUERY" ;;
