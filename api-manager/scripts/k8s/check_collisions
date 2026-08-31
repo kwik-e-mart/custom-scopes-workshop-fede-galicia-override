@@ -3,43 +3,21 @@ set -euo pipefail
 
 CHECK_COLLISIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$CHECK_COLLISIONS_DIR/labels_lib"
+source "$CHECK_COLLISIONS_DIR/collisions_lib"
 
-ROUTE_NAME="api-manager-${SERVICE_ID}"
+ROUTE_NAME=$(route_name_for_service "$SERVICE_ID")
 
-EXISTING=$(kubectl get httproutes -A -l "${MANAGED_LABEL}=true" -o json) \
-  || { log error "api-manager: no se pudo listar las rutas existentes. No se aplica nada: sin ese listado no hay cómo detectar una colisión de dominios."; exit 1; }
+if CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$TARGET_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
+  exit 0
+else
+  STATUS=$?
+fi
 
-CLAIMED=$(printf %s "$EXISTING" | jq -c --arg route_name "$ROUTE_NAME" --arg target_label "$TARGET_LABEL" '
-  def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
-  [ .items[]
-    | select(.metadata.name != $route_name)
-    | .metadata.labels[$target_label] as $owner
-    | . as $r
-    | $r.spec.hostnames[] as $h
-    | $r.spec.rules[]?.matches[]?.path.value as $p
-    | {host: $h, path: ($p | normalize_path), owner: $owner} ]') \
-  || { log error "api-manager: no se pudo procesar el listado de rutas existentes."; exit 1; }
-
-WANTED=$(jq -nc --argjson hosts "$HOSTS_JSON" --argjson routes "$ROUTES_JSON" '
-  def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
-  [ $hosts[] as $h | $routes[] | {host: $h, path: (.path | normalize_path)} ]') \
-  || { log error "api-manager: no se pudo armar el listado de dominios y rutas propios."; exit 1; }
-
-CONFLICTS=$(jq -nr --argjson claimed "$CLAIMED" --argjson wanted "$WANTED" '
-  def overlaps($a; $b):
-    ($a == $b)
-    or (($b | startswith($a)) and ($b[($a | length):($a | length) + 1] == "/"))
-    or (($a | startswith($b)) and ($a[($b | length):($b | length) + 1] == "/"));
-  [ $wanted[] as $w
-    | $claimed[]
-    | select(.host == $w.host and overlaps(.path; $w.path))
-    | {host: .host, existing_path: .path, wanted_path: $w.path, owner: .owner} ]
-  | .[] | "  \(.host)\(.wanted_path) se solapa con \(.host)\(.existing_path), ya tomado por \(.owner)"') \
-  || { log error "api-manager: no se pudo comparar los dominios y rutas propios contra los ya declarados."; exit 1; }
-
-if [ -n "$CONFLICTS" ]; then
-  log error "api-manager: hay dominios y paths que se solapan con los de otra aplicación."
-  log error "$CONFLICTS"
-  log error "  Compartir un dominio está permitido: lo que no se puede es solapar el mismo subárbol de path con otra app. La barra final y el '*' de subárbol no cuentan como una ruta distinta."
+if [ "$STATUS" -eq 2 ]; then
   exit 1
 fi
+
+log error "api-manager: hay dominios y paths que se solapan con los de otra aplicación."
+log error "$CONFLICTS"
+log error "  Compartir un dominio está permitido: lo que no se puede es solapar el mismo subárbol de path con otra app. La barra final y el '*' de subárbol no cuentan como una ruta distinta."
+exit 1

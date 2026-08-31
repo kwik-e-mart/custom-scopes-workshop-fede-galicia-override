@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+if ! type -t route_name_for_service >/dev/null 2>&1; then
+route_name_for_service() {
+  printf 'api-manager-%s' "$1"
+}
+fi
+
+if ! type -t find_route_conflicts >/dev/null 2>&1; then
+find_route_conflicts() {
+  local route_name="$1" managed_label="$2" target_label="$3" hosts_json="$4" routes_json="$5"
+  local existing claimed wanted conflicts
+
+  existing=$(kubectl get httproutes -A -l "${managed_label}=true" -o json) \
+    || { log error "api-manager: no se pudo listar las rutas existentes. No se aplica nada: sin ese listado no hay cómo detectar una colisión de dominios."; return 2; }
+
+  claimed=$(printf %s "$existing" | jq -c --arg route_name "$route_name" --arg target_label "$target_label" '
+    def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
+    [ .items[]
+      | select(.metadata.name != $route_name)
+      | .metadata.labels[$target_label] as $owner
+      | . as $r
+      | $r.spec.hostnames[] as $h
+      | $r.spec.rules[]?.matches[]?.path.value as $p
+      | {host: $h, path: ($p | normalize_path), owner: $owner} ]') \
+    || { log error "api-manager: no se pudo procesar el listado de rutas existentes."; return 2; }
+
+  wanted=$(jq -nc --argjson hosts "$hosts_json" --argjson routes "$routes_json" '
+    def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
+    [ $hosts[] as $h | $routes[] | {host: $h, path: (.path | normalize_path)} ]') \
+    || { log error "api-manager: no se pudo armar el listado de dominios y rutas propios."; return 2; }
+
+  conflicts=$(jq -nr --argjson claimed "$claimed" --argjson wanted "$wanted" '
+    def overlaps($a; $b):
+      ($a == $b)
+      or (($b | startswith($a)) and ($b[($a | length):($a | length) + 1] == "/"))
+      or (($a | startswith($b)) and ($a[($b | length):($b | length) + 1] == "/"));
+    [ $wanted[] as $w
+      | $claimed[]
+      | select(.host == $w.host and overlaps(.path; $w.path))
+      | {host: .host, existing_path: .path, wanted_path: $w.path, owner: .owner} ]
+    | .[] | "  \(.host)\(.wanted_path) se solapa con \(.host)\(.existing_path), ya tomado por \(.owner)"') \
+    || { log error "api-manager: no se pudo comparar los dominios y rutas propios contra los ya declarados."; return 2; }
+
+  if [ -n "$conflicts" ]; then
+    printf '%s\n' "$conflicts"
+    return 1
+  fi
+  return 0
+}
+fi
