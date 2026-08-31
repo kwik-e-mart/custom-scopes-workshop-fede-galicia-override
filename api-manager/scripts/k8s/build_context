@@ -3,13 +3,9 @@ set -euo pipefail
 
 BUILD_CONTEXT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$BUILD_CONTEXT_DIR/service_target_lib"
+source "$BUILD_CONTEXT_DIR/notification_lib"
 
-NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
-  || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
-if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
-  log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
-  exit 1
-fi
+NOTIFICATION=$(read_notification) || exit 1
 
 SERVICE_ATTRS=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})') \
   || { log error "api-manager: no se pudieron combinar los attributes y parameters de la notificación."; exit 1; }

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+if ! type -t read_notification >/dev/null 2>&1; then
+read_notification() {
+  local notification
+  notification=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
+    || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; return 1; }
+  if [ -z "$notification" ] || [ "$notification" = "null" ]; then
+    log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
+    return 1
+  fi
+  printf '%s' "$notification"
+}
+fi
+
+if ! type -t require_link_id >/dev/null 2>&1; then
+require_link_id() {
+  local notification="$1"
+  local link_id
+  link_id=$(printf %s "$notification" | jq -r '.link.id // empty') \
+    || { log error "api-manager: no se pudo leer link.id de la notificación."; return 1; }
+  if [ -z "$link_id" ]; then
+    log error "api-manager: la notificación no trae link.id."
+    log error "  Claves disponibles en \$NOTIFICATION: $(printf %s "$notification" | jq -r 'keys | join(", ")')"
+    return 1
+  fi
+  if [[ ! "$link_id" =~ ^[a-zA-Z0-9-]{1,48}$ ]]; then
+    log error "api-manager: link.id inválido: '$link_id'"
+    return 1
+  fi
+  printf '%s' "$link_id"
+}
+fi

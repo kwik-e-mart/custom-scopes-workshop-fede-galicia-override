@@ -4,26 +4,10 @@ set -euo pipefail
 MINT_KEY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$MINT_KEY_DIR/labels_lib"
 source "$MINT_KEY_DIR/service_target_lib"
+source "$MINT_KEY_DIR/notification_lib"
 
-NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
-  || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
-if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
-  log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
-  exit 1
-fi
-
-LINK_ID=$(printf %s "$NOTIFICATION" | jq -r '.link.id // empty') \
-  || { log error "api-manager: no se pudo leer link.id de la notificación."; exit 1; }
-if [ -z "$LINK_ID" ]; then
-  log error "api-manager: la notificación no trae link.id."
-  log error "  Claves disponibles en \$NOTIFICATION: $(printf %s "$NOTIFICATION" | jq -r 'keys | join(", ")')"
-  exit 1
-fi
-
-if [[ ! "$LINK_ID" =~ ^[a-zA-Z0-9-]{1,48}$ ]]; then
-  log error "api-manager: link.id inválido: '$LINK_ID'"
-  exit 1
-fi
+NOTIFICATION=$(read_notification) || exit 1
+LINK_ID=$(require_link_id "$NOTIFICATION") || exit 1
 
 SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty') \
   || { log error "api-manager: no se pudo leer service.id de la notificación."; exit 1; }
