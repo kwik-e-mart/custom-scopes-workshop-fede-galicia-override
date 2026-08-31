@@ -8,17 +8,19 @@ EXISTING=$(kubectl get httproutes -A -l "${MANAGED_LABEL}=true" -o json) \
   || { log error "api-manager: no se pudo listar las rutas existentes. No se aplica nada: sin ese listado no hay cómo detectar una colisión de dominios."; exit 1; }
 
 CLAIMED=$(printf %s "$EXISTING" | jq -c --arg self "$APP_TARGET" --arg target_label "$TARGET_LABEL" '
+  def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
   [ .items[]
     | .metadata.labels[$target_label] as $owner
     | select($owner != $self)
     | . as $r
     | $r.spec.hostnames[] as $h
     | $r.spec.rules[]?.matches[]?.path.value as $p
-    | {host: $h, path: $p, owner: $owner} ]') \
+    | {host: $h, path: ($p | normalize_path), owner: $owner} ]') \
   || { log error "api-manager: no se pudo procesar el listado de rutas existentes."; exit 1; }
 
 WANTED=$(jq -nc --argjson hosts "$HOSTS_JSON" --argjson routes "$ROUTES_JSON" '
-  [ $hosts[] as $h | $routes[] | {host: $h, path: .path} ]') \
+  def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
+  [ $hosts[] as $h | $routes[] | {host: $h, path: (.path | normalize_path)} ]') \
   || { log error "api-manager: no se pudo armar el listado de dominios y rutas propios."; exit 1; }
 
 CONFLICTS=$(jq -nr --argjson claimed "$CLAIMED" --argjson wanted "$WANTED" '
@@ -29,6 +31,6 @@ CONFLICTS=$(jq -nr --argjson claimed "$CLAIMED" --argjson wanted "$WANTED" '
 if [ -n "$CONFLICTS" ]; then
   log error "api-manager: hay dominios y paths ya declarados por otra aplicación."
   log error "$CONFLICTS"
-  log error "  Compartir un dominio está permitido: lo que no se puede es repetir el mismo path."
+  log error "  Compartir un dominio está permitido: lo que no se puede es repetir el mismo path. La barra final y el '*' de subárbol no cuentan como una ruta distinta."
   exit 1
 fi
