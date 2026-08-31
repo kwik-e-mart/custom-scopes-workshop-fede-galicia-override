@@ -10,12 +10,20 @@ if [ -n "${NP_API_KEY:-}" ] && [ -z "${NULLPLATFORM_API_KEY:-}" ]; then
   export NULLPLATFORM_API_KEY="$NP_API_KEY"
 fi
 
-CLEAN_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
+CLEAN_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//") || { echo "No se pudo procesar NP_ACTION_CONTEXT" >&2; exit 1; }
 export NP_ACTION_CONTEXT="$CLEAN_CONTEXT"
-export CONTEXT=$(echo "$CLEAN_CONTEXT" | jq '.notification')
-export SERVICE_ACTION=$(echo "$CONTEXT" | jq -r '.slug')
-export SERVICE_ACTION_TYPE=$(echo "$CONTEXT" | jq -r '.type')
-export NOTIFICATION_ACTION=$(echo "$CONTEXT" | jq -r '.action')
+
+CONTEXT=$(echo "$CLEAN_CONTEXT" | jq '.notification') || { echo "NP_ACTION_CONTEXT no es JSON válido" >&2; exit 1; }
+export CONTEXT
+
+SERVICE_ACTION=$(echo "$CONTEXT" | jq -r '.slug') || { echo "Notificación no trae slug" >&2; exit 1; }
+export SERVICE_ACTION
+
+SERVICE_ACTION_TYPE=$(echo "$CONTEXT" | jq -r '.type') || { echo "Notificación no trae tipo de acción" >&2; exit 1; }
+export SERVICE_ACTION_TYPE
+
+NOTIFICATION_ACTION=$(echo "$CONTEXT" | jq -r '.action') || { echo "Notificación no trae action" >&2; exit 1; }
+export NOTIFICATION_ACTION
 
 export WORKING_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

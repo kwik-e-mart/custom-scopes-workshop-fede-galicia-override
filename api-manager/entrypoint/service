@@ -12,6 +12,16 @@ if [[ ! "$ACTION_TO_EXECUTE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   exit 1
 fi
 
+if [ "$ACTION_TO_EXECUTE" = "null" ]; then
+  echo "La notificación no trae tipo de acción" >&2
+  exit 1
+fi
+
 WORKFLOW_PATH="$SERVICE_PATH/workflows/istio/$ACTION_TO_EXECUTE.yaml"
+
+if [ ! -f "$WORKFLOW_PATH" ]; then
+  echo "Workflow no existe: $WORKFLOW_PATH" >&2
+  exit 1
+fi
 
 np service workflow exec --workflow "$WORKFLOW_PATH" --build-context --include-secrets
