@@ -94,12 +94,20 @@ MOCK
   run bash "$MINT"
   [ "$status" -eq 0 ]
   ! grep -qi "api_key=" "$LOG_FILE"
+  ! echo "$output" | grep -qE "[a-f0-9]{64}"
 }
 
 @test "mint_key aborta si falla la creacion del secret" {
   export KUBECTL_MOCK_FAIL=create
   run bash "$MINT"
   [ "$status" -ne 0 ]
+}
+
+@test "mint_key aborta si falla el etiquetado del secret" {
+  export KUBECTL_MOCK_FAIL=label
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "falló el etiquetado"
 }
 
 @test "mint_key aborta si la notificacion no trae link.id y no usa un default" {
@@ -121,4 +129,5 @@ MOCK
   export KUBECTL_MOCK_FAIL=delete
   run bash "$REVOKE"
   [ "$status" -ne 0 ]
+  echo "$output" | grep -q "sigue siendo válida"
 }

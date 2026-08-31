@@ -41,9 +41,15 @@ if [[ "$SERVICE_PATH" != /* ]]; then
 fi
 export SERVICE_PATH
 
-HANDLER=service
-case "$NOTIFICATION_ACTION" in
-  "link") HANDLER=link ;;
-esac
+HANDLER=$(echo "$CONTEXT" | jq -r '
+  if (.link? != null and (.link | type) == "object") then "link"
+  elif (.service? != null and (.service | type) == "object") then "service"
+  else "unknown" end') || { echo "No se pudo evaluar la forma de la notificación" >&2; exit 1; }
+
+if [ "$HANDLER" = "unknown" ]; then
+  echo "No se pudo determinar si la notificación es de link o de service (ni .link ni .service llegan como objeto)" >&2
+  echo "  Claves disponibles en \$CONTEXT: $(echo "$CONTEXT" | jq -r 'keys | join(", ")')" >&2
+  exit 1
+fi
 
 np service-action exec --live-output --live-report --script="$WORKING_DIRECTORY/$HANDLER"
