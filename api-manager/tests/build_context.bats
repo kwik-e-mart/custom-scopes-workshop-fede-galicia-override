@@ -139,6 +139,13 @@ notif() {
   echo "$output" | grep -q "service.id"
 }
 
+@test "falla si BACKEND_PORT no es un puerto valido" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  run env BACKEND_PORT=70000 NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "backend port"
+}
+
 @test "en delete no valida hosts, rutas ni scopes: alcanza con namespace, app_target y service_id" {
   export NP_MOCK_SCOPES='[]'
   ATTRS='{"hosts":[],"routes":[]}'

@@ -62,6 +62,18 @@ render_ctx() {
   [ "$(yq '.spec.hostnames | length' "$OUT/10-httproute.yaml")" = "2" ]
 }
 
+@test "el backend usa el puerto 80 por default si no se declara backend_port" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$OUT/10-httproute.yaml")" = "80" ]
+}
+
+@test "un backend_port explicito llega al backendRef renderizado" {
+  run render_ctx '{"backend_port":8080}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$OUT/10-httproute.yaml")" = "8080" ]
+}
+
 @test "el httproute lleva el label del target para poder detectar colisiones" {
   run render_ctx '{"app_target":"payments.reports"}'
   [ "$status" -eq 0 ]

@@ -29,5 +29,5 @@ spec:
         - group: networking.istio.io
           kind: Hostname
           name: {{ .backend | quote }}
-          port: 80
+          port: {{ index $ "backend_port" | default 80 }}
 {{- end }}

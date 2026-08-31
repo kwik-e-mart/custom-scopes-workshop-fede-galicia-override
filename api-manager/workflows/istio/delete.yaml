@@ -5,6 +5,7 @@ configuration:
   GATEWAY_NAMESPACE: gateways
   KEYS_NAMESPACE: kuadrant-system
   API_KEY_HEADER: x-api-key
+  BACKEND_PORT: "80"
 steps:
   - name: load logging
     type: script
@@ -29,6 +30,7 @@ steps:
       - { name: GATEWAY_NAMESPACE, type: environment }
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: API_KEY_HEADER, type: environment }
+      - { name: BACKEND_PORT, type: environment }
   - name: reconcile delete
     type: script
     file: $SERVICE_PATH/scripts/k8s/reconcile
