@@ -27,7 +27,6 @@ fi
 NAMESPACE="${NAMESPACE:-nullplatform}"
 
 APPLICATION_ID=$(printf %s "$CONTEXT" | jq -r '.application.id // empty')
-APPLICATION_SLUG=$(printf %s "$CONTEXT" | jq -r '.application.slug // empty')
 
 GATEWAY_NAME="${GATEWAY_NAME:-s2s-ingress}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
@@ -45,19 +44,6 @@ require_match() {
 
 require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
 
-if [ -z "$APPLICATION_SLUG" ] && [ -n "$APPLICATION_ID" ]; then
-  APPLICATION_JSON=$(np application read --id "$APPLICATION_ID" --format json) \
-    || { log error "api-manager: falló la resolución de application.slug vía np application read --id $APPLICATION_ID."; exit 1; }
-  APPLICATION_SLUG=$(printf %s "$APPLICATION_JSON" | jq -r '.slug // empty')
-fi
-
-if [ -z "$APPLICATION_SLUG" ]; then
-  log error "api-manager: no se pudo determinar application.slug ni por el CONTEXT ni por np application read."
-  log error "  Claves disponibles en \$CONTEXT: $(printf %s "$CONTEXT" | jq -r 'keys | join(", ")')"
-  exit 1
-fi
-
-require_match "$APPLICATION_SLUG" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "application.slug"
 if [ -z "$SERVICE_ID" ]; then
   log error "api-manager: la notificación no trae service.id. Es obligatorio: nombra la HTTPRoute y la AuthPolicy de esta instancia."
   exit 1

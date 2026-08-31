@@ -81,14 +81,16 @@ notif() {
 
 @test "resuelve el backend de cada ruta desde el dominio del scope" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'gal-poc-reports-prod-xiist.galicia-poc.nullapps.io'
 }
 
 @test "falla si el scope no esta entre los activos de la aplicacion" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"inexistente"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "inexistente"
 }
@@ -96,7 +98,8 @@ notif() {
 @test "falla si el scope existe pero no esta desplegado" {
   export NP_MOCK_SCOPES='[{"slug":"prod","domain":"To be defined"}]'
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "todavía no está desplegado"
 }
@@ -104,42 +107,47 @@ notif() {
 @test "falla si np devuelve 403 en vez de seguir con cero scopes" {
   export NP_MOCK_MODE=forbidden
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
 }
 
 @test "falla si un host no tiene forma de FQDN" {
   ATTRS='{"hosts":["no un host"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
 }
 
 @test "arma APP_TARGET como namespace.application" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'APP_TARGET=payments.reports'
 }
 
-@test "sin application.slug en el CONTEXT, lo resuelve con np application read" {
+@test "sin application.slug en el CONTEXT, igual arma el APP_TARGET porque ya no depende de el" {
   APP_SLUG=""
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'APP_TARGET=payments.reports'
-  grep -q -- "application read --id 142495574" "$NP_CALLS_LOG"
 }
 
-@test "sin application.slug ni application.id resolubles, aborta listando las keys del CONTEXT" {
+@test "sin application.id en el CONTEXT, aborta: no se pueden resolver los scopes de las rutas" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  CUSTOM_CONTEXT=$(jq -nc '{account:{}, namespace:{}, providers:{}, marker_test_key:"x"}')
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$CUSTOM_CONTEXT" bash "$BC"
+  CUSTOM_CONTEXT=$(jq -nc '{account:{}, namespace:{}, providers:{}}')
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$CUSTOM_CONTEXT"
+  run run_build_context
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "marker_test_key"
+  echo "$output" | grep -q "application.id"
 }
 
 @test "un NP_ACTION_CONTEXT mal formado aborta hablando del contexto, no de dominios" {
-  run env NP_ACTION_CONTEXT='{esto no es json' CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT='{esto no es json' CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "NP_ACTION_CONTEXT"
   ! echo "$output" | grep -q "dominios"
@@ -149,14 +157,17 @@ notif() {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
   NOTIF_SIN_SERVICE_ID=$(jq -nc --argjson a "$ATTRS" \
     '{notification:{type:"create", service:{attributes:$a}, parameters:{}}}')
-  run env NP_ACTION_CONTEXT="$NOTIF_SIN_SERVICE_ID" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$NOTIF_SIN_SERVICE_ID" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "service.id"
 }
 
 @test "falla si BACKEND_PORT no es un puerto valido" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env BACKEND_PORT=70000 NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export BACKEND_PORT=70000
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "backend port"
 }
@@ -164,7 +175,8 @@ notif() {
 @test "el APP_TARGET sale del namespace de nullplatform del service, no del namespace de Kubernetes" {
   NS_PROVIDER="k8s-namespace-distinto"
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'APP_TARGET=payments.reports'
   ! echo "$output" | grep -q 'k8s-namespace-distinto'
@@ -191,7 +203,8 @@ notif() {
 @test "en delete no valida hosts, rutas ni scopes: alcanza con namespace, app_target y service_id" {
   export NP_MOCK_SCOPES='[]'
   ATTRS='{"hosts":[],"routes":[]}'
-  run env ARGS=delete NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  export ARGS=delete NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'APP_TARGET=payments.reports'
 }
