@@ -129,3 +129,11 @@ notif() {
   echo "$output" | grep -q "NP_ACTION_CONTEXT"
   ! echo "$output" | grep -q "dominios"
 }
+
+@test "sin service.id en la notificacion, termina OK: es opcional" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  NOTIF_SIN_SERVICE_ID=$(jq -nc --argjson a "$ATTRS" \
+    '{notification:{type:"create", service:{attributes:$a}, parameters:{}}}')
+  run env NP_ACTION_CONTEXT="$NOTIF_SIN_SERVICE_ID" CONTEXT="$(ctx)" bash "$BC"
+  [ "$status" -eq 0 ]
+}
