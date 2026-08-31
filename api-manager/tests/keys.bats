@@ -146,6 +146,36 @@ MOCK
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
+@test "mint_key aborta si el link.id tiene mayusculas" {
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"ABC123"},service:{id:"svc-1"}}}')
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "link.id inválido"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+}
+
+@test "mint_key aborta si el link.id empieza o termina con guion" {
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"-abc123"},service:{id:"svc-1"}}}')
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "link.id inválido"
+
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"abc123-"},service:{id:"svc-1"}}}')
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "link.id inválido"
+}
+
+@test "mint_key acepta un link.id en minusculas con guion interno" {
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"abc-123"},service:{id:"svc-1"}}}')
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+}
+
 @test "mint_key aborta si no puede resolver la aplicacion duena del service" {
   export NP_MOCK_SERVICE='{}'
   run bash "$MINT"

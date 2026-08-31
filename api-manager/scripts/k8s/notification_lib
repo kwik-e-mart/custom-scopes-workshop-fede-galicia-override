@@ -24,8 +24,8 @@ require_link_id() {
     log error "  Claves disponibles en \$NOTIFICATION: $(printf %s "$notification" | jq -r 'keys | join(", ")')"
     return 1
   fi
-  if [[ ! "$link_id" =~ ^[a-zA-Z0-9-]{1,48}$ ]]; then
-    log error "api-manager: link.id inválido: '$link_id'"
+  if [[ ! "$link_id" =~ ^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$ ]]; then
+    log error "api-manager: link.id inválido: '$link_id'. Tiene que ser un nombre DNS-1123: minúsculas, dígitos y guiones, sin empezar ni terminar con guión, de 1 a 48 caracteres."
     return 1
   fi
   printf '%s' "$link_id"
