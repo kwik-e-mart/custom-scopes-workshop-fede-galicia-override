@@ -4,10 +4,10 @@ metadata: { name: api-manager, namespace: {{ getenv "NAMESPACE" }} }
 rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "create", "patch", "delete"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]
-    verbs: ["get", "create", "update", "patch", "delete"]
+    verbs: ["get", "create", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -22,7 +22,7 @@ metadata: { name: api-manager-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "update", "patch", "delete"]
+    verbs: ["create", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
