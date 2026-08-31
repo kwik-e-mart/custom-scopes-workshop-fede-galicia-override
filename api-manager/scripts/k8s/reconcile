@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RECONCILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$RECONCILE_DIR/manifests_lib"
+source "$RECONCILE_DIR/reconcile_lib"
+
+MANAGED_LABEL="api-manager.nullplatform.io/managed"
+TARGET_LABEL="apimgr-target"
+
+ACTION="${1:-${ARGS:-apply}}"
+ROUTE_NAME="api-manager-${SERVICE_ID}"
+OUTDIR=$(mktemp -d) || die "api-manager: no se pudo crear el directorio temporal."
+trap 'rm -rf "$OUTDIR"' EXIT
+
+case "$ACTION" in
+  apply)
+    CTX="$OUTDIR/context.json"
+    jq -n \
+      --arg namespace "$NAMESPACE" \
+      --arg route_name "$ROUTE_NAME" \
+      --arg app_target "$APP_TARGET" \
+      --arg gateway_name "$GATEWAY_NAME" \
+      --arg gateway_namespace "$GATEWAY_NAMESPACE" \
+      --arg api_key_header "$API_KEY_HEADER" \
+      --arg managed_label "$MANAGED_LABEL" \
+      --arg target_label "$TARGET_LABEL" \
+      --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
+      --argjson hosts "$HOSTS_JSON" \
+      --argjson routes "$ROUTES_JSON" \
+      '$ARGS.named' >"$CTX" || die "api-manager: no se pudo armar el contexto de render."
+
+    MANIFEST_LIST="$OUTDIR/manifest-list.txt"
+    render_manifests "$CTX" "$OUTDIR" >"$MANIFEST_LIST" \
+      || die "api-manager: falló el render de los manifiestos."
+    mapfile -t MANIFESTS <"$MANIFEST_LIST"
+    [ "${#MANIFESTS[@]}" -gt 0 ] || die "api-manager: el render no produjo ningún manifiesto."
+
+    apply_manifests "${MANIFESTS[@]}" || die "api-manager: falló el apply de los manifiestos."
+
+    wait_route_condition "$NAMESPACE" "$ROUTE_NAME" Accepted "${WAIT_TIMEOUT:-60}" \
+      || die "api-manager: la HTTPRoute '$ROUTE_NAME' no quedó Accepted. Revisar que el Gateway '$GATEWAY_NAME' exista en '$GATEWAY_NAMESPACE' y admita routes de este namespace."
+
+    log info "api-manager: $APP_TARGET expuesto."
+    ;;
+  delete)
+    kubectl -n "$NAMESPACE" get httproutes -l "${MANAGED_LABEL}=true" >/dev/null \
+      || die "api-manager: no se pudo listar las HTTPRoutes propias de '$NAMESPACE'. No se borra nada: sin poder confirmar qué rutas administra esta instancia, borrar a ciegas es peligroso."
+
+    kubectl -n "$NAMESPACE" delete authpolicy "$ROUTE_NAME" --ignore-not-found \
+      || die "api-manager: falló el borrado de la AuthPolicy '$ROUTE_NAME'."
+    kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
+      || die "api-manager: falló el borrado de la HTTPRoute '$ROUTE_NAME'."
+    kubectl -n "$KEYS_NAMESPACE" delete secret \
+      -l "apimgr-target=$APP_TARGET" --ignore-not-found \
+      || die "api-manager: falló el borrado de las api keys de '$APP_TARGET'. Quedan credenciales vivas para una app que ya no está expuesta."
+    log info "api-manager: $APP_TARGET dado de baja."
+    ;;
+  *)
+    die "api-manager: acción desconocida '$ACTION'."
+    ;;
+esac

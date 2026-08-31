@@ -28,10 +28,7 @@ steps:
       - { name: GATEWAY_NAMESPACE, type: environment }
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: API_KEY_HEADER, type: environment }
-  - name: reconcile apply
+  - name: reconcile delete
     type: script
     file: $SERVICE_PATH/scripts/k8s/reconcile
-    configuration: { ARGS: apply }
-  - name: write outputs
-    type: script
-    file: $SERVICE_PATH/scripts/k8s/write_service_outputs
+    configuration: { ARGS: delete }
