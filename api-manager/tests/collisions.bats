@@ -64,4 +64,5 @@ MOCK
   export KUBECTL_MOCK_FAIL=get
   run bash "$CHECK"
   [ "$status" -ne 0 ]
+  echo "$output" | grep -q "no se pudo listar las rutas existentes"
 }

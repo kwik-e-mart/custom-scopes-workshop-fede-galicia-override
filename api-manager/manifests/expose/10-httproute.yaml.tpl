@@ -5,6 +5,7 @@ metadata:
   namespace: {{ .namespace | quote }}
   labels:
     {{ .managed_label }}: "true"
+    {{ .target_label }}: {{ .app_target | quote }}
     nullplatform: "true"
 spec:
   parentRefs:

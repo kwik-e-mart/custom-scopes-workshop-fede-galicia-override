@@ -62,6 +62,12 @@ render_ctx() {
   [ "$(yq '.spec.hostnames | length' "$OUT/10-httproute.yaml")" = "2" ]
 }
 
+@test "el httproute lleva el label del target para poder detectar colisiones" {
+  run render_ctx '{"app_target":"payments.reports"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.metadata.labels["apimgr-target"]' "$OUT/10-httproute.yaml")" = "payments.reports" ]
+}
+
 @test "la authpolicy autoriza por igualdad exacta y no por regexp" {
   run render_ctx '{}'
   [ "$status" -eq 0 ]
