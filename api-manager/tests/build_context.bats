@@ -122,3 +122,10 @@ notif() {
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "marker_test_key"
 }
+
+@test "un NP_ACTION_CONTEXT mal formado aborta hablando del contexto, no de dominios" {
+  run env NP_ACTION_CONTEXT='{esto no es json' CONTEXT="$(ctx)" bash "$BC"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "NP_ACTION_CONTEXT"
+  ! echo "$output" | grep -q "dominios"
+}

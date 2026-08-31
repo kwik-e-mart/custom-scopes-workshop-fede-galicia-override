@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification')
-SERVICE_ATTRS=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})')
-HOSTS_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.hosts // []')
-ROUTES_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.routes // []')
-SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty')
+NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
+  || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
+if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
+  log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
+  exit 1
+fi
+
+SERVICE_ATTRS=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})') \
+  || { log error "api-manager: no se pudieron combinar los attributes y parameters de la notificación."; exit 1; }
+HOSTS_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.hosts // []') \
+  || { log error "api-manager: no se pudo leer el atributo hosts de la notificación."; exit 1; }
+ROUTES_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.routes // []') \
+  || { log error "api-manager: no se pudo leer el atributo routes de la notificación."; exit 1; }
+SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty') \
+  || { log error "api-manager: no se pudo leer service.id de la notificación."; exit 1; }
 
 NAMESPACE="${NAMESPACE_OVERRIDE:-}"
 if [ -z "$NAMESPACE" ]; then
-  NAMESPACE=$(echo "$CONTEXT" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null || true)
+  NAMESPACE=$(printf %s "$CONTEXT" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null || true)
 fi
 NAMESPACE="${NAMESPACE:-nullplatform}"
 
-APPLICATION_ID=$(echo "$CONTEXT" | jq -r '.application.id // empty')
-APPLICATION_SLUG=$(echo "$CONTEXT" | jq -r '.application.slug // empty')
+APPLICATION_ID=$(printf %s "$CONTEXT" | jq -r '.application.id // empty')
+APPLICATION_SLUG=$(printf %s "$CONTEXT" | jq -r '.application.slug // empty')
 
 GATEWAY_NAME="${GATEWAY_NAME:-s2s-ingress}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
@@ -39,7 +49,7 @@ fi
 
 if [ -z "$APPLICATION_SLUG" ]; then
   log error "api-manager: no se pudo determinar application.slug ni por el CONTEXT ni por np application read."
-  log error "  Claves disponibles en \$CONTEXT: $(echo "$CONTEXT" | jq -r 'keys | join(", ")')"
+  log error "  Claves disponibles en \$CONTEXT: $(printf %s "$CONTEXT" | jq -r 'keys | join(", ")')"
   exit 1
 fi
 
@@ -80,7 +90,8 @@ ACTIVE_SCOPES=$(np scope list --application-id "$APPLICATION_ID" --status active
 ROUTES_JSON=$(printf %s "$ROUTES_JSON" | jq -c --argjson scopes "$ACTIVE_SCOPES" '
   map(. as $r | . + {
     backend: ([$scopes[] | select(.slug == $r.scope) | .domain] | first // "")
-  })')
+  })') \
+  || { log error "api-manager: no se pudieron enriquecer las rutas con el backend resuelto."; exit 1; }
 
 while IFS=$'\t' read -r ROUTE_SCOPE ROUTE_BACKEND; do
   if [ -z "$ROUTE_BACKEND" ]; then
