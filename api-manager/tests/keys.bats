@@ -21,18 +21,21 @@ setup() {
   }
   export -f log
 
-  export APP_TARGET=payments.reports
   export KEYS_NAMESPACE=kuadrant-system
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"},service:{id:"svc-1"}}}')
 
-  unset KUBECTL_MOCK_FAIL MANAGED_LABEL TARGET_LABEL
+  unset KUBECTL_MOCK_FAIL MANAGED_LABEL TARGET_LABEL APP_TARGET
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
   export KUBECTL_STDIN_LOG="$BATS_TEST_TMPDIR/kubectl-stdin.log"
   : >"$KUBECTL_STDIN_LOG"
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   : >"$NP_CALLS_LOG"
+
+  export NP_MOCK_SERVICE='{"entity_nrn":"organization=1:account=1:namespace=10:application=20"}'
+  export NP_MOCK_NAMESPACE='{"slug":"payments"}'
+  export NP_MOCK_APPLICATION='{"slug":"reports"}'
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
@@ -59,7 +62,17 @@ MOCK
   cat >"$BATS_TEST_TMPDIR/bin/np" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$NP_CALLS_LOG"
-exit 0
+SUBCMD="$1 $2"
+case "$SUBCMD" in
+  "service read")
+    printf %s "$NP_MOCK_SERVICE" ;;
+  "namespace read")
+    printf %s "$NP_MOCK_NAMESPACE" ;;
+  "application read")
+    printf %s "$NP_MOCK_APPLICATION" ;;
+  *)
+    echo '{}' ;;
+esac
 MOCK
   chmod +x "$BATS_TEST_TMPDIR/bin/np"
 
@@ -72,6 +85,14 @@ MOCK
   grep -q '"authorino.kuadrant.io/managed-by":"authorino"' "$KUBECTL_STDIN_LOG"
   grep -q '"api-manager.nullplatform.io/managed":"true"' "$KUBECTL_STDIN_LOG"
   grep -q '"apimgr-target":"payments.reports"' "$KUBECTL_STDIN_LOG"
+}
+
+@test "el target del secret sale del service, no de un APP_TARGET heredado del contexto" {
+  export APP_TARGET="consumidor-ns.consumidor-app"
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+  grep -q '"apimgr-target":"payments.reports"' "$KUBECTL_STDIN_LOG"
+  ! grep -q "consumidor" "$KUBECTL_STDIN_LOG"
 }
 
 @test "mint_key crea el secret con un create puro (POST), no con apply" {
@@ -113,6 +134,22 @@ MOCK
   run bash "$MINT"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "marker_test_key"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+}
+
+@test "mint_key aborta si la notificacion no trae service.id" {
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"}}}')
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "service.id"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+}
+
+@test "mint_key aborta si no puede resolver la aplicacion duena del service" {
+  export NP_MOCK_SERVICE='{}'
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 

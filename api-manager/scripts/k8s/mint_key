@@ -3,6 +3,7 @@ set -euo pipefail
 
 MINT_KEY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$MINT_KEY_DIR/labels_lib"
+source "$MINT_KEY_DIR/service_target_lib"
 
 NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
   || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
@@ -23,6 +24,20 @@ if [[ ! "$LINK_ID" =~ ^[a-zA-Z0-9-]{1,48}$ ]]; then
   log error "api-manager: link.id inválido: '$LINK_ID'"
   exit 1
 fi
+
+SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty') \
+  || { log error "api-manager: no se pudo leer service.id de la notificación."; exit 1; }
+if [ -z "$SERVICE_ID" ]; then
+  log error "api-manager: la notificación no trae service.id. Sin eso no se puede resolver a qué aplicación pertenece este link."
+  exit 1
+fi
+if [[ ! "$SERVICE_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+  log error "api-manager: service.id inválido: '$SERVICE_ID'"
+  exit 1
+fi
+
+APP_TARGET=$(resolve_app_target_from_service "$SERVICE_ID") \
+  || { log error "api-manager: no se pudo resolver el target del service '$SERVICE_ID'. No se emite ninguna key con un target adivinado."; exit 1; }
 
 SECRET_NAME="api-manager-${LINK_ID}"
 API_KEY=$(openssl rand -hex 32) || { log error "api-manager: no se pudo generar la api key."; exit 1; }

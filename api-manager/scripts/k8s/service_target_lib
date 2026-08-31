@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+if ! type -t resolve_app_target_from_service >/dev/null 2>&1; then
+resolve_app_target_from_service() {
+  local service_id="$1"
+  local service_json entity_nrn namespace_id application_id
+  local namespace_json namespace_slug application_json application_slug
+
+  service_json=$(np service read --id "$service_id" --format json) \
+    || { log error "api-manager: falló la lectura del service '$service_id' para resolver la aplicación dueña."; return 1; }
+  entity_nrn=$(printf %s "$service_json" | jq -r '.entity_nrn // empty') \
+    || { log error "api-manager: no se pudo leer entity_nrn del service '$service_id'."; return 1; }
+  if [ -z "$entity_nrn" ]; then
+    log error "api-manager: el service '$service_id' no trae entity_nrn. No se arma un target adivinado."
+    return 1
+  fi
+
+  if [[ "$entity_nrn" =~ (^|:)namespace=([^:]+) ]]; then
+    namespace_id="${BASH_REMATCH[2]}"
+  else
+    log error "api-manager: el entity_nrn '$entity_nrn' del service '$service_id' no trae namespace. No se arma un target adivinado."
+    return 1
+  fi
+
+  if [[ "$entity_nrn" =~ (^|:)application=([^:]+) ]]; then
+    application_id="${BASH_REMATCH[2]}"
+  else
+    log error "api-manager: el entity_nrn '$entity_nrn' del service '$service_id' no trae application. No se arma un target adivinado."
+    return 1
+  fi
+
+  namespace_json=$(np namespace read --id "$namespace_id" --format json) \
+    || { log error "api-manager: falló la lectura del namespace '$namespace_id' del service '$service_id'."; return 1; }
+  namespace_slug=$(printf %s "$namespace_json" | jq -r '.slug // empty') \
+    || { log error "api-manager: no se pudo leer slug del namespace '$namespace_id'."; return 1; }
+
+  application_json=$(np application read --id "$application_id" --format json) \
+    || { log error "api-manager: falló la lectura de la aplicación '$application_id' del service '$service_id'."; return 1; }
+  application_slug=$(printf %s "$application_json" | jq -r '.slug // empty') \
+    || { log error "api-manager: no se pudo leer slug de la aplicación '$application_id'."; return 1; }
+
+  if [ -z "$namespace_slug" ] || [ -z "$application_slug" ]; then
+    log error "api-manager: no se pudo resolver namespace.slug o application.slug del service '$service_id' (namespace='$namespace_id', application='$application_id')."
+    return 1
+  fi
+
+  printf '%s.%s' "$namespace_slug" "$application_slug"
+}
+fi
