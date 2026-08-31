@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+MINT_KEY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MINT_KEY_DIR/labels_lib"
+
 NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
   || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
 if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
@@ -31,8 +34,8 @@ kubectl -n "$KEYS_NAMESPACE" create secret generic "$SECRET_NAME" \
 
 kubectl -n "$KEYS_NAMESPACE" label secret "$SECRET_NAME" --overwrite \
   "authorino.kuadrant.io/managed-by=authorino" \
-  "api-manager.nullplatform.io/managed=true" \
-  "apimgr-target=$APP_TARGET" \
+  "${MANAGED_LABEL}=true" \
+  "${TARGET_LABEL}=$APP_TARGET" \
   || { log error "api-manager: falló el etiquetado del Secret '$SECRET_NAME'. Sin labels, Authorino no la ve y el consumidor recibe una key que no sirve."; exit 1; }
 
 RESULTS=$(jq -nc --arg k "$API_KEY" '{api_key: $k}') \

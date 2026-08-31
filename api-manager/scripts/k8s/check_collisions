@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXISTING=$(kubectl get httproutes -A -l "api-manager.nullplatform.io/managed=true" -o json) \
+CHECK_COLLISIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$CHECK_COLLISIONS_DIR/labels_lib"
+
+EXISTING=$(kubectl get httproutes -A -l "${MANAGED_LABEL}=true" -o json) \
   || { log error "api-manager: no se pudo listar las rutas existentes. No se aplica nada: sin ese listado no hay cómo detectar una colisión de dominios."; exit 1; }
 
-CLAIMED=$(printf %s "$EXISTING" | jq -c --arg self "$APP_TARGET" '
+CLAIMED=$(printf %s "$EXISTING" | jq -c --arg self "$APP_TARGET" --arg target_label "$TARGET_LABEL" '
   [ .items[]
-    | .metadata.labels["apimgr-target"] as $owner
+    | .metadata.labels[$target_label] as $owner
     | select($owner != $self)
     | . as $r
     | $r.spec.hostnames[] as $h

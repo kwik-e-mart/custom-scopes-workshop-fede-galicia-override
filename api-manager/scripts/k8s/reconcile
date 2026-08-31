@@ -2,11 +2,9 @@
 set -euo pipefail
 
 RECONCILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$RECONCILE_DIR/labels_lib"
 source "$RECONCILE_DIR/manifests_lib"
 source "$RECONCILE_DIR/reconcile_lib"
-
-MANAGED_LABEL="api-manager.nullplatform.io/managed"
-TARGET_LABEL="apimgr-target"
 
 ACTION="${1:-${ARGS:-apply}}"
 ROUTE_NAME="api-manager-${SERVICE_ID}"

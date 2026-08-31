@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+: "${MANAGED_LABEL:=api-manager.nullplatform.io/managed}"
+: "${TARGET_LABEL:=apimgr-target}"
