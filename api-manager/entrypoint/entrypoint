@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ -z "${NP_ACTION_CONTEXT:-}" ]; then
+  echo "NP_ACTION_CONTEXT is not set. Exiting."
+  exit 1
+fi
+
+if [ -n "${NP_API_KEY:-}" ] && [ -z "${NULLPLATFORM_API_KEY:-}" ]; then
+  export NULLPLATFORM_API_KEY="$NP_API_KEY"
+fi
+
+CLEAN_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
+export NP_ACTION_CONTEXT="$CLEAN_CONTEXT"
+export CONTEXT=$(echo "$CLEAN_CONTEXT" | jq '.notification')
+export SERVICE_ACTION=$(echo "$CONTEXT" | jq -r '.slug')
+export SERVICE_ACTION_TYPE=$(echo "$CONTEXT" | jq -r '.type')
+export NOTIFICATION_ACTION=$(echo "$CONTEXT" | jq -r '.action')
+
+export WORKING_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SERVICE_PATH="$(dirname "$WORKING_DIRECTORY")"
+if [[ "$SERVICE_PATH" != /* ]]; then
+  if [ -d "$SERVICE_PATH" ]; then
+    SERVICE_PATH="$(cd "$SERVICE_PATH" && pwd)"
+  elif [ -d "$HOME/.np/$SERVICE_PATH" ]; then
+    SERVICE_PATH="$(cd "$HOME/.np/$SERVICE_PATH" && pwd)"
+  else
+    echo "ERROR: no resuelvo SERVICE_PATH='$SERVICE_PATH' desde CWD=$(pwd) ni ~/.np/"
+    exit 1
+  fi
+fi
+export SERVICE_PATH
+
+np service-action exec --live-output --live-report --script="$WORKING_DIRECTORY/service"
