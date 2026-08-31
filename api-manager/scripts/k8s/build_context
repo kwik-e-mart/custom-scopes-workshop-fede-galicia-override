@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification')
+SERVICE_ATTRS=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})')
+HOSTS_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.hosts // []')
+ROUTES_JSON=$(printf %s "$SERVICE_ATTRS" | jq -c '.routes // []')
+SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty')
+
+NAMESPACE="${NAMESPACE_OVERRIDE:-}"
+if [ -z "$NAMESPACE" ]; then
+  NAMESPACE=$(echo "$CONTEXT" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null || true)
+fi
+NAMESPACE="${NAMESPACE:-nullplatform}"
+
+APPLICATION_ID=$(echo "$CONTEXT" | jq -r '.application.id // empty')
+APPLICATION_SLUG=$(echo "$CONTEXT" | jq -r '.application.slug // empty')
+
+GATEWAY_NAME="${GATEWAY_NAME:-s2s-ingress}"
+GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
+KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
+API_KEY_HEADER="${API_KEY_HEADER:-x-api-key}"
+
+require_match() {
+  local val="$1" re="$2" name="$3"
+  if [[ ! "$val" =~ $re ]]; then
+    log error "api-manager build_context: valor inválido para ${name}: '${val}'"
+    exit 1
+  fi
+}
+
+require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
+
+if [ -z "$APPLICATION_SLUG" ] && [ -n "$APPLICATION_ID" ]; then
+  APPLICATION_JSON=$(np application read --id "$APPLICATION_ID" --format json) \
+    || { log error "api-manager: falló la resolución de application.slug vía np application read --id $APPLICATION_ID."; exit 1; }
+  APPLICATION_SLUG=$(printf %s "$APPLICATION_JSON" | jq -r '.slug // empty')
+fi
+
+if [ -z "$APPLICATION_SLUG" ]; then
+  log error "api-manager: no se pudo determinar application.slug ni por el CONTEXT ni por np application read."
+  log error "  Claves disponibles en \$CONTEXT: $(echo "$CONTEXT" | jq -r 'keys | join(", ")')"
+  exit 1
+fi
+
+require_match "$APPLICATION_SLUG" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "application.slug"
+[ -n "$SERVICE_ID" ] && require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
+
+APP_TARGET="${NAMESPACE}.${APPLICATION_SLUG}"
+if [ "${#APP_TARGET}" -gt 63 ]; then
+  log error "api-manager: '$APP_TARGET' excede los 63 caracteres que admite un valor de label."
+  exit 1
+fi
+
+if [ "$(printf %s "$HOSTS_JSON" | jq 'length')" -eq 0 ]; then
+  log error "api-manager: no hay dominios declarados. Declarar al menos uno."
+  exit 1
+fi
+
+while IFS= read -r HOST; do
+  require_match "$HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' "dominio"
+done < <(printf %s "$HOSTS_JSON" | jq -r '.[]')
+
+if [ "$(printf %s "$ROUTES_JSON" | jq 'length')" -eq 0 ]; then
+  log error "api-manager: no hay rutas declaradas. Sin rutas la aplicación no queda expuesta."
+  exit 1
+fi
+
+if [ "$(printf %s "$ROUTES_JSON" | jq '[.[] | select((.scope // "") == "")] | length')" -gt 0 ]; then
+  log error "api-manager: hay rutas sin scope. Cada ruta declara qué despliegue la atiende."
+  exit 1
+fi
+
+[ -n "$APPLICATION_ID" ] || { log error "api-manager: el CONTEXT no trae application.id."; exit 1; }
+
+ACTIVE_SCOPES=$(np scope list --application-id "$APPLICATION_ID" --status active --format json \
+  --query '[ (.results? // .) | .[]? | {slug, domain} ]') \
+  || { log error "api-manager: falló el listado de scopes de la aplicación $APPLICATION_ID."; exit 1; }
+
+ROUTES_JSON=$(printf %s "$ROUTES_JSON" | jq -c --argjson scopes "$ACTIVE_SCOPES" '
+  map(. as $r | . + {
+    backend: ([$scopes[] | select(.slug == $r.scope) | .domain] | first // "")
+  })')
+
+while IFS=$'\t' read -r ROUTE_SCOPE ROUTE_BACKEND; do
+  if [ -z "$ROUTE_BACKEND" ]; then
+    log error "api-manager: el scope '$ROUTE_SCOPE' no está entre los scopes activos de la aplicación $APPLICATION_ID."
+    exit 1
+  fi
+  if [ "$ROUTE_BACKEND" = "To be defined" ]; then
+    log error "api-manager: el scope '$ROUTE_SCOPE' existe pero todavía no está desplegado (domain: 'To be defined')."
+    exit 1
+  fi
+  require_match "$ROUTE_BACKEND" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "el backend del scope '$ROUTE_SCOPE'"
+done < <(printf %s "$ROUTES_JSON" | jq -r '.[] | [.scope, .backend] | @tsv')
+
+export NAMESPACE APP_TARGET SERVICE_ID HOSTS_JSON ROUTES_JSON
+export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER
+
+log info "api-manager: exponiendo $APP_TARGET"
+printf %s "$HOSTS_JSON" | jq -r '.[] | "  dominio: \(.)"' | while IFS= read -r L; do log info "$L"; done
+printf %s "$ROUTES_JSON" | jq -r '.[] | "  ruta: \(.methods | join(",")) \(.path) → scope \(.scope) = \(.backend)"' \
+  | while IFS= read -r L; do log info "$L"; done
+echo "APP_TARGET=$APP_TARGET"
