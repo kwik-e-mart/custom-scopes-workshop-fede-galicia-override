@@ -22,7 +22,7 @@ metadata: { name: api-manager-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "patch", "delete"]
+    verbs: ["create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
