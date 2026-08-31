@@ -7,7 +7,7 @@ rules:
     verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    verbs: ["get", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
