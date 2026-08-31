@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+MANIFESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/expose}"
+
+if ! type -t render_manifests >/dev/null 2>&1; then
+render_manifests() {
+  local ctx="$1" outdir="$2" tpl out
+  local -a pairs=() outs=()
+
+  if [ ! -d "$MANIFESTS_DIR" ]; then
+    log error "api-manager: no existe el directorio de manifiestos '$MANIFESTS_DIR'"
+    return 1
+  fi
+
+  mkdir -p "$outdir"
+
+  for tpl in "$MANIFESTS_DIR"/*.yaml.tpl; do
+    [ -e "$tpl" ] || break
+    out="$outdir/$(basename "$tpl" .tpl)"
+    pairs+=(-f "$tpl" -o "$out")
+    outs+=("$out")
+  done
+
+  if [ "${#outs[@]}" -eq 0 ]; then
+    log error "api-manager: '$MANIFESTS_DIR' no tiene ningún *.yaml.tpl"
+    return 1
+  fi
+
+  if ! gomplate -c .="$ctx" "${pairs[@]}" </dev/null; then
+    log error "api-manager: falló el render de los manifiestos de '$MANIFESTS_DIR'"
+    return 1
+  fi
+
+  for out in "${outs[@]}"; do
+    if [ ! -f "$out" ] || [ -z "$(tr -d '[:space:]' <"$out")" ]; then
+      rm -f "$out"
+      continue
+    fi
+    printf '%s\n' "$out"
+  done
+  return 0
+}
+fi
+
+if ! type -t apply_manifests >/dev/null 2>&1; then
+apply_manifests() {
+  local file
+  for file in "$@"; do
+    log debug "kubectl apply $(basename "$file")"
+    if ! kubectl apply -f "$file"; then
+      log error "api-manager: falló el apply de $(basename "$file") ($file)"
+      return 1
+    fi
+  done
+  return 0
+}
+fi
