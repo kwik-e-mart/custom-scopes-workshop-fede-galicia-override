@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
+  || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
+if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
+  log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
+  exit 1
+fi
+
+LINK_ID=$(printf %s "$NOTIFICATION" | jq -r '.link.id // empty') \
+  || { log error "api-manager: no se pudo leer link.id de la notificación."; exit 1; }
+if [ -z "$LINK_ID" ]; then
+  log error "api-manager: la notificación no trae link.id."
+  log error "  Claves disponibles en \$NOTIFICATION: $(printf %s "$NOTIFICATION" | jq -r 'keys | join(", ")')"
+  exit 1
+fi
+
+if [[ ! "$LINK_ID" =~ ^[a-zA-Z0-9-]{1,48}$ ]]; then
+  log error "api-manager: link.id inválido: '$LINK_ID'"
+  exit 1
+fi
+
+SECRET_NAME="api-manager-${LINK_ID}"
+API_KEY=$(openssl rand -hex 32) || { log error "api-manager: no se pudo generar la api key."; exit 1; }
+
+kubectl -n "$KEYS_NAMESPACE" create secret generic "$SECRET_NAME" \
+  --from-literal=api_key="$API_KEY" --dry-run=client -o yaml \
+  | kubectl apply -f - \
+  || { log error "api-manager: falló la creación del Secret '$SECRET_NAME' en '$KEYS_NAMESPACE'."; exit 1; }
+
+kubectl -n "$KEYS_NAMESPACE" label secret "$SECRET_NAME" --overwrite \
+  "authorino.kuadrant.io/managed-by=authorino" \
+  "api-manager.nullplatform.io/managed=true" \
+  "apimgr-target=$APP_TARGET" \
+  || { log error "api-manager: falló el etiquetado del Secret '$SECRET_NAME'. Sin labels, Authorino no la ve y el consumidor recibe una key que no sirve."; exit 1; }
+
+RESULTS=$(jq -nc --arg k "$API_KEY" '{api_key: $k}') \
+  || { log error "api-manager: no se pudieron armar los resultados del link."; exit 1; }
+
+np service action update --results "$RESULTS" \
+  || { log error "api-manager: falló la escritura de los resultados del link."; exit 1; }
+
+log info "api-manager: credencial emitida para consumir $APP_TARGET."

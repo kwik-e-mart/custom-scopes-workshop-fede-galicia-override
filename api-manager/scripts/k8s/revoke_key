@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
+  || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
+if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
+  log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
+  exit 1
+fi
+
+LINK_ID=$(printf %s "$NOTIFICATION" | jq -r '.link.id // empty') \
+  || { log error "api-manager: no se pudo leer link.id de la notificación."; exit 1; }
+if [ -z "$LINK_ID" ]; then
+  log error "api-manager: la notificación no trae link.id."
+  log error "  Claves disponibles en \$NOTIFICATION: $(printf %s "$NOTIFICATION" | jq -r 'keys | join(", ")')"
+  exit 1
+fi
+
+if [[ ! "$LINK_ID" =~ ^[a-zA-Z0-9-]{1,48}$ ]]; then
+  log error "api-manager: link.id inválido: '$LINK_ID'"
+  exit 1
+fi
+
+kubectl -n "$KEYS_NAMESPACE" delete secret "api-manager-${LINK_ID}" --ignore-not-found \
+  || { log error "api-manager: falló el borrado de la credencial del link $LINK_ID. La credencial sigue siendo válida."; exit 1; }
+
+log info "api-manager: credencial del link $LINK_ID revocada."

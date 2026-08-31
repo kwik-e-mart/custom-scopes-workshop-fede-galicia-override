@@ -41,4 +41,9 @@ if [[ "$SERVICE_PATH" != /* ]]; then
 fi
 export SERVICE_PATH
 
-np service-action exec --live-output --live-report --script="$WORKING_DIRECTORY/service"
+HANDLER=service
+case "$NOTIFICATION_ACTION" in
+  "link") HANDLER=link ;;
+esac
+
+np service-action exec --live-output --live-report --script="$WORKING_DIRECTORY/$HANDLER"

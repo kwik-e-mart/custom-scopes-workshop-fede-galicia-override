@@ -1,0 +1,33 @@
+provider_categories:
+  - container-orchestration
+configuration:
+  GATEWAY_NAME: s2s-ingress
+  GATEWAY_NAMESPACE: gateways
+  KEYS_NAMESPACE: kuadrant-system
+  API_KEY_HEADER: x-api-key
+steps:
+  - name: load logging
+    type: script
+    file: "$SERVICE_PATH/logging"
+    output:
+      - name: log
+        type: function
+        parameters:
+          level: string
+          message: string
+  - name: build context
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/build_context
+    output:
+      - { name: NAMESPACE, type: environment }
+      - { name: APP_TARGET, type: environment }
+      - { name: SERVICE_ID, type: environment }
+      - { name: HOSTS_JSON, type: environment }
+      - { name: ROUTES_JSON, type: environment }
+      - { name: GATEWAY_NAME, type: environment }
+      - { name: GATEWAY_NAMESPACE, type: environment }
+      - { name: KEYS_NAMESPACE, type: environment }
+      - { name: API_KEY_HEADER, type: environment }
+  - name: revoke key
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/revoke_key
