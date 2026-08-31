@@ -7,6 +7,7 @@ setup() {
   }
   RECONCILE="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile"
   RECONCILE_LIB="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile_lib"
+  CHECK="${BATS_TEST_DIRNAME}/../scripts/k8s/check_collisions"
   source "${BATS_TEST_DIRNAME}/../logging"
   export -f log
 
@@ -25,7 +26,7 @@ setup() {
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   : >"$NP_CALLS_LOG"
   export NP_MOCK_LINKS='[{"id":"1"}]'
-  unset KUBECTL_MOCK_FAIL KUBECTL_MOCK_ROUTE_COND KUBECTL_MOCK_PARENTS MANIFESTS_DIR NP_MOCK_MODE
+  unset KUBECTL_MOCK_FAIL KUBECTL_MOCK_ROUTE_COND KUBECTL_MOCK_PARENTS KUBECTL_MOCK_ROUTES MANIFESTS_DIR NP_MOCK_MODE
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat >"$BATS_TEST_TMPDIR/bin/np" <<'MOCK'
@@ -68,6 +69,14 @@ case "$*" in
     [ "${KUBECTL_MOCK_FAIL:-}" = delete-secret ] && exit 1
     exit 0
     ;;
+  *"delete authpolicy"*)
+    [ "${KUBECTL_MOCK_FAIL:-}" = delete-authpolicy ] && exit 1
+    exit 0
+    ;;
+  *"delete httproute "*)
+    [ "${KUBECTL_MOCK_FAIL:-}" = delete-httproute ] && exit 1
+    exit 0
+    ;;
   *httproute/*)
     PARENTS="${KUBECTL_MOCK_PARENTS:-}"
     if [ -z "$PARENTS" ]; then
@@ -79,7 +88,7 @@ case "$*" in
     ;;
   *httproutes*)
     [ "${KUBECTL_MOCK_FAIL:-}" = get-httproutes ] && exit 1
-    echo '{"items":[]}'
+    printf '{"items":%s}\n' "${KUBECTL_MOCK_ROUTES:-[]}"
     exit 0
     ;;
 esac
@@ -190,4 +199,32 @@ run_reconcile() {
 @test "NO espera ResolvedRefs, que es falso negativo con kind Hostname" {
   run run_reconcile apply
   ! grep -q 'ResolvedRefs' "$KUBECTL_CALLS_LOG"
+}
+
+@test "detecta una carrera si aparece un rival entre el check previo y el post-apply, y revierte" {
+  run bash "$CHECK"
+  [ "$status" -eq 0 ]
+
+  : >"$KUBECTL_CALLS_LOG"
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-rival","namespace":"other","labels":{"apimgr-target":"other.app"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/r1"}}]}]}}]'
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  grep -q "delete authpolicy api-manager-svc-1" "$KUBECTL_CALLS_LOG"
+  grep -q "delete httproute api-manager-svc-1" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "other.app"
+}
+
+@test "camino feliz: sin conflicto en el re-chequeo post-apply, no borra nada" {
+  run run_reconcile apply
+  [ "$status" -eq 0 ]
+  ! grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
+  ! grep -q "delete httproute" "$KUBECTL_CALLS_LOG"
+}
+
+@test "si falla el borrado de rollback de la carrera, lo dice en vez de dejar la ruta colgada en silencio" {
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-rival","namespace":"other","labels":{"apimgr-target":"other.app"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/r1"}}]}]}}]'
+  export KUBECTL_MOCK_FAIL=delete-authpolicy
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "falló el rollback"
 }

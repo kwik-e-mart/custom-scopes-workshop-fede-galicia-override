@@ -5,9 +5,10 @@ RECONCILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$RECONCILE_DIR/labels_lib"
 source "$RECONCILE_DIR/manifests_lib"
 source "$RECONCILE_DIR/reconcile_lib"
+source "$RECONCILE_DIR/collisions_lib"
 
 ACTION="${1:-${ARGS:-apply}}"
-ROUTE_NAME="api-manager-${SERVICE_ID}"
+ROUTE_NAME=$(route_name_for_service "$SERVICE_ID")
 OUTDIR=$(mktemp -d) || die "api-manager: no se pudo crear el directorio temporal."
 trap 'rm -rf "$OUTDIR"' EXIT
 
@@ -40,7 +41,20 @@ case "$ACTION" in
     wait_route_condition "$NAMESPACE" "$ROUTE_NAME" Accepted "${WAIT_TIMEOUT:-60}" \
       || die "api-manager: la HTTPRoute '$ROUTE_NAME' no quedó Accepted. Revisar que el Gateway '$GATEWAY_NAME' exista en '$GATEWAY_NAMESPACE' y admita routes de este namespace."
 
-    log info "api-manager: $APP_TARGET expuesto."
+    if RACE_CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$TARGET_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
+      log info "api-manager: $APP_TARGET expuesto."
+    else
+      RACE_STATUS=$?
+      kubectl -n "$NAMESPACE" delete authpolicy "$ROUTE_NAME" --ignore-not-found \
+        || die "api-manager: se detectó una posible carrera al re-chequear colisiones y falló el rollback de la AuthPolicy '$ROUTE_NAME'. Queda expuesta una ruta que puede estar secuestrando tráfico ajeno: revisar manualmente."
+      kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
+        || die "api-manager: se detectó una posible carrera al re-chequear colisiones y falló el rollback de la HTTPRoute '$ROUTE_NAME'. Queda expuesta una ruta que puede estar secuestrando tráfico ajeno: revisar manualmente."
+      if [ "$RACE_STATUS" -eq 2 ]; then
+        die "api-manager: no se pudo re-verificar colisiones después del apply. Se revirtieron la HTTPRoute y la AuthPolicy de '$APP_TARGET' por las dudas: sin ese re-chequeo no se puede confirmar que no haya una carrera con otra app."
+      fi
+      die "api-manager: se detectó una carrera: otra aplicación declaró el mismo dominio y path mientras esta acción estaba en curso. Se revirtieron la HTTPRoute y la AuthPolicy de '$APP_TARGET'. Reintentar la acción.
+$RACE_CONFLICTS"
+    fi
     ;;
   delete)
     kubectl -n "$NAMESPACE" get httproutes -l "${MANAGED_LABEL}=true" >/dev/null \
