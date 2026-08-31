@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+BUILD_CONTEXT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$BUILD_CONTEXT_DIR/service_target_lib"
+
 NOTIFICATION=$(printf %s "$NP_ACTION_CONTEXT" | jq -c '.notification') \
   || { log error "api-manager: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."; exit 1; }
 if [ -z "$NOTIFICATION" ] || [ "$NOTIFICATION" = "null" ]; then
@@ -61,7 +64,8 @@ if [ -z "$SERVICE_ID" ]; then
 fi
 require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
-APP_TARGET="${NAMESPACE}.${APPLICATION_SLUG}"
+APP_TARGET=$(resolve_app_target_from_service "$SERVICE_ID") \
+  || { log error "api-manager: no se pudo resolver el target de '$SERVICE_ID'. No se sigue con un target adivinado."; exit 1; }
 if [ "${#APP_TARGET}" -gt 63 ]; then
   log error "api-manager: '$APP_TARGET' excede los 63 caracteres que admite un valor de label."
   exit 1

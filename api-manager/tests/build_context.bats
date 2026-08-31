@@ -20,6 +20,8 @@ setup() {
     {"slug":"prod","domain":"gal-poc-reports-prod-xiist.galicia-poc.nullapps.io"}
   ]'
   export NP_MOCK_APP='{"slug":"reports"}'
+  export NP_MOCK_SERVICE='{"entity_nrn":"organization=1:account=1:namespace=5001:application=142495574"}'
+  export NP_MOCK_NAMESPACE='{"slug":"payments"}'
   : >"$NP_CALLS_LOG"
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
@@ -43,6 +45,10 @@ case "$SUBCMD" in
     printf %s "$NP_MOCK_SCOPES" | jq -c '{results: .}' | jq -c "$QUERY" ;;
   "application read")
     printf %s "$NP_MOCK_APP" | jq -c "$QUERY" ;;
+  "service read")
+    printf %s "$NP_MOCK_SERVICE" | jq -c "$QUERY" ;;
+  "namespace read")
+    printf %s "$NP_MOCK_NAMESPACE" | jq -c "$QUERY" ;;
   *)
     echo '{}' ;;
 esac
@@ -57,6 +63,15 @@ ctx() {
      + {account:{}, namespace:{},
         application: ( (if $app == null then {} else {id:$app} end)
                      + (if $slug == "" then {} else {slug:$slug} end) )}'
+}
+
+run_build_context() {
+  bash -c '
+    set -euo pipefail
+    if ! source "$1"; then
+      exit 1
+    fi
+  ' _ "$BC"
 }
 
 notif() {
@@ -144,6 +159,33 @@ notif() {
   run env BACKEND_PORT=70000 NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "backend port"
+}
+
+@test "el APP_TARGET sale del namespace de nullplatform del service, no del namespace de Kubernetes" {
+  NS_PROVIDER="k8s-namespace-distinto"
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  run env NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" bash "$BC"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q 'APP_TARGET=payments.reports'
+  ! echo "$output" | grep -q 'k8s-namespace-distinto'
+}
+
+@test "aborta si no se puede resolver el target del service en vez de seguir con uno adivinado" {
+  export NP_MOCK_SERVICE='{"entity_nrn":"organization=1:account=1:application=142495574"}'
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "no se pudo resolver el target"
+}
+
+@test "en delete tambien resuelve el target por el service y aborta si eso falla" {
+  export NP_MOCK_SERVICE='{}'
+  ATTRS='{"hosts":[],"routes":[]}'
+  export ARGS=delete NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "no se pudo resolver el target"
 }
 
 @test "en delete no valida hosts, rutas ni scopes: alcanza con namespace, app_target y service_id" {
