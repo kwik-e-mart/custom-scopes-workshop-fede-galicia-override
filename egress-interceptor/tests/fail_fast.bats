@@ -27,6 +27,10 @@ if [ -n "${FALLA_WAIT:-}" ] && [[ "$*" == *wait* && "$*" == *"$FALLA_WAIT"* ]]; 
   echo "error: timed out waiting for the condition" >&2
   exit 1
 fi
+if [ -n "${FALLA_GET_SVC:-}" ] && [[ "$*" == *"get svc"*"-o json"* ]]; then
+  echo "error: Unable to connect to the server: dial tcp: i/o timeout" >&2
+  exit 1
+fi
 case "$*" in
   *"patch svc"*)
     # Refleja el nuevo selector, igual que el API server.
@@ -58,6 +62,21 @@ correr() {
   bash -c '
     source "'"$SVC_DIR"'/logging"
     # ESTE `if !` es lo que desactiva errexit en el script sourceado, igual que el runner del CLI.
+    if ! source "'"$SVC_DIR"'/scripts/k8s/reconcile"; then exit 1; fi
+  '
+}
+
+# Igual que `correr`, pero por la rama de delete.
+correr_delete() {
+  ARGS=delete \
+  NAMESPACE=payments ORIGIN=EKS CLUSTER_LABEL=eks-kuadrant \
+  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
+  WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
+  PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
+  GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  INTERCEPTIONS_JSON='[]' \
+  bash -c '
+    source "'"$SVC_DIR"'/logging"
     if ! source "'"$SVC_DIR"'/scripts/k8s/reconcile"; then exit 1; fi
   '
 }
@@ -126,4 +145,27 @@ correr() {
   patch=$(grep -n ' patch svc ' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
   [ -n "$anot" ] && [ -n "$patch" ]
   [ "$anot" -lt "$patch" ]
+}
+
+@test "si falla el listado de Services interceptados, el delete ABORTA sin borrar nada" {
+  # `for svc in $(cmd)` no dispara errexit cuando cmd falla: el for itera cero veces y sigue. Con
+  # el listado caído —timeout, RBAC, blip de red— ningún Service recuperaba su selector y el delete
+  # igual reportaba OK, dejándolos apuntando a un Gateway que se borra a continuación.
+  export FALLA_GET_SVC=1
+  run correr_delete
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no se pudo listar los Services interceptados"* ]]
+  # Y no llegó a borrar nada.
+  run grep -c ' delete ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "el delete normal SÍ llega a borrar los objetos" {
+  # La contraparte del de arriba: sin esto, un delete que abortara siempre pasaría aquel test.
+  # Se compara contra el `delete`, no contra el `patch`: con cero Services interceptados no hay
+  # nada que revertir, y eso es correcto, no un fallo.
+  run correr_delete
+  [ "$status" -eq 0 ]
+  run grep -c ' delete ' "$KUBECTL_CALLS"
+  [ "$output" -gt 0 ]
 }

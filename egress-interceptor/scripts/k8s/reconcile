@@ -150,7 +150,14 @@ if [ "$ACTION" = "delete" ]; then
     || die "falló la publicación del borrado al repo gitops. No se borró nada del cluster."
   # Revertir ANTES de borrar el Gateway: al revés, el Service queda apuntando a un selector sin
   # endpoints y el namespace pierde el servicio.
-  for svc in $(intercepted_services); do
+  #
+  # El listado se captura aparte y con su propio chequeo. Un `for svc in $(cmd)` NO dispara errexit
+  # cuando cmd falla: el for itera cero veces y el script sigue. Con el `kubectl get svc` caído por
+  # un timeout, un blip de red o RBAC, NINGÚN Service recuperaría su selector y el delete igual
+  # reportaría "reconcile delete OK".
+  INTERCEPTED=$(intercepted_services) \
+    || die "no se pudo listar los Services interceptados de $NAMESPACE. No se borra nada: sin esa lista no hay cómo devolverles el selector original."
+  for svc in $INTERCEPTED; do
     revert_service "$svc"
   done
   delete_own_services gateway-service || die "falló el borrado de los Services de captura."
@@ -369,7 +376,14 @@ done
 # Los que ya no están declarados, por los dos caminos: el hijackeado de OpenShift lo delata su
 # annotation, y el que creó el interceptor en EKS su rol. El Gateway y la AuthPolicy quedan:
 # sirven al resto de las reglas.
-STALE_SERVICES=$(printf '%s\n%s\n' "$(intercepted_services)" "$(own_gateway_services | tr ' ' '\n')" | grep -v '^$' | sort -u)
+# Mismo cuidado que en el delete: los dos listados se capturan por separado y con su chequeo. Un
+# fallo acá no borra nada de más, pero deja Services hijackeados que ya no están declarados —o sea
+# apuntando a un Gateway que no los va a atender— sin que nada lo diga.
+INTERCEPTED=$(intercepted_services) \
+  || die "no se pudo listar los Services interceptados de $NAMESPACE."
+OWN_GATEWAY=$(own_gateway_services) \
+  || die "no se pudo listar los Services que creó el interceptor en $NAMESPACE."
+STALE_SERVICES=$(printf '%s\n%s\n' "$INTERCEPTED" "$(printf '%s' "$OWN_GATEWAY" | tr ' ' '\n')" | grep -v '^$' | sort -u)
 for svc in $STALE_SERVICES; do
   echo "$DECLARED_SERVICES" | grep -qx "$svc" && continue
   revert_service "$svc"
