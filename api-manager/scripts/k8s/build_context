@@ -54,9 +54,11 @@ if [ -z "$APPLICATION_SLUG" ]; then
 fi
 
 require_match "$APPLICATION_SLUG" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "application.slug"
-if [ -n "$SERVICE_ID" ]; then
-  require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
+if [ -z "$SERVICE_ID" ]; then
+  log error "api-manager: la notificación no trae service.id. Es obligatorio: nombra la HTTPRoute y la AuthPolicy de esta instancia."
+  exit 1
 fi
+require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
 APP_TARGET="${NAMESPACE}.${APPLICATION_SLUG}"
 if [ "${#APP_TARGET}" -gt 63 ]; then
@@ -64,48 +66,50 @@ if [ "${#APP_TARGET}" -gt 63 ]; then
   exit 1
 fi
 
-if [ "$(printf %s "$HOSTS_JSON" | jq 'length')" -eq 0 ]; then
-  log error "api-manager: no hay dominios declarados. Declarar al menos uno."
-  exit 1
-fi
-
-while IFS= read -r HOST; do
-  require_match "$HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' "dominio"
-done < <(printf %s "$HOSTS_JSON" | jq -r '.[]')
-
-if [ "$(printf %s "$ROUTES_JSON" | jq 'length')" -eq 0 ]; then
-  log error "api-manager: no hay rutas declaradas. Sin rutas la aplicación no queda expuesta."
-  exit 1
-fi
-
-if [ "$(printf %s "$ROUTES_JSON" | jq '[.[] | select((.scope // "") == "")] | length')" -gt 0 ]; then
-  log error "api-manager: hay rutas sin scope. Cada ruta declara qué despliegue la atiende."
-  exit 1
-fi
-
-[ -n "$APPLICATION_ID" ] || { log error "api-manager: el CONTEXT no trae application.id."; exit 1; }
-
-ACTIVE_SCOPES=$(np scope list --application-id "$APPLICATION_ID" --status active --format json \
-  --query '[ (.results? // .) | .[]? | {slug, domain} ]') \
-  || { log error "api-manager: falló el listado de scopes de la aplicación $APPLICATION_ID."; exit 1; }
-
-ROUTES_JSON=$(printf %s "$ROUTES_JSON" | jq -c --argjson scopes "$ACTIVE_SCOPES" '
-  map(. as $r | . + {
-    backend: ([$scopes[] | select(.slug == $r.scope) | .domain] | first // "")
-  })') \
-  || { log error "api-manager: no se pudieron enriquecer las rutas con el backend resuelto."; exit 1; }
-
-while IFS=$'\t' read -r ROUTE_SCOPE ROUTE_BACKEND; do
-  if [ -z "$ROUTE_BACKEND" ]; then
-    log error "api-manager: el scope '$ROUTE_SCOPE' no está entre los scopes activos de la aplicación $APPLICATION_ID."
+if [ "${ARGS:-apply}" != "delete" ]; then
+  if [ "$(printf %s "$HOSTS_JSON" | jq 'length')" -eq 0 ]; then
+    log error "api-manager: no hay dominios declarados. Declarar al menos uno."
     exit 1
   fi
-  if [ "$ROUTE_BACKEND" = "To be defined" ]; then
-    log error "api-manager: el scope '$ROUTE_SCOPE' existe pero todavía no está desplegado (domain: 'To be defined')."
+
+  while IFS= read -r HOST; do
+    require_match "$HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' "dominio"
+  done < <(printf %s "$HOSTS_JSON" | jq -r '.[]')
+
+  if [ "$(printf %s "$ROUTES_JSON" | jq 'length')" -eq 0 ]; then
+    log error "api-manager: no hay rutas declaradas. Sin rutas la aplicación no queda expuesta."
     exit 1
   fi
-  require_match "$ROUTE_BACKEND" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "el backend del scope '$ROUTE_SCOPE'"
-done < <(printf %s "$ROUTES_JSON" | jq -r '.[] | [.scope, .backend] | @tsv')
+
+  if [ "$(printf %s "$ROUTES_JSON" | jq '[.[] | select((.scope // "") == "")] | length')" -gt 0 ]; then
+    log error "api-manager: hay rutas sin scope. Cada ruta declara qué despliegue la atiende."
+    exit 1
+  fi
+
+  [ -n "$APPLICATION_ID" ] || { log error "api-manager: el CONTEXT no trae application.id."; exit 1; }
+
+  ACTIVE_SCOPES=$(np scope list --application-id "$APPLICATION_ID" --status active --format json \
+    --query '[ (.results? // .) | .[]? | {slug, domain} ]') \
+    || { log error "api-manager: falló el listado de scopes de la aplicación $APPLICATION_ID."; exit 1; }
+
+  ROUTES_JSON=$(printf %s "$ROUTES_JSON" | jq -c --argjson scopes "$ACTIVE_SCOPES" '
+    map(. as $r | . + {
+      backend: ([$scopes[] | select(.slug == $r.scope) | .domain] | first // "")
+    })') \
+    || { log error "api-manager: no se pudieron enriquecer las rutas con el backend resuelto."; exit 1; }
+
+  while IFS=$'\t' read -r ROUTE_SCOPE ROUTE_BACKEND; do
+    if [ -z "$ROUTE_BACKEND" ]; then
+      log error "api-manager: el scope '$ROUTE_SCOPE' no está entre los scopes activos de la aplicación $APPLICATION_ID."
+      exit 1
+    fi
+    if [ "$ROUTE_BACKEND" = "To be defined" ]; then
+      log error "api-manager: el scope '$ROUTE_SCOPE' existe pero todavía no está desplegado (domain: 'To be defined')."
+      exit 1
+    fi
+    require_match "$ROUTE_BACKEND" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "el backend del scope '$ROUTE_SCOPE'"
+  done < <(printf %s "$ROUTES_JSON" | jq -r '.[] | [.scope, .backend] | @tsv')
+fi
 
 export NAMESPACE APP_TARGET SERVICE_ID HOSTS_JSON ROUTES_JSON
 export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER

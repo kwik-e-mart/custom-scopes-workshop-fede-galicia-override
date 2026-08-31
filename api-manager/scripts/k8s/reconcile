@@ -45,14 +45,14 @@ case "$ACTION" in
     ;;
   delete)
     kubectl -n "$NAMESPACE" get httproutes -l "${MANAGED_LABEL}=true" >/dev/null \
-      || die "api-manager: no se pudo listar las HTTPRoutes propias de '$NAMESPACE'. No se borra nada: sin poder confirmar qué rutas administra esta instancia, borrar a ciegas es peligroso."
+      || die "api-manager: no se pudo listar las HTTPRoutes de '$NAMESPACE'. No se borra nada: esto sólo verifica que se puede leer el namespace antes de un borrado destructivo, no que la ruta sea de esta app."
 
     kubectl -n "$NAMESPACE" delete authpolicy "$ROUTE_NAME" --ignore-not-found \
       || die "api-manager: falló el borrado de la AuthPolicy '$ROUTE_NAME'."
     kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
       || die "api-manager: falló el borrado de la HTTPRoute '$ROUTE_NAME'."
     kubectl -n "$KEYS_NAMESPACE" delete secret \
-      -l "apimgr-target=$APP_TARGET" --ignore-not-found \
+      -l "${TARGET_LABEL}=$APP_TARGET" --ignore-not-found \
       || die "api-manager: falló el borrado de las api keys de '$APP_TARGET'. Quedan credenciales vivas para una app que ya no está expuesta."
     log info "api-manager: $APP_TARGET dado de baja."
     ;;

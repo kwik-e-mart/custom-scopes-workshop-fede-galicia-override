@@ -22,7 +22,7 @@ setup() {
 
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
-  unset KUBECTL_MOCK_FAIL KUBECTL_MOCK_ROUTE_COND KUBECTL_MOCK_PARENTS
+  unset KUBECTL_MOCK_FAIL KUBECTL_MOCK_ROUTE_COND KUBECTL_MOCK_PARENTS MANIFESTS_DIR
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
@@ -37,6 +37,10 @@ case " $* " in
 esac
 
 case "$*" in
+  *"delete secret"*)
+    [ "${KUBECTL_MOCK_FAIL:-}" = delete-secret ] && exit 1
+    exit 0
+    ;;
   *httproute/*)
     PARENTS="${KUBECTL_MOCK_PARENTS:-}"
     if [ -z "$PARENTS" ]; then
@@ -59,30 +63,64 @@ MOCK
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
+run_reconcile() {
+  local action="$1"
+  bash -c '
+    set -euo pipefail
+    if ! source "$1" "$2"; then
+      exit 1
+    fi
+  ' _ "$RECONCILE" "$action"
+}
+
 @test "aborta si falla el apply de un manifiesto" {
   export KUBECTL_MOCK_FAIL=apply
-  run bash "$RECONCILE" apply
+  run run_reconcile apply
   [ "$status" -ne 0 ]
 }
 
 @test "aborta si la route nunca queda Accepted" {
   export KUBECTL_MOCK_ROUTE_COND=False
   export WAIT_TIMEOUT=1
-  run bash "$RECONCILE" apply
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+}
+
+@test "aborta si falla el render de los manifiestos" {
+  export MANIFESTS_DIR="$BATS_TEST_TMPDIR/manifiestos-vacios"
+  mkdir -p "$MANIFESTS_DIR"
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+}
+
+@test "aborta si render_manifests devuelve error aunque haya impreso algo antes de fallar" {
+  render_manifests() {
+    printf '%s\n' "$2/algo.yaml"
+    printf 'fake\n' >"$2/algo.yaml"
+    return 1
+  }
+  export -f render_manifests
+  run run_reconcile apply
   [ "$status" -ne 0 ]
 }
 
 @test "no borra nada si falla el listado de rutas propias" {
   export KUBECTL_MOCK_FAIL=get-httproutes
-  run bash "$RECONCILE" delete
+  run run_reconcile delete
   [ "$status" -ne 0 ]
   ! grep -q 'delete' "$KUBECTL_CALLS_LOG"
 }
 
 @test "el delete borra tambien las keys de la app" {
-  run bash "$RECONCILE" delete
+  run run_reconcile delete
   [ "$status" -eq 0 ]
   grep -q "delete secret" "$KUBECTL_CALLS_LOG"
+}
+
+@test "aborta si falla el borrado del Secret de api keys" {
+  export KUBECTL_MOCK_FAIL=delete-secret
+  run run_reconcile delete
+  [ "$status" -ne 0 ]
 }
 
 @test "wait_route_condition acepta con un parent True y ninguno distinto" {
@@ -100,6 +138,6 @@ MOCK
 }
 
 @test "NO espera ResolvedRefs, que es falso negativo con kind Hostname" {
-  run bash "$RECONCILE" apply
+  run run_reconcile apply
   ! grep -q 'ResolvedRefs' "$KUBECTL_CALLS_LOG"
 }

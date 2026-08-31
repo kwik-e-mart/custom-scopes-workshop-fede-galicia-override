@@ -18,6 +18,7 @@ steps:
   - name: build context
     type: script
     file: $SERVICE_PATH/scripts/k8s/build_context
+    configuration: { ARGS: delete }
     output:
       - { name: NAMESPACE, type: environment }
       - { name: APP_TARGET, type: environment }
