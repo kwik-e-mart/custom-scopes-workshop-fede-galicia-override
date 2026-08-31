@@ -70,8 +70,8 @@
               "path": {
                 "type": "string",
                 "title": "Path",
-                "pattern": "^/([a-zA-Z0-9_\\-\\.:\\*{}/]*)?$",
-                "description": "Tiene que empezar con /. Ejemplos: /, /api, /api/v1/users, /items/{id}, /files/*"
+                "pattern": "^/([a-zA-Z0-9_\\-\\.:{}/]*\\*?)?$",
+                "description": "Tiene que empezar con /. El '*' sólo puede ir al final, para exponer un subárbol. Ejemplos: /, /api, /api/v1/users, /items/{id}, /files/*"
               },
               "scope": {
                 "type": "string",
