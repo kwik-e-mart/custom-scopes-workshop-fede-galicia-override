@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EXISTING=$(kubectl get httproutes -A -l "api-manager.nullplatform.io/managed=true" -o json) \
+  || { log error "api-manager: no se pudo listar las rutas existentes. No se aplica nada: sin ese listado no hay cómo detectar una colisión de dominios."; exit 1; }
+
+CLAIMED=$(printf %s "$EXISTING" | jq -c --arg self "$APP_TARGET" '
+  [ .items[]
+    | .metadata.labels["apimgr-target"] as $owner
+    | select($owner != $self)
+    | . as $r
+    | $r.spec.hostnames[] as $h
+    | $r.spec.rules[]?.matches[]?.path.value as $p
+    | {host: $h, path: $p, owner: $owner} ]') \
+  || { log error "api-manager: no se pudo procesar el listado de rutas existentes."; exit 1; }
+
+WANTED=$(jq -nc --argjson hosts "$HOSTS_JSON" --argjson routes "$ROUTES_JSON" '
+  [ $hosts[] as $h | $routes[] | {host: $h, path: .path} ]') \
+  || { log error "api-manager: no se pudo armar el listado de dominios y rutas propios."; exit 1; }
+
+CONFLICTS=$(jq -nr --argjson claimed "$CLAIMED" --argjson wanted "$WANTED" '
+  [ $wanted[] as $w | $claimed[] | select(.host == $w.host and .path == $w.path) ]
+  | .[] | "  \(.host)\(.path) ya está tomado por \(.owner)"') \
+  || { log error "api-manager: no se pudo comparar los dominios y rutas propios contra los ya declarados."; exit 1; }
+
+if [ -n "$CONFLICTS" ]; then
+  log error "api-manager: hay dominios y paths ya declarados por otra aplicación."
+  log error "$CONFLICTS"
+  log error "  Compartir un dominio está permitido: lo que no se puede es repetir el mismo path."
+  exit 1
+fi

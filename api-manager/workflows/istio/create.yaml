@@ -28,6 +28,9 @@ steps:
       - { name: GATEWAY_NAMESPACE, type: environment }
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: API_KEY_HEADER, type: environment }
+  - name: check collisions
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/check_collisions
   - name: reconcile apply
     type: script
     file: $SERVICE_PATH/scripts/k8s/reconcile
