@@ -49,9 +49,19 @@ case "$ACTION" in
       || die "api-manager: falló el borrado de la AuthPolicy '$ROUTE_NAME'."
     kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
       || die "api-manager: falló el borrado de la HTTPRoute '$ROUTE_NAME'."
-    kubectl -n "$KEYS_NAMESPACE" delete secret \
-      -l "${TARGET_LABEL}=$APP_TARGET" --ignore-not-found \
-      || die "api-manager: falló el borrado de las api keys de '$APP_TARGET'. Quedan credenciales vivas para una app que ya no está expuesta."
+    LINK_IDS_JSON=$(np link list --service-id "$SERVICE_ID" --all --format json --query '[ (.results? // .) | .[]? | .id ]') \
+      || die "api-manager: falló el listado de links del service '$SERVICE_ID'. No se borra ninguna key: sin ese listado no hay forma de saber cuáles son propias."
+
+    LINK_IDS=$(printf %s "$LINK_IDS_JSON" | jq -r '.[]') \
+      || die "api-manager: no se pudo procesar el listado de links del service '$SERVICE_ID'."
+
+    if [ -n "$LINK_IDS" ]; then
+      while IFS= read -r LINK_ID; do
+        kubectl -n "$KEYS_NAMESPACE" delete secret "api-manager-${LINK_ID}" --ignore-not-found \
+          || die "api-manager: falló el borrado de la key del link '$LINK_ID'. Queda una credencial viva para una app que ya no está expuesta."
+      done <<< "$LINK_IDS"
+    fi
+
     log info "api-manager: $APP_TARGET dado de baja."
     ;;
   *)

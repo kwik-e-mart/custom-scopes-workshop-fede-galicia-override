@@ -26,9 +26,11 @@ setup() {
   export NP_ACTION_CONTEXT
   NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"}}}')
 
-  unset KUBECTL_MOCK_FAIL
+  unset KUBECTL_MOCK_FAIL MANAGED_LABEL TARGET_LABEL
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
+  export KUBECTL_STDIN_LOG="$BATS_TEST_TMPDIR/kubectl-stdin.log"
+  : >"$KUBECTL_STDIN_LOG"
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   : >"$NP_CALLS_LOG"
 
@@ -36,21 +38,16 @@ setup() {
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$KUBECTL_CALLS_LOG"
-case " $* " in
-  *" create secret "*)
-    [ "${KUBECTL_MOCK_FAIL:-}" = create ] && exit 1
-    echo "apiVersion: v1"
+case "$*" in
+  "create -f -")
+    if [ "${KUBECTL_MOCK_FAIL:-}" = create ]; then
+      cat >/dev/null
+      exit 1
+    fi
+    cat >>"$KUBECTL_STDIN_LOG"
     exit 0
     ;;
-  *" apply "*)
-    cat >/dev/null
-    exit 0
-    ;;
-  *" label secret "*)
-    [ "${KUBECTL_MOCK_FAIL:-}" = label ] && exit 1
-    exit 0
-    ;;
-  *" delete secret "*)
+  *"delete secret"*)
     [ "${KUBECTL_MOCK_FAIL:-}" = delete ] && exit 1
     exit 0
     ;;
@@ -72,19 +69,26 @@ MOCK
 @test "mint_key crea el secret con los tres labels" {
   run bash "$MINT"
   [ "$status" -eq 0 ]
-  grep -q "authorino.kuadrant.io/managed-by=authorino" "$KUBECTL_CALLS_LOG"
-  grep -q "api-manager.nullplatform.io/managed=true" "$KUBECTL_CALLS_LOG"
-  grep -q "apimgr-target=payments.reports" "$KUBECTL_CALLS_LOG"
+  grep -q '"authorino.kuadrant.io/managed-by":"authorino"' "$KUBECTL_STDIN_LOG"
+  grep -q '"api-manager.nullplatform.io/managed":"true"' "$KUBECTL_STDIN_LOG"
+  grep -q '"apimgr-target":"payments.reports"' "$KUBECTL_STDIN_LOG"
+}
+
+@test "mint_key crea el secret con un create puro (POST), no con apply" {
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+  grep -q "^create -f -\$" "$KUBECTL_CALLS_LOG"
+  ! grep -qi "apply" "$KUBECTL_CALLS_LOG"
 }
 
 @test "mint_key genera una key distinta en cada corrida" {
   run bash "$MINT"
   [ "$status" -eq 0 ]
-  local a; a=$(grep -- "--from-literal=api_key=" "$KUBECTL_CALLS_LOG" | tail -1)
-  : >"$KUBECTL_CALLS_LOG"
+  local a; a=$(grep -o '"api_key":"[^"]*"' "$KUBECTL_STDIN_LOG" | tail -1)
+  : >"$KUBECTL_STDIN_LOG"
   run bash "$MINT"
   [ "$status" -eq 0 ]
-  local b; b=$(grep -- "--from-literal=api_key=" "$KUBECTL_CALLS_LOG" | tail -1)
+  local b; b=$(grep -o '"api_key":"[^"]*"' "$KUBECTL_STDIN_LOG" | tail -1)
   [ -n "$a" ]
   [ -n "$b" ]
   [ "$a" != "$b" ]
@@ -103,20 +107,13 @@ MOCK
   [ "$status" -ne 0 ]
 }
 
-@test "mint_key aborta si falla el etiquetado del secret" {
-  export KUBECTL_MOCK_FAIL=label
-  run bash "$MINT"
-  [ "$status" -ne 0 ]
-  echo "$output" | grep -q "falló el etiquetado"
-}
-
 @test "mint_key aborta si la notificacion no trae link.id y no usa un default" {
   export NP_ACTION_CONTEXT
   NP_ACTION_CONTEXT=$(jq -nc '{notification:{marker_test_key:"x"}}')
   run bash "$MINT"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "marker_test_key"
-  ! grep -q "create secret" "$KUBECTL_CALLS_LOG"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
 @test "revoke_key borra el secret del link" {

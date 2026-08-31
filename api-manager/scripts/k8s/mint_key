@@ -27,16 +27,28 @@ fi
 SECRET_NAME="api-manager-${LINK_ID}"
 API_KEY=$(openssl rand -hex 32) || { log error "api-manager: no se pudo generar la api key."; exit 1; }
 
-kubectl -n "$KEYS_NAMESPACE" create secret generic "$SECRET_NAME" \
-  --from-literal=api_key="$API_KEY" --dry-run=client -o yaml \
-  | kubectl apply -f - \
-  || { log error "api-manager: falló la creación del Secret '$SECRET_NAME' en '$KEYS_NAMESPACE'."; exit 1; }
+SECRET_MANIFEST=$(jq -nc \
+  --arg name "$SECRET_NAME" \
+  --arg namespace "$KEYS_NAMESPACE" \
+  --arg managed_label "$MANAGED_LABEL" \
+  --arg target_label "$TARGET_LABEL" \
+  --arg target "$APP_TARGET" \
+  --arg key "$API_KEY" \
+  '{
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: $name,
+      namespace: $namespace,
+      labels: ({
+        "authorino.kuadrant.io/managed-by": "authorino"
+      } + { ($managed_label): "true" } + { ($target_label): $target })
+    },
+    stringData: { api_key: $key }
+  }') || { log error "api-manager: no se pudo armar el manifiesto del Secret '$SECRET_NAME'."; exit 1; }
 
-kubectl -n "$KEYS_NAMESPACE" label secret "$SECRET_NAME" --overwrite \
-  "authorino.kuadrant.io/managed-by=authorino" \
-  "${MANAGED_LABEL}=true" \
-  "${TARGET_LABEL}=$APP_TARGET" \
-  || { log error "api-manager: falló el etiquetado del Secret '$SECRET_NAME'. Sin labels, Authorino no la ve y el consumidor recibe una key que no sirve."; exit 1; }
+printf %s "$SECRET_MANIFEST" | kubectl create -f - \
+  || { log error "api-manager: falló la creación del Secret '$SECRET_NAME' en '$KEYS_NAMESPACE'. Si ya existía (AlreadyExists), hay dos links pisando el mismo id."; exit 1; }
 
 RESULTS=$(jq -nc --arg k "$API_KEY" '{api_key: $k}') \
   || { log error "api-manager: no se pudieron armar los resultados del link."; exit 1; }

@@ -22,9 +22,36 @@ setup() {
 
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
-  unset KUBECTL_MOCK_FAIL KUBECTL_MOCK_ROUTE_COND KUBECTL_MOCK_PARENTS MANIFESTS_DIR
+  export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
+  : >"$NP_CALLS_LOG"
+  export NP_MOCK_LINKS='[{"id":"1"}]'
+  unset KUBECTL_MOCK_FAIL KUBECTL_MOCK_ROUTE_COND KUBECTL_MOCK_PARENTS MANIFESTS_DIR NP_MOCK_MODE
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat >"$BATS_TEST_TMPDIR/bin/np" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$NP_CALLS_LOG"
+if [ "${NP_MOCK_MODE:-ok}" = "fail" ]; then
+  echo '{"error":"failed"}'
+  exit 1
+fi
+SUBCMD="$1 $2"
+QUERY=.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --query) QUERY="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$SUBCMD" in
+  "link list")
+    printf %s "${NP_MOCK_LINKS:-[]}" | jq -c '{results: .}' | jq -c "$QUERY" ;;
+  *)
+    echo '{}' ;;
+esac
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/np"
+
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$KUBECTL_CALLS_LOG"
@@ -115,6 +142,29 @@ run_reconcile() {
   run run_reconcile delete
   [ "$status" -eq 0 ]
   grep -q "delete secret" "$KUBECTL_CALLS_LOG"
+}
+
+@test "el delete borra las keys por link id, no por selector de label" {
+  export NP_MOCK_LINKS='[{"id":"1"},{"id":"2"}]'
+  run run_reconcile delete
+  [ "$status" -eq 0 ]
+  grep -q "delete secret api-manager-1 " "$KUBECTL_CALLS_LOG"
+  grep -q "delete secret api-manager-2 " "$KUBECTL_CALLS_LOG"
+  ! grep -q -- "-l apimgr-target=" "$KUBECTL_CALLS_LOG"
+}
+
+@test "sin links del service no intenta borrar ninguna key" {
+  export NP_MOCK_LINKS='[]'
+  run run_reconcile delete
+  [ "$status" -eq 0 ]
+  ! grep -q "delete secret" "$KUBECTL_CALLS_LOG"
+}
+
+@test "aborta si falla el listado de links de nullplatform y no borra ninguna key" {
+  export NP_MOCK_MODE=fail
+  run run_reconcile delete
+  [ "$status" -ne 0 ]
+  ! grep -q "delete secret" "$KUBECTL_CALLS_LOG"
 }
 
 @test "aborta si falla el borrado del Secret de api keys" {
