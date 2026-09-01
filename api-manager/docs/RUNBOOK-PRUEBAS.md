@@ -231,44 +231,46 @@ donde corre este agente.
 > de CRC) y el canal selecciona por tags sin discriminar proceso: dos agentes con tags que matcheen
 > el mismo channel se pisan. Un agente por cluster, N services.
 
-### El repo del código
+### El código del service, en el disco del agente
 
-El agente clona los repos que le pasás en `GIT_COMMAND_REPOS`. Para que pueda ejecutar el entrypoint
-de Api Manager, ese repo tiene que estar en la lista:
+El agente no clona este repo: lo lee de un **symlink al working copy**, igual que hace el
+`egress-interceptor` con `galicia-banco`. Así ejecuta el código tal como está en tu disco, sin
+commitear ni esperar un clone.
 
-```bash
-export GIT_COMMAND_REPOS="https://github.com/nullplatform/scopes.git#main,https://github.com/kwik-e-mart/custom-scopes-workshop-fede-galicia-override.git#feat/api-manager"
-```
-
-El script valida cada repo con `git ls-remote` antes de arrancar, así que un repo inalcanzable o una
-rama mal escrita fallan ahí, no más tarde y mezclado con el log de arranque. Si es privado, va con
-token: `https://<token>@github.com/org/repo.git#<rama>`.
-
-### Arrancarlo
+El channel arma el comando como `<base_clone_path>/<org>/<repo>/api-manager/entrypoint/entrypoint`.
+Con `base_clone_path = ~/.np` (el del agente host-runtime, igual que el egress), el symlink va así:
 
 ```bash
-cd ~/nullplatform/galicia/galicia-banco
-export NP_API_KEY="$(cat accounts/galicia/np-api-skill.key)"
-export GIT_COMMAND_REPOS="...lo de arriba..."
-./services/egress-interceptor/start-agent-eks.sh
+mkdir -p ~/.np/kwik-e-mart
+ln -sfn ~/nullplatform/galicia/custom-scopes-workshop-fede-galicia-override \
+        ~/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override
 ```
 
-El log queda en `/tmp/np-agent-eks.log`.
+Verificalo antes de arrancar el agente:
 
-### El `base_clone_path`
-
-`install/main.tf` no pasa `base_clone_path`, así que queda en el default del módulo, `/root/.np`, y el
-channel apunta a esa ruta **absoluta**:
-
-```
-/root/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override/api-manager/entrypoint/entrypoint
+```bash
+ls -l ~/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override/api-manager/entrypoint/entrypoint
+# → tiene que existir y ser ejecutable
 ```
 
-En un agente **k8s-runtime** eso es transparente: `/root` es el `HOME` de la imagen y el operator
-clona ahí. En **runtime host sobre esta laptop** hace falta que exista literalmente esa ruta, con el
-repo clonado o symlinkeado adentro — el mismo mecanismo del Apéndice A de
-`demo-kuadrant-s2s/RUNBOOK-PRUEBAS.md`, pero bajo `/root` en vez del `$HOME` del usuario. Crear algo
-en `/root` en macOS necesita `sudo`.
+**Ya está creado en esta máquina** (2026-09-01). Al lado queda el del egress:
+
+```
+~/.np/nullplatform-implementations/galicia-banco            -> ~/nullplatform/galicia/galicia-banco
+~/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override -> ~/nullplatform/galicia/custom-scopes-workshop-fede-galicia-override
+```
+
+Los dos services conviven bajo el mismo `~/.np`, cada uno en el path que su channel espera. **No hace
+falta tocar `GIT_COMMAND_REPOS`** para esto: esa lista es para repos que el agente sí clona (el de
+`scopes`, que trae los scope types), no para el código de los services que se leen del symlink.
+
+### El `base_clone_path` tiene que coincidir
+
+Si el channel se crea con el default del módulo (`/root/.np`) en vez de `~/.np`, el comando apunta a
+una ruta que en macOS no existe y hace falta `sudo` para crear. El egress lo resuelve pasando
+`base_clone_path = pathexpand("~/.np")` cuando el agente es host-runtime — ver
+`accounts/galicia/nullplatform-bindings/egress_interceptor.tf`. El channel de Api Manager tiene que
+hacer lo mismo.
 
 > ⚠️ **No verificado.** Este paso está construido sobre cómo funciona el script del
 > `egress-interceptor` (leído) y sobre cómo selecciona el channel (documentado), pero **no se corrió
