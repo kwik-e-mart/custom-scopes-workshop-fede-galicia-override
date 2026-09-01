@@ -333,20 +333,13 @@ run_reconcile() {
   [ "$status" -eq 0 ]
 }
 
-@test "con gitops habilitado y sin GITOPS_SUBSTRATE, el apply aborta nombrando la variable y no aplica nada" {
+@test "con gitops habilitado y sin GITOPS_SUBSTRATE, el apply sigue: el sustrato lo da ORIGIN" {
   export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
   unset GITOPS_SUBSTRATE
+  export ORIGIN=EKS
+  gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  export -f gitops_publish
   run run_reconcile apply
-  [ "$status" -ne 0 ]
-  ! grep -q "apply -f" "$KUBECTL_CALLS_LOG"
-  echo "$output" | grep -q "GITOPS_SUBSTRATE"
-}
-
-@test "con gitops habilitado y sin GITOPS_SUBSTRATE, el delete aborta nombrando la variable y no borra nada" {
-  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
-  unset GITOPS_SUBSTRATE
-  run run_reconcile delete
-  [ "$status" -ne 0 ]
-  ! grep -q 'delete' "$KUBECTL_CALLS_LOG"
-  echo "$output" | grep -q "GITOPS_SUBSTRATE"
+  [ "$status" -eq 0 ]
+  grep -q "apply -f" "$KUBECTL_CALLS_LOG"
 }

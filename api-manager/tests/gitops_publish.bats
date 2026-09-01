@@ -121,13 +121,15 @@ HOOK
   [ "$status" -ne 0 ]
 }
 
-@test "con GitOps habilitado y GITOPS_SUBSTRATE vacío, gitops_publish ABORTA nombrando la variable" {
+@test "con GitOps habilitado y GITOPS_SUBSTRATE vacío, publica bajo el sustrato que deriva de ORIGIN" {
   armar_remoto
   unset GITOPS_SUBSTRATE
+  export ORIGIN=EKS
   make_render
   run gitops_publish "$MDIR"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"GITOPS_SUBSTRATE"* ]]
+  [ "$status" -eq 0 ]
+  run remoto_ls
+  [[ "$output" == *"cross-namespace-rules/eks/payments/api-manager-svc-1/10-httproute.yaml"* ]]
 }
 
 @test "con GitOps habilitado y un GITOPS_SUBSTRATE válido, el subárbol publicado lo usa" {
