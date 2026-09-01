@@ -48,6 +48,11 @@ causa, y no se inventó una salida.
 
 ---
 
+> ⚠️ **Los Pasos 3, 4 y 6 todavía no se corrieron.** Dependen de un notification channel que aún no
+> existe. Sus comandos están derivados de `demo-kuadrant-s2s/demo.sh`, que hace exactamente esto para
+> el `egress-interceptor` y está probado — pero acá no se ejecutaron. El resto del documento sí son
+> salidas reales medidas contra este cluster.
+
 ## Índice
 
 | # | Paso |
