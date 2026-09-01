@@ -264,6 +264,44 @@ Los dos services conviven bajo el mismo `~/.np`, cada uno en el path que su chan
 falta tocar `GIT_COMMAND_REPOS`** para esto: esa lista es para repos que el agente sí clona (el de
 `scopes`, que trae los scope types), no para el código de los services que se leen del symlink.
 
+### Arrancarlo
+
+En una terminal aparte, que queda ocupada mientras el agente corre:
+
+```bash
+cd ~/nullplatform/galicia/galicia-banco
+export NP_API_KEY="$(cat accounts/galicia/np-api-skill.key)"
+./services/egress-interceptor/start-agent-eks.sh
+```
+
+El script se encarga solo de validar que la sesión SSO del perfil `galicia-1` esté viva, generar el
+kubeconfig dedicado (`~/.kube/gal-kuadrant-poc.config`, para no depender del `current-context` de tu
+shell), y chequear que los repos de `GIT_COMMAND_REPOS` sean alcanzables antes de arrancar.
+
+```
+# →
+repo para el agente: https://github.com/nullplatform/scopes.git#main
+kubectl context: gal-kuadrant-poc  (kubeconfig: /Users/…/.kube/gal-kuadrant-poc.config)
+gitops: sin GITOPS_REPO_URL, el publisher queda apagado.
+…arranca y queda escuchando…
+```
+
+Si la sesión SSO expiró, sale antes de arrancar y dice qué correr:
+
+```
+ERROR: la sesión SSO del perfil 'galicia-1' no es válida. Corré:
+  aws sso login --profile galicia-1
+```
+
+El log queda en `/tmp/np-agent-eks.log`. Para seguir qué notificaciones toma, desde otra terminal:
+
+```bash
+tail -f /tmp/np-agent-eks.log
+```
+
+**Dejalo corriendo** durante todo el resto del runbook: es el que ejecuta las acciones cuando crees la
+instancia y el link.
+
 ### El `base_clone_path` tiene que coincidir
 
 Si el channel se crea con el default del módulo (`/root/.np`) en vez de `~/.np`, el comando apunta a
