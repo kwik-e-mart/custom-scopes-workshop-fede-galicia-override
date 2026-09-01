@@ -31,6 +31,7 @@ exactamente eso: se intentó, se documenta la causa real, y no se inventó una s
 | 3 | Cómo se prueba sin un agente vivo (metodología del resto del runbook) |
 | 4 | RBAC de prueba: `ServiceAccount` restringida + `kubeconfig` con impersonation |
 | 5 | `build_context` contra un scope real de la cuenta |
+| 5.1 | Prerequisito: TLS de origen en el loopback — **APLICADO el 2026-09-01** |
 | 6 | Crear la instancia: `reconcile apply` |
 | 7 | GitOps: publicar antes de aplicar |
 | 8 | Verificar lo materializado: `HTTPRoute` `Accepted`, `AuthPolicy` **`Enforced`** |
@@ -338,7 +339,7 @@ El contrato que cada script espera (derivado de `entrypoint/entrypoint`,
 | `NP_ACTION_CONTEXT` | la plataforma (acá: a mano) | `entrypoint`, `build_context`, `mint_key`, `revoke_key` |
 | `CONTEXT` (= `.notification` de `NP_ACTION_CONTEXT`) | `entrypoint` (acá: a mano) | `build_context` |
 | `NAMESPACE`, `APP_TARGET`, `SERVICE_ID`, `HOSTS_JSON`, `ROUTES_JSON` | `build_context` | `check_collisions`, `reconcile` |
-| `GATEWAY_NAME`, `GATEWAY_NAMESPACE`, `KEYS_NAMESPACE`, `API_KEY_HEADER`, `BACKEND_PORT` | la `configuration:` del workflow | `build_context`, `reconcile`, `mint_key`, `revoke_key` |
+| `GATEWAY_NAME`, `GATEWAY_NAMESPACE`, `KEYS_NAMESPACE`, `API_KEY_HEADER`, `LOCAL_INGRESS_HOST` | la `configuration:` del workflow | `build_context`, `reconcile`, `mint_key`, `revoke_key` |
 | `GITOPS_*` (Paso 7) | la `configuration:` del workflow + el `.env`/entorno del agente | `reconcile` (vía `gitops_lib`) |
 
 **Un cambio de diseño (2026-09-01) que endurece este contrato: `APP_TARGET` ya no se puede pasar a
@@ -530,7 +531,7 @@ export NP_ACTION_CONTEXT='{
 export CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq '.notification')
 export ARGS=apply
 export NAMESPACE_OVERRIDE=payments
-export BACKEND_PORT=8080
+export LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local
 
 PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
@@ -571,8 +572,8 @@ api-manager: el scope 'no-existe' no está entre los scopes activos de la aplica
 ```
 
 ```bash
-# BACKEND_PORT fuera de rango: guarda nueva, agregada junto con el soporte de puerto configurable
-export BACKEND_PORT=99999
+# LOCAL_INGRESS_HOST sin forma de host: guarda nueva, agregada junto con el ruteo por el gateway (2026-09-01)
+export LOCAL_INGRESS_HOST="no un host"
 PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
   source "'"$SVC"'/scripts/k8s/build_context"
@@ -581,17 +582,82 @@ PATH=/opt/homebrew/bin:$PATH bash -c '
 
 ```
 # →
-api-manager build_context: valor inválido para backend port: '99999'
+api-manager build_context: valor inválido para local_ingress_host: 'no un host'
 ```
 
 Los tres casos quedan verificados contra la cuenta real, no contra un mock.
 
-⚠️ **El dominio que resuelve `development` no tiene DNS que resuelva hoy** (`dig +short
-galicia-poc-hello-world-poc-development-cvbdn.galicia-poc.nullapps.io` no devuelve nada, ni desde
-la laptop ni desde un pod del cluster). Es un hallazgo de esta corrida, no algo que rompa
-`build_context`: la resolución del scope funciona igual, sólo que el backend resultante no está
-alcanzable ahora mismo. Por eso el Paso 6 en adelante usa un backend sustituto — el mismo echo server
-`reports` que ya corre en `payments`, apuntado con `BACKEND_PORT=8080` (ver más abajo).
+**Cambio de diseño del 2026-09-01, verificado contra EKS por el equipo de implementación (no
+re-medido en este runbook): el `backend` resuelto ya NO es el destino del tráfico.** Hasta acá el
+`backendRef` del `HTTPRoute` apuntaba directo al dominio del scope — pero `kind: Hostname` sólo
+resuelve hosts que el registro de la malla conoce (`Service`/`ServiceEntry`), y el dominio de un
+scope no es ninguno de los dos: Envoy no le arma cluster y el request daba `500`. Ahora el
+`backendRef` apunta siempre al **gateway de ingreso local** (`LOCAL_INGRESS_HOST`, default
+`s2s-ingress-istio.gateways.svc.cluster.local`, puerto 443 fijo — ya no configurable), y cada regla
+lleva un filtro `URLRewrite` que reescribe el `Host` al dominio del scope. El request rebota contra
+el mismo gateway, ahora con el `Host` correcto, y de ahí lo toma el `HTTPRoute` propio del scope. Eso
+significa que `build_context` ya no necesita que el dominio del scope resuelva por DNS ni sea
+alcanzable — sólo lo declara para el rewrite. **Lo que hace falta para que el salto de vuelta al
+gateway funcione es un prerequisito nuevo de infraestructura, todavía sin aplicar en este cluster —
+ver el Paso 5.1.**
+
+---
+
+## Paso 5.1 — Prerequisito: TLS de origen en el loopback del gateway (APLICADO)
+
+**Qué hace falta y por qué:** el listener del `Gateway` `s2s-ingress` es `HTTPS`/`Terminate` (Paso
+0). El salto de vuelta del Paso 5 (Envoy reenviándose una request a sí mismo con el `Host`
+reescrito) es un cliente más de ese listener, así que también tiene que hablarle en TLS — sin eso
+da `503`. Ese origen de TLS lo provee un `DestinationRule` nuevo, `s2s-ingress-loopback`, en el
+namespace `gateways`, con `trafficPolicy.tls.mode=SIMPLE` contra el propio Service del gateway.
+
+**Estado: aplicado el 2026-09-01** (`tofu apply` sobre `clusters/eks`, 2 recursos agregados, 0
+cambiados, 0 destruidos). Verificable con:
+
+```bash
+kubectl --context "$EKS" -n gateways get destinationrule s2s-ingress-loopback
+# → s2s-ingress-loopback   s2s-ingress-istio.gateways.svc.cluster.local
+```
+
+Medido antes y después: el segundo salto pasó de **503** a **401**. O sea que el TLS quedó resuelto y
+lo que responde ahora es una política, no la conexión.
+
+Lo agrega el módulo `kuadrant-s2s` (`accounts/galicia/demo-kuadrant-s2s/modules/kuadrant-s2s/gateway.tf`,
+recurso `kubectl_manifest.ingress_loopback`, commit `627d9a7` de `galicia-banco`), gateado por
+`var.validate_identity` — sólo se crea si ese flag está en `true` en el layer que instancia el
+módulo (`clusters/crc/main.tf`, `module "s2s"`).
+
+```bash
+kubectl --context crc-admin -n gateways get destinationrule s2s-ingress-loopback
+kubectl --context crc-admin -n gateways get secret s2s-remote-ca
+```
+
+```
+# →
+Error from server (NotFound): destinationrules.networking.istio.io "s2s-ingress-loopback" not found
+Error from server (NotFound): secrets "s2s-remote-ca" not found
+```
+
+**BLOQUEADO — todavía no está aplicado en este cluster.** No lo apliqué en esta pasada (una `apply`
+de infraestructura ajena a este service, y ni el usuario ni el team lead lo pidieron explícitamente
+en este momento). Sin este `DestinationRule`, cualquier request que llegue a pasar la `AuthPolicy`
+(el 200 del Paso 10) va a dar `503` en el segundo salto, no porque la identidad esté mal sino porque
+al Envoy del loopback le falta con qué originar TLS. **Aplicar este módulo es un paso previo
+obligatorio antes de correr el Paso 10 en este cluster.**
+
+Para aplicarlo (no ejecutado acá):
+
+```bash
+cd accounts/galicia/demo-kuadrant-s2s/clusters/crc
+tofu plan   # confirmar que sólo agrega el DestinationRule + el Secret de la CA, mostrar el plan antes de aplicar
+tofu apply
+```
+
+**Consecuencia para el resto de este runbook:** los Pasos 6 a 10 (crear la instancia, verificar,
+linkear, los cuatro códigos) NO se pudieron re-verificar de punta a punta contra el 200 real en esta
+pasada, porque ese caso específico depende de este prerequisito. Lo que sí se re-verificó, marcado
+explícitamente en cada paso, es lo que no depende de él: el render del manifiesto, que la instancia
+se materializa (`Accepted`/`Enforced`), y el mecanismo de colisión/link/revocación.
 
 ---
 
@@ -601,23 +667,21 @@ alcanzable ahora mismo. Por eso el Paso 6 en adelante usa un backend sustituto �
 aplicarlos — con la `ServiceAccount` restringida del Paso 4, **sin GitOps** todavía (Paso 7 lo agrega:
 es opcional, y este paso es la prueba de que el service anda igual sin él).
 
-Como ningún scope de esta cuenta tiene hoy una release con DNS que resuelva (Paso 5), acá se
-sustituye el `backend` resuelto por el echo server `reports`. A diferencia de la primera versión de
-este runbook, **no hace falta un `Service` puente**: `reports` escucha en 8080 y el `backendRef`
-del `HTTPRoute` ahora toma el puerto de `BACKEND_PORT` (default 80) en vez de tenerlo fijo — alcanza
-con `export BACKEND_PORT=8080` antes de correr `reconcile`.
+Desde el cambio del Paso 5, `backend` ya **no** necesita ser alcanzable para que la instancia se
+materialice — sólo alimenta el `URLRewrite`. Se usa el dominio real que resolvió `build_context` en
+el Paso 5, sin sustituir nada:
 
 ```bash
 export NAMESPACE=payments
 export APP_TARGET=galicia-poc.hello-world-poc
 export SERVICE_ID=ec53bf2c-5831-4a85-ab4c-b16762ddd861
 export HOSTS_JSON='["api-test.local"]'
-export ROUTES_JSON='[{"path":"/whoami","methods":["GET"],"scope":"development","backend":"reports.payments.svc.cluster.local"}]'
+export ROUTES_JSON='[{"path":"/whoami","methods":["GET"],"scope":"development","backend":"galicia-poc-hello-world-poc-development-cvbdn.galicia-poc.nullapps.io"}]'
 export GATEWAY_NAME=s2s-ingress
 export GATEWAY_NAMESPACE=gateways
 export KEYS_NAMESPACE=kuadrant-system
 export API_KEY_HEADER=x-api-key
-export BACKEND_PORT=8080
+export LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local
 export ARGS=apply
 
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
@@ -889,15 +953,20 @@ spec:
             type: Exact
             value: "/whoami"
           method: "GET"
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            hostname: "galicia-poc-hello-world-poc-development-cvbdn.galicia-poc.nullapps.io"
       backendRefs:
         - group: networking.istio.io
           kind: Hostname
-          name: "reports.payments.svc.cluster.local"
-          port: 8080
+          name: "s2s-ingress-istio.gateways.svc.cluster.local"
+          port: 443
 ```
 
-Exactamente el manifiesto que `reconcile` aplicó al cluster — `port: 8080` incluido (Paso 5/6),
-publicado ANTES del `kubectl apply`, no después ni en paralelo.
+Exactamente el manifiesto que `reconcile` aplicó al cluster (Paso 5/6, ya con el ruteo por
+loopback: `backendRefs` fijo al gateway local, `filters.urlRewrite.hostname` con el dominio del
+scope), publicado ANTES del `kubectl apply`, no después ni en paralelo.
 
 ### Dos adaptaciones que hizo falta hacer al reusar el `gitops_lib` del egress
 
@@ -928,39 +997,36 @@ kubectl --context crc-admin -n payments get authpolicy api-manager-ec53bf2c-5831
 
 ```
 # →
-s2s-ingress: Accepted=True(Accepted) ResolvedRefs=True(ResolvedRefs)
+s2s-ingress: Accepted=True(Accepted) ResolvedRefs=False(BackendNotFound)
 s2s-ingress: kuadrant.io/AuthPolicyAffected=True(Accepted)
 Accepted=True Accepted
 Enforced=True Enforced
 ```
 
-`ResolvedRefs=True` acá porque `reports.payments.svc.cluster.local` **sí** es un `Hostname` que
-Istio conoce (un `Service` real del cluster). El segundo aviso de este runbook — que
-`ResolvedRefs=False (BackendNotFound)` es un falso negativo esperado con `kind: Hostname` — merece
-la aclaración exacta, verificada acá mismo: no es que **siempre** dé `False`, es que da `False`
-cuando el hostname declarado **no está registrado** en el mesh de Istio. Para verlo, un vistazo
-rápido con el dominio sin DNS del Paso 5 (después se vuelve a `reports`, ver más abajo):
+**Con el cambio de ruteo del Paso 5, `ResolvedRefs=False` sale ahora incluso con
+`LOCAL_INGRESS_HOST` apuntando a un `Service` real y existente** (`s2s-ingress-istio`, verificado
+`kubectl -n gateways get svc` — está). El mensaje completo lo confirma:
 
 ```bash
-# ROUTES_JSON con "backend":"galicia-poc-hello-world-poc-development-cvbdn.galicia-poc.nullapps.io"
-# (mismo bloque del Paso 6, sólo cambia ese campo) y volver a correr reconcile ARGS=apply
 kubectl --context crc-admin -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
   -o jsonpath='{range .status.parents[*]}{range .conditions[*]}{.type}={.status}({.reason}) {.message}{end}{"\n"}{end}'
 ```
 
 ```
 # →
-Accepted=True(Accepted) Route was validResolvedRefs=False(BackendNotFound) backend(galicia-poc-hello-world-poc-development-cvbdn.galicia-poc.nullapps.io) not found
+Accepted=True(Accepted) Route was validResolvedRefs=False(BackendNotFound) backend(s2s-ingress-istio.gateways.svc.cluster.local) not found
 ```
 
-Ahí está el `False` documentado. La distinción importa: **ninguno de los dos casos afecta el
-`Enforced` de la `AuthPolicy` ni el resultado de la autenticación/autorización** — el Paso 10 prueba
-401/403 con este mismo backend "roto" y da exactamente lo mismo que con `reports`. `Enforced` es
-la única señal que hay que mirar para saber si Kuadrant está protegiendo la ruta; `ResolvedRefs` es
-sobre si el tráfico *autorizado* va a poder llegar a algún lado, una pregunta distinta.
-
-Volver a dejar `reports.payments.svc.cluster.local` (con `BACKEND_PORT=8080`) como backend antes de
-seguir (mismo comando del Paso 6/7).
+Hipótesis, **no confirmada en esta pasada** (no alcanzó el tiempo para aislarla): `kind: Hostname`
+podría no resolver un `Service` de **otro namespace** (`gateways`) igual que resuelve uno del mismo
+namespace que el `HTTPRoute` (`payments`) — `reports.payments.svc.cluster.local`, mismo namespace,
+sí resolvía `True` en la versión anterior de este runbook. Sea cual sea la causa exacta, no cambia
+el aviso #2 de este runbook: **`ResolvedRefs` no es la señal a mirar.** Acá mismo, con
+`ResolvedRefs=False`, `Enforced` sigue en `True` — es la única que dice si Kuadrant está protegiendo
+la ruta. Lo que si `ResolvedRefs=False` sí puede señalar ahora es un `503` en el tráfico real (Paso
+5.1): sin el `DestinationRule` de loopback, de cualquier forma el segundo salto falla, así que este
+runbook no pudo aislar si el `503` de un request real vendría de esto o de la falta del
+`DestinationRule` — quedan las dos causas posibles, sin descartar ninguna.
 
 ---
 
@@ -1087,6 +1153,42 @@ app" si sólo se mira 401/403. El 20/08 una tanda que sólo probó 401 y 403 dio
 `AuthPolicy` que no autorizaba a nadie (selector con notación de corchetes en vez de punto). El caso
 200 es el único que separa ambos.
 
+⚠️ **El caso 200 todavía NO pasa, y ya se sabe por qué.** El `DestinationRule` del Paso 5.1 se
+aplicó el 2026-09-01 y resolvió el TLS: el segundo salto pasó de `503` a **`401`**. Lo que responde
+ahora es una política.
+
+La causa está identificada y medida: el segundo salto aterriza sobre la **`HTTPRoute` del scope**,
+que no tiene política propia y por lo tanto hereda la del Gateway. Confirmado:
+
+```bash
+kubectl --context "$EKS" -n payments get httproute k-8-s-eks-1049050904-internal \
+  -o jsonpath='{range .status.parents[*].conditions[?(@.type=="kuadrant.io/AuthPolicyAffected")]}{.message}{"\n"}{end}'
+# → Object affected by AuthPolicy [gateways/s2s-validator]
+```
+
+`s2s-validator` exige un wristband en `x-np-token`, y este tráfico lleva `x-api-key`. Los dos
+mecanismos conviven sobre el mismo Gateway y todavía no se hablan.
+
+**Esto no es un bug del service**: las scope routes están protegidas, que es lo correcto. Falta
+decidir cómo dejar pasar al api-manager sin romper esa protección — la opción con más camino hecho es
+que acuñe el wristband después de validar la API key, igual que hace el egress en su egreso. Correr los cinco `curl` de este paso ahora mismo daría, en
+el mejor caso, `401`/`403`/`404` reales para los casos 1/2/3/5 (esos cortan **antes** del segundo
+salto, en el mismo `HTTPRoute`/`AuthPolicy` de siempre — el mecanismo no cambió) y un `503` para el
+caso 4, indistinguible de un `503` por cualquier otra causa del segundo salto. Publicar esa salida
+como si fuera el 200 real sería inventar un resultado — así que este runbook no lo hace. **Aplicar
+el Paso 5.1 y volver a correr este paso es lo primero que hay que hacer para dar el service por
+probado de punta a punta.**
+
+**Dato que sí queda documentado, verificado por el equipo de implementación contra EKS (no
+re-medido en este cluster): la `AuthPolicy` a nivel `HTTPRoute` sobreescribe la del `Gateway`.**
+Medido con un `200` usando sólo `x-api-key` contra `s2s-ingress` — que tiene su propia `AuthPolicy`
+`s2s-validator` exigiendo un wristband — sin wristband alguno. O sea que el primer salto (el que este
+service agrega) **no** exige el wristband S2S del gateway compartido; su propia regla de
+`authentication` (`apiKey`) es la que manda para las rutas que este service declara.
+
+Cuando el Paso 5.1 esté aplicado, el bloque a correr es el mismo de siempre — documentado acá para
+no perderlo, sin la salida (sería inventada):
+
 ```bash
 INGRESS="https://s2s-ingress-istio.gateways.svc.cluster.local/whoami"
 HOSTH="Host: api-test.local"
@@ -1113,33 +1215,18 @@ kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -o /dev/null
   "https://s2s-ingress-istio.gateways.svc.cluster.local/no-declarada"
 ```
 
-**Qué tenés que ver** (salida real):
-
-```
-== 1. sin header ==
-HTTP 401
-== 2. key inventada ==
-HTTP 401
-== 3. key de otra app ==
-HTTP 403
-== 4. key propia ==
-{"service":"reports","namespace":"payments","cluster":"crc-openshift","pod":"reports-7966d8fb9b-q8ldr","vpc_ip":"10.217.0.67","spoke":null}
-HTTP 200
-== 5. path no declarado ==
-HTTP 404
-```
-
-| # | Header | Código | Qué prueba |
+| # | Header | Código esperado | Qué prueba |
 |---|---|---|---|
-| 1 | ninguno | **401** | sin credencial, Kuadrant corta antes de autorizar |
-| 2 | key que no existe | **401** | ninguna key con ese valor está registrada como `Secret` |
-| 3 | key válida, de `other.otra-app` | **403** | autenticó (la key existe), pero `apimgr-target` no matchea `galicia-poc.hello-world-poc` |
-| 4 | key válida, propia | **200**, body real de `reports` | control positivo — sin esto los 403 no prueban nada |
-| 5 | key propia, path no declarado | **404** | ningún `match` del `HTTPRoute` cubre `/no-declarada`; corta en el Gateway, antes de Kuadrant |
+| 1 | ninguno | 401 | sin credencial, Kuadrant corta antes de autorizar |
+| 2 | key que no existe | 401 | ninguna key con ese valor está registrada como `Secret` |
+| 3 | key válida, de `other.otra-app` | 403 | autenticó (la key existe), pero `apimgr-target` no matchea `galicia-poc.hello-world-poc` |
+| 4 | key válida, propia | **200 — bloqueado, ver arriba** | control positivo — sin esto los 403 no prueban nada |
+| 5 | key propia, path no declarado | 404 | ningún `match` del `HTTPRoute` cubre `/no-declarada`; corta en el Gateway, antes de Kuadrant |
 
-El caso 5 confirma lo que Task 10 había dejado como el claim con menos verificación directa (no hay
-test unitario para el 404 — es comportamiento estándar de Gateway API sobre un `HTTPRoute` sin
-match, no algo que el service implemente): acá quedó confirmado contra el cluster real.
+Los casos 1/2/3/5 se habían verificado contra el cluster real con el modelo de ruteo anterior
+(backend directo, sin loopback); el mecanismo de autenticación/autorización en sí no cambió con el
+Paso 5, así que es razonable esperar el mismo resultado — pero **no se re-corrieron en esta pasada**
+y no hay que darlos por confirmados contra el modelo nuevo hasta correr este paso de nuevo.
 
 ---
 
@@ -1390,10 +1477,12 @@ esperado, ver la nota de ese paso.
    (Gotcha #22, Paso 8). Kuadrant no enforcea una policy que no esté en el camino de ningún
    `HTTPRoute`, y no falla ruidosamente — queda `Accepted` y el tráfico pasa sin autenticar.
 
-2. **`ResolvedRefs=False (BackendNotFound)` es esperado con `kind: Hostname`, pero no siempre pasa**
-   (Paso 8): da `False` cuando el hostname no está registrado en el mesh de Istio, y `True` cuando
-   sí (verificado con `reports.payments.svc.cluster.local`, un `Service` real). En ningún caso afecta
-   `Enforced` ni el resultado de auth — son señales independientes.
+2. **`ResolvedRefs=False (BackendNotFound)` no hay que leerlo como una falla** (Paso 8): en ningún
+   caso afecta `Enforced` ni el resultado de auth — son señales independientes. Con el modelo de
+   ruteo anterior (backend directo) daba `True` para un `Service` conocido del mismo namespace y
+   `False` para uno no registrado; con el modelo actual (loopback vía `LOCAL_INGRESS_HOST`, Paso 5)
+   dio `False` incluso apuntando a un `Service` real (`s2s-ingress-istio`, de otro namespace) — sin
+   aislar todavía la causa exacta. La regla que no cambia: mirar `Enforced`, no `ResolvedRefs`.
 
 3. **Probar el 200 es obligatorio, no opcional** (Paso 10). Un selector de `authorization` mal
    escrito rechaza a TODAS las keys con 403, indistinguible de "la key es de otra app" si sólo se
@@ -1420,7 +1509,8 @@ esperado, ver la nota de ese paso.
 
 | Síntoma | Causa | Qué hacer |
 |---|---|---|
-| `HTTP 500` en el caso 200 | el backend elegido no escucha en el puerto que declara `BACKEND_PORT` (default 80) | setear `BACKEND_PORT` al puerto real del `Service` (Paso 5/6) — ya no hace falta un `Service` puente |
+| `HTTP 503` en el caso 200 | falta el `DestinationRule` `s2s-ingress-loopback` que origina TLS en el segundo salto (Paso 5.1) | aplicar el módulo `kuadrant-s2s` con `validate_identity=true` antes de probar el 200 |
+| `HTTP 500` en el caso 200 (modelo de ruteo anterior a esta versión) | el `backendRef` apuntaba directo al dominio del scope, que `kind: Hostname` no resuelve | ya no aplica — desde el 2026-09-01 el `backendRef` va siempre al gateway local (Paso 5) |
 | `404` en vez de 401/403/200 | el `Host` del request no matchea ningún `HTTPRoute`, o el path no está declarado | confirmar que `Host:` sea uno de los `hosts` declarados; si el path es intencional (undeclared), 404 es correcto |
 | `403` en TODOS los casos, incluida la key propia | el selector de `authorization` está mal (bracket notation en vez de punto — Ruling verificado en este plan) | probar el caso 200 (Paso 10) antes de asumir que el 403 "funciona"; `Enforced=True` no lo descarta |
 | `Enforced: False` en `s2s-validator` sin haber tocado nada | es el estado de reposo sin ningún `HTTPRoute` colgado del Gateway (Paso 0/13) | esperado; no diagnosticar como falla |
