@@ -350,8 +350,33 @@ copie:
   lib pisaba lo que viniera del entorno, así que un segundo service no podía declarar sus propios
   manifiestos.
 - `gitops_substrate()` decide la carpeta con `ORIGIN` (`OS`/`EKS`), que es el concepto cross-sustrato
-  del egress. Este service no lo tiene y habría caído en `openshift/` por default, que es falso. Se le
-  agregó un override explícito.
+  del egress. Este service no lo tiene: sin `ORIGIN`, el fallback devuelve `openshift` **siempre**.
+  En un CRC eso acierta por casualidad; en EKS publicaría bajo `openshift/`, una mentira en el repo
+  que es el registro de la verdad. Se reemplazó por `GITOPS_SUBSTRATE`, que **es obligatoria** cuando
+  GitOps está habilitado: sin ella el service aborta en vez de inventar un default, porque cualquier
+  default es correcto en un cluster y falso en el resto.
+
+### 6.2 De dónde sale cada variable
+
+La división no es arbitraria y el `egress-interceptor` ya la sigue: **lo que es por cluster viene del
+entorno del agente; lo que es por service, del `configuration:` del workflow.**
+
+| Variable | De dónde | Por qué |
+|---|---|---|
+| `GITOPS_REPO_URL` | entorno del agente | Es por cluster, y puede llevar un token embebido |
+| `GITOPS_SUBSTRATE` | entorno del agente | Nombra el cluster donde corre ese agente |
+| `GITOPS_BRANCH` | `configuration:` | Decisión del service |
+| `GITOPS_PATH_PREFIX` | `configuration:` | Es lo que separa un service del otro |
+| `GITOPS_PUSH_RETRIES` | `configuration:` | Decisión del service |
+
+Las del agente **no se declaran en el workflow**, ni en `configuration:` ni en el `output:` del
+`build context`: son ambientales y todos los steps las ven. Es como el egress trata `ORIGIN` y
+`GITOPS_REPO_URL`.
+
+Declararlas igual no es inocuo: `GITOPS_SUBSTRATE: ""` en el `configuration:` **pisa** el valor que
+el operador puso en el agente. Pasó exactamente eso en la primera versión, y el resultado fue una
+variable cableada que el propio workflow anulaba — con los tests en verde, porque el mock nunca ve la
+diferencia.
 
 ---
 
