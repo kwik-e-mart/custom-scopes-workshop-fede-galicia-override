@@ -9,7 +9,6 @@ configuration:
   GITOPS_BRANCH: main
   GITOPS_PATH_PREFIX: cross-namespace-rules
   GITOPS_PUSH_RETRIES: "5"
-  GITOPS_SUBSTRATE: ""
 steps:
   - name: load logging
     type: script
@@ -38,7 +37,6 @@ steps:
       - { name: GITOPS_BRANCH, type: environment }
       - { name: GITOPS_PATH_PREFIX, type: environment }
       - { name: GITOPS_PUSH_RETRIES, type: environment }
-      - { name: GITOPS_SUBSTRATE, type: environment }
   - name: check collisions
     type: script
     file: $SERVICE_PATH/scripts/k8s/check_collisions
