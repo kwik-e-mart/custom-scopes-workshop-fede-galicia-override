@@ -143,3 +143,20 @@ render_route_json() {
   run bash "$CHECK"
   [ "$status" -eq 0 ]
 }
+
+@test "sourceado bajo el runner, el camino feliz NO corta el workflow" {
+  cat > "$BATS_TEST_TMPDIR/runner.sh" <<'RUNNER'
+set -euo pipefail
+source "$LOGGING"; export -f log
+find_route_conflicts() { return 0; }
+route_name_for_service() { printf 'api-manager-%s' "$1"; }
+export -f find_route_conflicts route_name_for_service
+if ! source "$CHECK"; then echo "SOURCE_FALLO"; fi
+echo "STEP_SIGUIENTE_CORRIO"
+RUNNER
+  run env CHECK="$CHECK" LOGGING="${BATS_TEST_DIRNAME}/../logging" \
+      SERVICE_ID=probe MANAGED_LABEL=x TARGET_LABEL=y HOSTS_JSON='[]' ROUTES_JSON='[]' \
+      bash "$BATS_TEST_TMPDIR/runner.sh"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "STEP_SIGUIENTE_CORRIO"
+}

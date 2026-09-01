@@ -8,12 +8,12 @@ source "$CHECK_COLLISIONS_DIR/collisions_lib"
 ROUTE_NAME=$(route_name_for_service "$SERVICE_ID")
 
 if CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$TARGET_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
-  exit 0
-else
-  STATUS=$?
+  return 0 2>/dev/null || exit 0
 fi
+STATUS=$?
 
 if [ "$STATUS" -eq 2 ]; then
+  log error "api-manager: no se pudo verificar colisiones de dominios y paths."
   exit 1
 fi
 
