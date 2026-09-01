@@ -11,7 +11,7 @@ configuration:
   GATEWAY_CLASS: istio
   LISTEN_PORT: "8080"
   GITOPS_BRANCH: main
-  GITOPS_PATH_PREFIX: ""
+  GITOPS_PATH_PREFIX: intra-namespace-rules
   GITOPS_PUSH_RETRIES: "5"
 steps:
   - name: load logging

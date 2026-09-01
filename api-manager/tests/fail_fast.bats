@@ -228,3 +228,47 @@ run_reconcile() {
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "falló el rollback"
 }
+
+@test "gitops se publica ANTES del apply" {
+  gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  export -f gitops_publish
+  run run_reconcile apply
+  [ "$status" -eq 0 ]
+  local publish_line apply_line
+  publish_line=$(grep -n "GITOPS_PUBLISH_CALLED" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  apply_line=$(grep -n "apply -f" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  [ -n "$publish_line" ]
+  [ -n "$apply_line" ]
+  [ "$publish_line" -lt "$apply_line" ]
+}
+
+@test "si falla la publicación gitops del apply, no se aplica nada" {
+  gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 1; }
+  export -f gitops_publish
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  ! grep -q "apply -f" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "falló la publicación de los manifiestos al repo gitops"
+}
+
+@test "gitops se publica ANTES del delete, y si falla no se borra nada" {
+  gitops_publish_removal() { echo "GITOPS_REMOVAL_CALLED" >>"$KUBECTL_CALLS_LOG"; return 1; }
+  export -f gitops_publish_removal
+  run run_reconcile delete
+  [ "$status" -ne 0 ]
+  ! grep -q 'delete' "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "falló la publicación del borrado al repo gitops"
+}
+
+@test "sin GITOPS_REPO_URL el apply sigue andando igual que siempre" {
+  unset GITOPS_REPO_URL
+  run run_reconcile apply
+  [ "$status" -eq 0 ]
+  grep -q "apply -f" "$KUBECTL_CALLS_LOG"
+}
+
+@test "sin GITOPS_REPO_URL el delete sigue andando igual que siempre" {
+  unset GITOPS_REPO_URL
+  run run_reconcile delete
+  [ "$status" -eq 0 ]
+}

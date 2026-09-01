@@ -6,6 +6,10 @@ configuration:
   KEYS_NAMESPACE: kuadrant-system
   API_KEY_HEADER: x-api-key
   BACKEND_PORT: "80"
+  GITOPS_BRANCH: main
+  GITOPS_PATH_PREFIX: cross-namespace-rules
+  GITOPS_PUSH_RETRIES: "5"
+  GITOPS_SUBSTRATE: ""
 steps:
   - name: load logging
     type: script
@@ -31,6 +35,10 @@ steps:
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: API_KEY_HEADER, type: environment }
       - { name: BACKEND_PORT, type: environment }
+      - { name: GITOPS_BRANCH, type: environment }
+      - { name: GITOPS_PATH_PREFIX, type: environment }
+      - { name: GITOPS_PUSH_RETRIES, type: environment }
+      - { name: GITOPS_SUBSTRATE, type: environment }
   - name: reconcile delete
     type: script
     file: $SERVICE_PATH/scripts/k8s/reconcile
