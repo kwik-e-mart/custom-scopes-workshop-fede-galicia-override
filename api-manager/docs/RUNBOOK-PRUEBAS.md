@@ -31,7 +31,7 @@ exactamente eso: se intentó, se documenta la causa real, y no se inventó una s
 | 3 | Cómo se prueba sin un agente vivo (metodología del resto del runbook) |
 | 4 | RBAC de prueba: `ServiceAccount` restringida + `kubeconfig` con impersonation |
 | 5 | `build_context` contra un scope real de la cuenta |
-| 5.1 | Prerequisito: TLS de origen en el loopback — **APLICADO el 2026-09-01** |
+| 5.1 | Prerequisito: TLS de origen en el loopback — **APLICADO** |
 | 6 | Crear la instancia: `reconcile apply` |
 | 7 | GitOps: publicar antes de aplicar |
 | 8 | Verificar lo materializado: `HTTPRoute` `Accepted`, `AuthPolicy` **`Enforced`** |
@@ -1153,25 +1153,27 @@ app" si sólo se mira 401/403. El 20/08 una tanda que sólo probó 401 y 403 dio
 `AuthPolicy` que no autorizaba a nadie (selector con notación de corchetes en vez de punto). El caso
 200 es el único que separa ambos.
 
-⚠️ **El caso 200 todavía NO pasa, y ya se sabe por qué.** El `DestinationRule` del Paso 5.1 se
-aplicó el 2026-09-01 y resolvió el TLS: el segundo salto pasó de `503` a **`401`**. Lo que responde
-ahora es una política.
+✅ **Verificado end-to-end contra EKS real el 2026-09-01.** Los cinco casos, atravesando los dos
+saltos (`x-api-key` → AuthPolicy valida y acuña el wristband → gateway de ingreso → `URLRewrite` al
+dominio del scope → route del scope → pod):
 
-La causa está identificada y medida: el segundo salto aterriza sobre la **`HTTPRoute` del scope**,
-que no tiene política propia y por lo tanto hereda la del Gateway. Confirmado:
+| Caso | Resultado |
+|---|---|
+| Sin header | `401` |
+| Key inexistente | `401` |
+| Key emitida para otra app | `403` |
+| Path no declarado | `404` |
+| Key correcta | `200` |
 
-```bash
-kubectl --context "$EKS" -n payments get httproute k-8-s-eks-1049050904-internal \
-  -o jsonpath='{range .status.parents[*].conditions[?(@.type=="kuadrant.io/AuthPolicyAffected")]}{.message}{"\n"}{end}'
-# → Object affected by AuthPolicy [gateways/s2s-validator]
-```
+El 403 y el 200 en la misma corrida son lo que prueba que el mecanismo discrimina. Con un selector de
+`authorization` mal escrito, **todas** las keys darían 403 y el 200 no existiría — mirar sólo 401 y
+403 no distingue esos dos mundos.
 
-`s2s-validator` exige un wristband en `x-np-token`, y este tráfico lleva `x-api-key`. Los dos
-mecanismos conviven sobre el mismo Gateway y todavía no se hablan.
-
-**Esto no es un bug del service**: las scope routes están protegidas, que es lo correcto. Falta
-decidir cómo dejar pasar al api-manager sin romper esa protección — la opción con más camino hecho es
-que acuñe el wristband después de validar la API key, igual que hace el egress en su egreso. Correr los cinco `curl` de este paso ahora mismo daría, en
+Para llegar acá hubo que resolver tres cosas, cada una medida: el `backendRef` apuntaba al dominio del
+scope y daba `500` (no es direccionable, ver Paso 5); faltaba originar TLS en el loopback y daba `503`
+(Paso 5.1); y faltaba el wristband para el segundo salto, que daba `401` — la route del scope hereda
+`s2s-validator`, que exige `x-np-token`. La `AuthPolicy` de este service ahora lo acuña después de
+validar la API key, firmando con la clave del namespace de la app.
 el mejor caso, `401`/`403`/`404` reales para los casos 1/2/3/5 (esos cortan **antes** del segundo
 salto, en el mismo `HTTPRoute`/`AuthPolicy` de siempre — el mecanismo no cambió) y un `503` para el
 caso 4, indistinguible de un `503` por cualquier otra causa del segundo salto. Publicar esa salida
