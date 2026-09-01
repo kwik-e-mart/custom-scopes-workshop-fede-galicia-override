@@ -6,6 +6,8 @@ configuration:
   KEYS_NAMESPACE: kuadrant-system
   API_KEY_HEADER: x-api-key
   LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
+  WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
+  TOKEN_DURATION: "300"
   GITOPS_BRANCH: main
   GITOPS_PATH_PREFIX: cross-namespace-rules
   GITOPS_PUSH_RETRIES: "5"
@@ -34,6 +36,8 @@ steps:
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: API_KEY_HEADER, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
+      - { name: WRISTBAND_SECRET, type: environment }
+      - { name: TOKEN_DURATION, type: environment }
       - { name: GITOPS_BRANCH, type: environment }
       - { name: GITOPS_PATH_PREFIX, type: environment }
       - { name: GITOPS_PUSH_RETRIES, type: environment }

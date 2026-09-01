@@ -15,6 +15,8 @@ setup() {
     "target_label":"apimgr-target",
     "authpolicy_api_version":"kuadrant.io/v1",
     "local_ingress_host":"s2s-ingress-istio.gateways.svc.cluster.local",
+    "wristband_secret":"payments-wristband-key",
+    "token_duration":300,
     "hosts":["api.expuesta.com"],
     "routes":[{"path":"/r1","methods":["GET"],"scope":"prod","backend":"appy.internas.com"}]
   }'
@@ -102,6 +104,39 @@ render_ctx() {
   [ "$status" -eq 0 ]
   run yq -r '.spec.rules.authentication["consumer-key"].apiKey.selector.matchLabels | keys | .[]' "$OUT/20-authpolicy.yaml"
   ! echo "$output" | grep -q 'target'
+}
+
+@test "la authpolicy mintea el wristband en x-np-token" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.signingKeyRefs[0].name' "$OUT/20-authpolicy.yaml")" = "payments-wristband-key" ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.signingKeyRefs[0].algorithm' "$OUT/20-authpolicy.yaml")" = "RS256" ]
+}
+
+@test "el wristband firma con el namespace de la app, NO con el app_target" {
+  run render_ctx '{"namespace":"payments","app_target":"payments.reports"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.issuer' "$OUT/20-authpolicy.yaml")" = "payments" ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.customClaims.ns.value' "$OUT/20-authpolicy.yaml")" = "payments" ]
+}
+
+@test "el wristband usa la clave de firma del contexto, con el namespace propio" {
+  run render_ctx '{"namespace":"other","app_target":"other.reports","wristband_secret":"other-wristband-key"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.signingKeyRefs[0].name' "$OUT/20-authpolicy.yaml")" = "other-wristband-key" ]
+}
+
+@test "el token duration del wristband viaja como entero" {
+  run render_ctx '{"token_duration":60}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.tokenDuration' "$OUT/20-authpolicy.yaml")" = "60" ]
+}
+
+@test "el wristband es aditivo: la autenticacion por api key y la autorizacion por target siguen intactas" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.authentication["consumer-key"].apiKey.selector.matchLabels["api-manager.nullplatform.io/managed"]' "$OUT/20-authpolicy.yaml")" = "true" ]
+  [ "$(yq -r '.spec.rules.authorization["allowed-target"].patternMatching.patterns[0].value' "$OUT/20-authpolicy.yaml")" = "payments.reports" ]
 }
 
 @test "render_manifests falla si el directorio de manifiestos esta vacio" {

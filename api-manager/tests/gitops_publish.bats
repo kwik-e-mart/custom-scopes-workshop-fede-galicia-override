@@ -34,6 +34,7 @@ make_render() {
     gateway_name: "s2s-ingress", gateway_namespace: "gateways", api_key_header: "x-api-key",
     managed_label: "api-manager.nullplatform.io/managed", target_label: "apimgr-target",
     authpolicy_api_version: "kuadrant.io/v1",
+    wristband_secret: "payments-wristband-key", token_duration: 300,
     hosts: ["api.expuesta.com"],
     routes: [{path:"/r1", methods:["GET"], scope:"prod", backend:"appy.internas.com"}]
   }' >"$CTX"

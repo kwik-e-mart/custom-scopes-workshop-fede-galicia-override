@@ -15,6 +15,9 @@ trap 'rm -rf "$OUTDIR"' EXIT
 
 case "$ACTION" in
   apply)
+    kubectl -n "$KEYS_NAMESPACE" get secret "$WRISTBAND_SECRET" >/dev/null 2>&1 \
+      || die "api-manager: no existe el Secret de firma '$WRISTBAND_SECRET' en '$KEYS_NAMESPACE'. Es infraestructura del módulo kuadrant-s2s, no la crea este service: pedísela al operador antes de reintentar."
+
     CTX="$OUTDIR/context.json"
     jq -n \
       --arg namespace "$NAMESPACE" \
@@ -27,6 +30,8 @@ case "$ACTION" in
       --arg target_label "$TARGET_LABEL" \
       --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
       --arg local_ingress_host "${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}" \
+      --arg wristband_secret "$WRISTBAND_SECRET" \
+      --argjson token_duration "$TOKEN_DURATION" \
       --argjson hosts "$HOSTS_JSON" \
       --argjson routes "$ROUTES_JSON" \
       '$ARGS.named' >"$CTX" || die "api-manager: no se pudo armar el contexto de render."

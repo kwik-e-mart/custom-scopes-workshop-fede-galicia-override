@@ -1,3 +1,4 @@
+{{- $ns := .namespace -}}
 apiVersion: {{ .authpolicy_api_version | quote }}
 kind: AuthPolicy
 metadata:
@@ -30,4 +31,15 @@ spec:
               operator: eq
               value: {{ .app_target | quote }}
     response:
-      success: {}
+      success:
+        headers:
+          "x-np-token":
+            wristband:
+              issuer: {{ $ns | quote }}
+              tokenDuration: {{ .token_duration | conv.ToInt }}
+              customClaims:
+                "ns":
+                  value: {{ $ns | quote }}
+              signingKeyRefs:
+                - name: {{ .wristband_secret | quote }}
+                  algorithm: RS256

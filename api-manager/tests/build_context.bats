@@ -185,7 +185,7 @@ notif() {
   run run_build_context
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'APP_TARGET=payments.reports'
-  ! echo "$output" | grep -q 'k8s-namespace-distinto'
+  ! echo "$output" | grep -q 'APP_TARGET=k8s-namespace-distinto'
 }
 
 @test "aborta si no se puede resolver el target del service en vez de seguir con uno adivinado" {
@@ -204,6 +204,29 @@ notif() {
   run run_build_context
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "no se pudo resolver el target"
+}
+
+@test "el Secret de firma se deriva del namespace, no del app_target" {
+  NS_PROVIDER=payments
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-wristband-key"* ]]
+  ! [[ "$output" == *"key=reports"* ]]
+
+  NS_PROVIDER=other
+  export NP_MOCK_NAMESPACE='{"slug":"other"}'
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=other-wristband-key"* ]]
+}
+
+@test "WRISTBAND_SECRET_NAME de la configuración del workflow sustituye {namespace}" {
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)" WRISTBAND_SECRET_NAME='{namespace}-firma'
+  run run_build_context
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-firma"* ]]
 }
 
 @test "en delete no valida hosts, rutas ni scopes: alcanza con namespace, app_target y service_id" {

@@ -20,6 +20,8 @@ setup() {
   export GATEWAY_NAMESPACE=gateways
   export KEYS_NAMESPACE=kuadrant-system
   export API_KEY_HEADER=x-api-key
+  export WRISTBAND_SECRET=payments-wristband-key
+  export TOKEN_DURATION=300
 
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
@@ -65,6 +67,10 @@ case " $* " in
 esac
 
 case "$*" in
+  *"get secret"*)
+    [ "${KUBECTL_MOCK_FAIL:-}" = get-wristband-secret ] && exit 1
+    exit 0
+    ;;
   *"delete secret"*)
     [ "${KUBECTL_MOCK_FAIL:-}" = delete-secret ] && exit 1
     exit 0
@@ -107,6 +113,22 @@ run_reconcile() {
       exit 1
     fi
   ' _ "$RECONCILE" "$action"
+}
+
+@test "aborta si no existe el Secret de firma del wristband, en vez de aplicar y 401 despues" {
+  export KUBECTL_MOCK_FAIL=get-wristband-secret
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  ! grep -q "apply -f" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "payments-wristband-key"
+  echo "$output" | grep -q "kuadrant-s2s"
+}
+
+@test "el chequeo del Secret de firma busca en KEYS_NAMESPACE" {
+  export KUBECTL_MOCK_FAIL=get-wristband-secret
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  grep -q "\-n kuadrant-system get secret payments-wristband-key" "$KUBECTL_CALLS_LOG"
 }
 
 @test "aborta si falla el apply de un manifiesto" {

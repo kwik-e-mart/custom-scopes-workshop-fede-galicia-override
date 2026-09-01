@@ -29,6 +29,7 @@ GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
 KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
 API_KEY_HEADER="${API_KEY_HEADER:-x-api-key}"
 LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
+TOKEN_DURATION="${TOKEN_DURATION:-300}"
 
 require_match() {
   local val="$1" re="$2" name="$3"
@@ -39,6 +40,11 @@ require_match() {
 }
 
 require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
+
+WRISTBAND_SECRET="${WRISTBAND_SECRET_NAME:-}"
+[ -n "$WRISTBAND_SECRET" ] || WRISTBAND_SECRET='{namespace}-wristband-key'
+WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
+require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
 
 if [ -z "$SERVICE_ID" ]; then
   log error "api-manager: la notificación no trae service.id. Es obligatorio: nombra la HTTPRoute y la AuthPolicy de esta instancia."
@@ -102,8 +108,9 @@ fi
 
 export NAMESPACE APP_TARGET SERVICE_ID HOSTS_JSON ROUTES_JSON
 export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER LOCAL_INGRESS_HOST
+export WRISTBAND_SECRET TOKEN_DURATION
 
-log info "api-manager: exponiendo $APP_TARGET"
+log info "api-manager: exponiendo $APP_TARGET key=$WRISTBAND_SECRET"
 printf %s "$HOSTS_JSON" | jq -r '.[] | "  dominio: \(.)"' | while IFS= read -r L; do log info "$L"; done
 printf %s "$ROUTES_JSON" | jq -r '.[] | "  ruta: \(.methods | join(",")) \(.path) → scope \(.scope) = \(.backend)"' \
   | while IFS= read -r L; do log info "$L"; done
