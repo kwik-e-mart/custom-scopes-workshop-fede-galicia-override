@@ -31,3 +31,22 @@ require_link_id() {
   printf '%s' "$link_id"
 }
 fi
+
+if ! type -t require_link_action_id >/dev/null 2>&1; then
+require_link_action_id() {
+  local notification="$1"
+  local action_id
+  action_id=$(printf %s "$notification" | jq -r '.id // empty') \
+    || { log error "api-manager: no se pudo leer el id de la acción de la notificación."; return 1; }
+  if [ -z "$action_id" ]; then
+    log error "api-manager: la notificación no trae el id de la acción del link."
+    log error "  Claves disponibles en \$NOTIFICATION: $(printf %s "$notification" | jq -r 'keys | join(", ")')"
+    return 1
+  fi
+  if [[ ! "$action_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$ ]]; then
+    log error "api-manager: id de acción del link inválido: '$action_id'."
+    return 1
+  fi
+  printf '%s' "$action_id"
+}
+fi

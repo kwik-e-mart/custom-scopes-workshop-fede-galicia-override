@@ -8,6 +8,7 @@ source "$MINT_KEY_DIR/notification_lib"
 
 NOTIFICATION=$(read_notification) || exit 1
 LINK_ID=$(require_link_id "$NOTIFICATION") || exit 1
+LINK_ACTION_ID=$(require_link_action_id "$NOTIFICATION") || exit 1
 
 SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty') \
   || { log error "api-manager: no se pudo leer service.id de la notificación."; exit 1; }
@@ -56,7 +57,14 @@ printf %s "$SECRET_MANIFEST" | kubectl create -f - \
 RESULTS=$(jq -nc --arg k "$API_KEY" '{api_key: $k}') \
   || { log error "api-manager: no se pudieron armar los resultados del link."; exit 1; }
 
-np service action update --results "$RESULTS" \
-  || { log error "api-manager: falló la escritura de los resultados del link."; exit 1; }
+if ! np link action update --link-id "$LINK_ID" --link-action-id "$LINK_ACTION_ID" --results "$RESULTS"; then
+  log error "api-manager: falló la escritura de los resultados del link."
+  if kubectl delete secret "$SECRET_NAME" -n "$KEYS_NAMESPACE" --ignore-not-found; then
+    log error "api-manager: se retiró el Secret '$SECRET_NAME'. Reintentar el link es seguro."
+  else
+    log error "api-manager: quedó el Secret '$SECRET_NAME' en '$KEYS_NAMESPACE' sin credencial entregada. Borralo a mano antes de reintentar el link."
+  fi
+  exit 1
+fi
 
 log info "api-manager: credencial emitida para consumir $APP_TARGET."

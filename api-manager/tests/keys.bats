@@ -23,7 +23,7 @@ setup() {
 
   export KEYS_NAMESPACE=kuadrant-system
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"},service:{id:"svc-1"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",link:{id:"777"},service:{id:"svc-1"}}}')
 
   unset KUBECTL_MOCK_FAIL MANAGED_LABEL TARGET_LABEL APP_TARGET
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
@@ -64,6 +64,20 @@ MOCK
 printf '%s\n' "$*" >>"$NP_CALLS_LOG"
 SUBCMD="$1 $2"
 case "$SUBCMD" in
+  "service action")
+    echo '{"statusCode":400,"code":"FST_ERR_VALIDATION","error":"Bad Request","message":"Action does not belong to the service"}' >&2
+    exit 1 ;;
+  "link action")
+    [ "${NP_MOCK_LINK_ACTION_FALLA:-}" = "1" ] && exit 1
+    case " $* " in
+      *" --link-id "*) ;;
+      *) echo "missing required flags: link-id, link-action-id" >&2; exit 1 ;;
+    esac
+    case " $* " in
+      *" --link-action-id "*) ;;
+      *) echo "missing required flags: link-id, link-action-id" >&2; exit 1 ;;
+    esac
+    echo '{}' ;;
   "service read")
     printf %s "$NP_MOCK_SERVICE" ;;
   "namespace read")
@@ -139,7 +153,7 @@ MOCK
 
 @test "mint_key aborta si la notificacion no trae service.id" {
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",link:{id:"777"}}}')
   run bash "$MINT"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "service.id"
@@ -148,7 +162,7 @@ MOCK
 
 @test "mint_key aborta si el link.id tiene mayusculas" {
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"ABC123"},service:{id:"svc-1"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",link:{id:"ABC123"},service:{id:"svc-1"}}}')
   run bash "$MINT"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "link.id inválido"
@@ -157,13 +171,13 @@ MOCK
 
 @test "mint_key aborta si el link.id empieza o termina con guion" {
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"-abc123"},service:{id:"svc-1"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",link:{id:"-abc123"},service:{id:"svc-1"}}}')
   run bash "$MINT"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "link.id inválido"
 
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"abc123-"},service:{id:"svc-1"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",link:{id:"abc123-"},service:{id:"svc-1"}}}')
   run bash "$MINT"
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "link.id inválido"
@@ -171,7 +185,7 @@ MOCK
 
 @test "mint_key acepta un link.id en minusculas con guion interno" {
   export NP_ACTION_CONTEXT
-  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"abc-123"},service:{id:"svc-1"}}}')
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",link:{id:"abc-123"},service:{id:"svc-1"}}}')
   run bash "$MINT"
   [ "$status" -eq 0 ]
 }
@@ -190,6 +204,36 @@ MOCK
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "63 caracteres"
   [ ! -s "$KUBECTL_CALLS_LOG" ]
+}
+
+@test "mint_key escribe los resultados con np link action update, no con service action update" {
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+  grep -q "^link action update " "$NP_CALLS_LOG"
+  ! grep -q "^service action update " "$NP_CALLS_LOG"
+}
+
+@test "mint_key le pasa a np los ids del link y de su accion" {
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+  grep -q -- "--link-id 777" "$NP_CALLS_LOG"
+  grep -q -- "--link-action-id act-1" "$NP_CALLS_LOG"
+}
+
+@test "mint_key aborta si la notificacion no trae el id de la accion del link" {
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{link:{id:"777"},service:{id:"svc-1"}}}')
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  ! grep -q "create -f -" "$KUBECTL_CALLS_LOG"
+}
+
+@test "si falla la escritura de los resultados, mint_key retira el Secret para que el reintento no choque" {
+  export NP_MOCK_LINK_ACTION_FALLA=1
+  run bash "$MINT"
+  [ "$status" -ne 0 ]
+  grep -q "^delete secret api-manager-.* -n kuadrant-system --ignore-not-found\$" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "Reintentar el link es seguro"
 }
 
 @test "revoke_key borra el secret del link" {
