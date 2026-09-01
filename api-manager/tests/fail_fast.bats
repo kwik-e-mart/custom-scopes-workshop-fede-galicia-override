@@ -229,6 +229,64 @@ run_reconcile() {
   echo "$output" | grep -q "falló el rollback"
 }
 
+@test "rollback por carrera confirmada: publica el borrado ANTES de borrar del cluster" {
+  find_route_conflicts() { printf '  conflicto de prueba\n'; return 1; }
+  export -f find_route_conflicts
+  gitops_publish_removal() { echo "GITOPS_REMOVAL_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  export -f gitops_publish_removal
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  local removal_line delete_line
+  removal_line=$(grep -n "GITOPS_REMOVAL_CALLED" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  delete_line=$(grep -n "delete authpolicy api-manager-svc-1" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  [ -n "$removal_line" ]
+  [ -n "$delete_line" ]
+  [ "$removal_line" -lt "$delete_line" ]
+  grep -q "delete httproute api-manager-svc-1" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "se detectó una carrera"
+}
+
+@test "rollback por RACE_STATUS 2 (no se pudo re-verificar): publica el borrado ANTES de borrar del cluster" {
+  find_route_conflicts() { return 2; }
+  export -f find_route_conflicts
+  gitops_publish_removal() { echo "GITOPS_REMOVAL_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  export -f gitops_publish_removal
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  local removal_line delete_line
+  removal_line=$(grep -n "GITOPS_REMOVAL_CALLED" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  delete_line=$(grep -n "delete authpolicy api-manager-svc-1" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  [ -n "$removal_line" ]
+  [ -n "$delete_line" ]
+  [ "$removal_line" -lt "$delete_line" ]
+  grep -q "delete httproute api-manager-svc-1" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "no se pudo re-verificar colisiones"
+}
+
+@test "si falla el publish del borrado en el rollback por carrera confirmada, aborta sin tocar el cluster y avisa de la divergencia" {
+  find_route_conflicts() { printf '  conflicto de prueba\n'; return 1; }
+  export -f find_route_conflicts
+  gitops_publish_removal() { return 1; }
+  export -f gitops_publish_removal
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  ! grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
+  ! grep -q "delete httproute" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "divergentes"
+}
+
+@test "si falla el publish del borrado en el rollback por RACE_STATUS 2, aborta sin tocar el cluster y avisa de la divergencia" {
+  find_route_conflicts() { return 2; }
+  export -f find_route_conflicts
+  gitops_publish_removal() { return 1; }
+  export -f gitops_publish_removal
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  ! grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
+  ! grep -q "delete httproute" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "divergentes"
+}
+
 @test "gitops se publica ANTES del apply" {
   gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
   export -f gitops_publish

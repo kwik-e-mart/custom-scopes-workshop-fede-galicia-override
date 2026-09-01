@@ -49,6 +49,13 @@ case "$ACTION" in
       log info "api-manager: $APP_TARGET expuesto."
     else
       RACE_STATUS=$?
+      if ! gitops_publish_removal; then
+        if [ "$RACE_STATUS" -eq 2 ]; then
+          die "api-manager: no se pudo re-verificar colisiones después del apply y además falló la publicación del borrado al repo gitops. El cluster y el repo quedaron divergentes: revisar manualmente antes de reintentar."
+        fi
+        die "api-manager: se detectó una carrera y además falló la publicación del borrado al repo gitops. El cluster y el repo quedaron divergentes: revisar manualmente antes de reintentar.
+$RACE_CONFLICTS"
+      fi
       kubectl -n "$NAMESPACE" delete authpolicy "$ROUTE_NAME" --ignore-not-found \
         || die "api-manager: se detectó una posible carrera al re-chequear colisiones y falló el rollback de la AuthPolicy '$ROUTE_NAME'. Queda expuesta una ruta que puede estar secuestrando tráfico ajeno: revisar manualmente."
       kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
