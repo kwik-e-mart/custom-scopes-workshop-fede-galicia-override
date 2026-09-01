@@ -518,6 +518,55 @@ export KEY=$(kubectl --context "$CTX" -n kuadrant-system get secret "api-manager
 
 ---
 
+## Paso 6.1 — Que el host declarado exista (prerequisito del Paso 7)
+
+El service escribe el `HTTPRoute` y la `AuthPolicy`, y ahí termina su trabajo. **No crea el registro
+DNS ni extiende el certificado del gateway.** En un cluster de producción eso lo hacen `external-dns`
+mirando el `HTTPRoute` y `cert-manager`; en este POC no hay ninguno de los dos, así que las dos cosas
+se aplican por tofu. Sin ellas la única prueba posible sería contra el FQDN del gateway con un
+`Host:` a mano — que no prueba lo que el dev va a usar.
+
+Tres piezas, todas aplicadas:
+
+| Pieza | Dónde | Qué resuelve |
+|---|---|---|
+| Private hosted zone sobre el nombre exacto, A → ClusterIP del gateway | `clusters/eks/dns.tf` | el host resuelve, y sólo desde adentro |
+| El host como SAN del cert del gateway | `pki/terraform.tfvars` → `gateway_dns_names` | el TLS no falla por hostname |
+| La CA de la demo en el trust store del pod cliente | `modules/kuadrant-s2s/workloads.tf` | el cliente confía en quien firmó ese cert |
+
+**Por qué la ClusterIP y no el NLB.** El Service del gateway tiene
+`loadBalancerSourceRanges` con una sola IP pública, así que un pod del cluster nunca llega al NLB:
+el síntoma es un timeout, no un 403. Se podría haber agregado el CIDR de la VPC a esa lista, pero
+eso afloja un control de acceso para resolver un problema de ruteo, y manda tráfico entre dos
+namespaces a salir hasta el NLB y volver. Apuntando a la ClusterIP el nombre resuelve sólo dentro de
+la VPC (zona privada) y sólo funciona dentro del cluster, y la exposición externa queda intacta.
+
+**Por qué la zona es sobre el host exacto y no sobre `galicia-poc.nullapps.io`.** Una private zone es
+autoritativa dentro de la VPC: si cubriera el dominio padre, todos los demás nombres pasarían a dar
+NXDOMAIN ahí adentro en vez de caer al resolver público.
+
+**La CA no es un workaround.** El cert lo firma la CA privada de la demo, y un pod no la trae. En el
+Banco la CA corporativa viene en el trust store de la imagen base; acá se monta un ConfigMap con la
+CA y se apunta `SSL_CERT_FILE`. Verificado que hace falta: sin esa variable el mismo request muere
+con `certificate verify failed`.
+
+Chequeo rápido antes de seguir:
+
+```bash
+kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
+  nslookup api-publica.galicia-poc.nullapps.io 2>&1 | grep -A1 "^Name"
+```
+
+```
+# →
+Name:	api-publica.galicia-poc.nullapps.io
+Address: 172.20.42.127
+```
+
+Esa dirección es la ClusterIP de `s2s-ingress-istio` en `gateways`.
+
+---
+
 ## Paso 7 — Los cinco códigos, verificados end-to-end contra EKS real
 
 **Tercer aviso de este runbook, y el que más importa: probar el 200 no es opcional.** Un selector de
@@ -535,57 +584,56 @@ kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- sh -c 'command
 /usr/bin/wget
 ```
 
-```bash
-INGRESS="https://s2s-ingress-istio.gateways.svc.cluster.local/whoami"
-HOSTH="Host: api-test.local"
+**La URL de la prueba es la que el dev declaró, y nada más.** Sin `Host`, sin el FQDN del gateway y
+sin `--no-check-certificate`: si el consumidor necesitara saber la dirección del ingress, el host
+declarado no serviría para nada. Lo que hace falta para que eso sea cierto está en el Paso 6.1.
 
-echo "== 1. sin header =="
+```bash
+URL="https://api-publica.galicia-poc.nullapps.io/whoami"
+
+echo "== 1. sin api key =="
 kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
-  wget -S -qO- --timeout=15 --no-check-certificate --header="$HOSTH" "$INGRESS" \
+  wget -S -qO- --timeout=15 "$URL" \
   2>&1 | grep -oE "HTTP/[0-9.]+ [0-9]+" | head -1
 
 echo "== 2. key inventada =="
 kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
-  wget -S -qO- --timeout=15 --no-check-certificate --header="$HOSTH" \
-  --header="x-api-key: no-existe-esta-key-0000" "$INGRESS" \
+  wget -S -qO- --timeout=15 --header="x-api-key: no-existe-esta-key-0000" "$URL" \
   2>&1 | grep -oE "HTTP/[0-9.]+ [0-9]+" | head -1
 
 echo "== 3. key de otra app =="
 kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
-  wget -S -qO- --timeout=15 --no-check-certificate --header="$HOSTH" \
-  --header="x-api-key: $KEY2" "$INGRESS" \
+  wget -S -qO- --timeout=15 --header="x-api-key: $KEY2" "$URL" \
   2>&1 | grep -oE "HTTP/[0-9.]+ [0-9]+" | head -1
 
 echo "== 4. key propia =="
 kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
-  wget -S -qO- --timeout=15 --no-check-certificate --header="$HOSTH" \
-  --header="x-api-key: $KEY1" "$INGRESS"
+  wget -qO- --timeout=15 --header="x-api-key: $KEY1" "$URL"
 
 echo "== 5. path no declarado =="
 kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
-  wget -S -qO- --timeout=15 --no-check-certificate --header="$HOSTH" \
-  --header="x-api-key: $KEY1" "https://s2s-ingress-istio.gateways.svc.cluster.local/no-declarada" \
+  wget -S -qO- --timeout=15 --header="x-api-key: $KEY1" \
+  "https://api-publica.galicia-poc.nullapps.io/no-declarada" \
   2>&1 | grep -oE "HTTP/[0-9.]+ [0-9]+" | head -1
 ```
 
-**Qué tenés que ver** (salida real, medida el 2026-09-01):
+**Qué tenés que ver** (salida real, medida el 2026-09-01 contra `gal-kuadrant-poc`):
 
 ```
-== 1. sin header ==
+== 1. sin api key ==
 HTTP/1.1 401
 == 2. key inventada ==
 HTTP/1.1 401
 == 3. key de otra app ==
 HTTP/1.1 403
 == 4. key propia ==
-  HTTP/1.1 200 OK
-  server: istio-envoy
-  content-type: application/json; charset=utf-8
-  x-envoy-upstream-service-time: 15
-{"service":"reports","namespace":"payments","cluster":"eks-kong","pod":"d-1049050904-...","vpc_ip":"10.60.2.52","spoke":"galicia-1"}
+{"service":"reports","namespace":"payments","cluster":"eks-kong","pod":"d-1049050904-789675678-6bc68b9885-mqcmj","vpc_ip":"10.60.2.52","spoke":"galicia-1"}
 == 5. path no declarado ==
 HTTP/1.1 404
 ```
+
+Los casos 1, 2, 4 y 5 se corrieron con esta URL exacta. El **3** se midió en la corrida anterior:
+requiere una segunda key emitida desde otra aplicación, y en este cluster hoy hay una sola.
 
 | # | Header | Código | Qué prueba |
 |---|---|---|---|
@@ -795,6 +843,9 @@ una entidad de cuenta, no de cluster.
 |---|---|---|
 | `api-manager: no existe el Secret de firma '...'` con el Secret realmente existiendo | falta `get` en el `Role` de `kuadrant-system` (Paso 4) | correr `reconcile apply` con el `kubeconfig` admin hasta que se actualice el `Role`; no es RBAC de más, es un verbo que falta |
 | `HTTP 503` en el caso 200 | falta el `DestinationRule` `s2s-ingress-loopback` (Paso 5.1) | confirmar que está aplicado; si no, aplicar el módulo `kuadrant-s2s` |
+| `certificate verify failed` | el pod cliente no tiene la CA de la demo (Paso 6.1) | aplicar `clusters/eks` — monta el ConfigMap `demo-trust-ca` y setea `SSL_CERT_FILE` |
+| `download timed out` contra el host declarado | el DNS resuelve al NLB en vez de a la ClusterIP; el NLB filtra por `loadBalancerSourceRanges` (Paso 6.1) | `nslookup` desde el pod: tiene que dar la ClusterIP del gateway |
+| `bad address` / `SERVFAIL` en el host declarado | falta la private hosted zone (Paso 6.1) | aplicar `clusters/eks` |
 | `HTTP 401` en el segundo salto (no en el primero) | falta el wristband, o la route del scope no lo acepta | confirmar que la `AuthPolicy` de este service tiene el bloque `response.success.headers["x-np-token"].wristband` (commit `d849411`) y que `WRISTBAND_SECRET` apunta a un Secret real |
 | `HTTP 500` en el caso 200 (modelo de ruteo anterior) | el `backendRef` apuntaba directo al dominio del scope | ya no aplica — desde el 2026-09-01 el `backendRef` va siempre al gateway local (Paso 5) |
 | `404` en vez de 401/403/200 | el `Host` no matchea ningún `HTTPRoute`, o el path no está declarado | confirmar `--header="Host: ..."` contra los `hosts` declarados |
