@@ -25,9 +25,13 @@ spec:
             value: {{ strings.TrimSuffix "*" $path | quote }}
           method: {{ . | quote }}
 {{- end }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            hostname: {{ .backend | quote }}
       backendRefs:
         - group: networking.istio.io
           kind: Hostname
-          name: {{ .backend | quote }}
-          port: {{ index $ "backend_port" | default 80 }}
+          name: {{ index $ "local_ingress_host" | quote }}
+          port: 443
 {{- end }}

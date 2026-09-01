@@ -28,7 +28,7 @@ GATEWAY_NAME="${GATEWAY_NAME:-s2s-ingress}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
 KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
 API_KEY_HEADER="${API_KEY_HEADER:-x-api-key}"
-BACKEND_PORT="${BACKEND_PORT:-80}"
+LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
 
 require_match() {
   local val="$1" re="$2" name="$3"
@@ -54,7 +54,7 @@ if [ "${#APP_TARGET}" -gt 63 ]; then
 fi
 
 if [ "${ARGS:-apply}" != "delete" ]; then
-  require_match "$BACKEND_PORT" '^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$' "backend port"
+  require_match "$LOCAL_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "local_ingress_host"
 
   if [ "$(printf %s "$HOSTS_JSON" | jq 'length')" -eq 0 ]; then
     log error "api-manager: no hay dominios declarados. Declarar al menos uno."
@@ -101,7 +101,7 @@ if [ "${ARGS:-apply}" != "delete" ]; then
 fi
 
 export NAMESPACE APP_TARGET SERVICE_ID HOSTS_JSON ROUTES_JSON
-export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER BACKEND_PORT
+export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER LOCAL_INGRESS_HOST
 
 log info "api-manager: exponiendo $APP_TARGET"
 printf %s "$HOSTS_JSON" | jq -r '.[] | "  dominio: \(.)"' | while IFS= read -r L; do log info "$L"; done

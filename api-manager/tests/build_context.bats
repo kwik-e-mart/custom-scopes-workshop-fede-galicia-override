@@ -169,13 +169,13 @@ notif() {
   echo "$output" | grep -q "service.id"
 }
 
-@test "falla si BACKEND_PORT no es un puerto valido" {
+@test "falla si LOCAL_INGRESS_HOST no tiene forma de host" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
-  export BACKEND_PORT=70000
+  export LOCAL_INGRESS_HOST="no un host"
   export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
   run run_build_context
   [ "$status" -ne 0 ]
-  echo "$output" | grep -q "backend port"
+  echo "$output" | grep -q "local_ingress_host"
 }
 
 @test "el APP_TARGET sale del namespace de nullplatform del service, no del namespace de Kubernetes" {

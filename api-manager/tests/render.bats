@@ -14,6 +14,7 @@ setup() {
     "managed_label":"api-manager.nullplatform.io/managed",
     "target_label":"apimgr-target",
     "authpolicy_api_version":"kuadrant.io/v1",
+    "local_ingress_host":"s2s-ingress-istio.gateways.svc.cluster.local",
     "hosts":["api.expuesta.com"],
     "routes":[{"path":"/r1","methods":["GET"],"scope":"prod","backend":"appy.internas.com"}]
   }'
@@ -25,12 +26,14 @@ render_ctx() {
   render_manifests "$CTX" "$OUT" >/dev/null
 }
 
-@test "el httproute lleva un match por metodo y el backend de la ruta" {
+@test "el httproute lleva un match por metodo y el backend de la ruta viaja como host reescrito" {
   run render_ctx '{"routes":[{"path":"/r1","methods":["GET","POST"],"scope":"prod","backend":"appy.internas.com"}]}'
   [ "$status" -eq 0 ]
   [ "$(yq '.spec.rules[0].matches | length' "$OUT/10-httproute.yaml")" = "2" ]
   [ "$(yq -r '.spec.rules[0].backendRefs[0].kind' "$OUT/10-httproute.yaml")" = "Hostname" ]
-  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "appy.internas.com" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "s2s-ingress-istio.gateways.svc.cluster.local" ]
+  [ "$(yq -r '.spec.rules[0].filters[0].type' "$OUT/10-httproute.yaml")" = "URLRewrite" ]
+  [ "$(yq -r '.spec.rules[0].filters[0].urlRewrite.hostname' "$OUT/10-httproute.yaml")" = "appy.internas.com" ]
 }
 
 @test "cada match conserva el path de su ruta y no queda vacio" {
@@ -47,13 +50,15 @@ render_ctx() {
   [ "$(yq -r '.spec.rules[0].matches[0].path.value' "$OUT/10-httproute.yaml")" = "/files/" ]
 }
 
-@test "cada ruta apunta al backend de SU scope y no al de la primera" {
+@test "cada regla reescribe el host al backend de SU scope y no al de la primera" {
   run render_ctx '{"routes":[
     {"path":"/a","methods":["GET"],"scope":"prod","backend":"prod.internas.com"},
     {"path":"/b","methods":["GET"],"scope":"dev","backend":"dev.internas.com"}]}'
   [ "$status" -eq 0 ]
-  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "prod.internas.com" ]
-  [ "$(yq -r '.spec.rules[1].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "dev.internas.com" ]
+  [ "$(yq -r '.spec.rules[0].filters[0].urlRewrite.hostname' "$OUT/10-httproute.yaml")" = "prod.internas.com" ]
+  [ "$(yq -r '.spec.rules[1].filters[0].urlRewrite.hostname' "$OUT/10-httproute.yaml")" = "dev.internas.com" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "s2s-ingress-istio.gateways.svc.cluster.local" ]
+  [ "$(yq -r '.spec.rules[1].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "s2s-ingress-istio.gateways.svc.cluster.local" ]
 }
 
 @test "el httproute declara todos los hosts" {
@@ -62,16 +67,16 @@ render_ctx() {
   [ "$(yq '.spec.hostnames | length' "$OUT/10-httproute.yaml")" = "2" ]
 }
 
-@test "el backend usa el puerto 80 por default si no se declara backend_port" {
+@test "el backendref usa el puerto 443, fijo, no configurable" {
   run render_ctx '{}'
   [ "$status" -eq 0 ]
-  [ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$OUT/10-httproute.yaml")" = "80" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$OUT/10-httproute.yaml")" = "443" ]
 }
 
-@test "un backend_port explicito llega al backendRef renderizado" {
-  run render_ctx '{"backend_port":8080}'
+@test "un local_ingress_host explicito en el contexto llega al backendref renderizado" {
+  run render_ctx '{"local_ingress_host":"otro-gateway.gateways.svc.cluster.local"}'
   [ "$status" -eq 0 ]
-  [ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$OUT/10-httproute.yaml")" = "8080" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "otro-gateway.gateways.svc.cluster.local" ]
 }
 
 @test "el httproute lleva el label del target para poder detectar colisiones" {
