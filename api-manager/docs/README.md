@@ -5,7 +5,8 @@ código. **No es documentación de uso**: para eso está el [`README.md`](../REA
 
 | Archivo | Qué es |
 |---|---|
-| [`RUNBOOK-PRUEBAS.md`](./RUNBOOK-PRUEBAS.md) | Prueba paso a paso contra un cluster, con los comandos y su salida esperada |
+| [`RUNBOOK-PRUEBAS.md`](./RUNBOOK-PRUEBAS.md) | Prueba paso a paso contra **EKS**, con los comandos y su salida esperada |
+| [`RUNBOOK-CRC.md`](./RUNBOOK-CRC.md) | Sólo las diferencias para correrlo contra el CRC local |
 | [`DISENO.md`](./DISENO.md) | El diseño: qué resuelve, cómo, y los hechos verificados contra cluster |
 | [`DECISIONES.md`](./DECISIONES.md) | Las decisiones tomadas durante la implementación, con su motivo y su costo si están mal |
 | [`PLAN-IMPLEMENTACION.md`](./PLAN-IMPLEMENTACION.md) | El plan con el que se construyó, tarea por tarea |

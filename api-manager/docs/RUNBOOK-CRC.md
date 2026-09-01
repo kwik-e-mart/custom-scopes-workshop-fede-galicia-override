@@ -1,48 +1,47 @@
-# Runbook de pruebas — service Api Manager (EKS)
+# Runbook de pruebas — Api Manager sobre CRC local
 
-Recorrido **paso por paso** para probar a mano cada funcionalidad del service `Api Manager` contra el
-cluster **EKS del POC**. Cada paso dice qué correr, **qué tenés que ver** para darlo por bueno, y qué
-hacer si no da eso.
+**El runbook principal es [`RUNBOOK-PRUEBAS.md`](./RUNBOOK-PRUEBAS.md), enfocado en EKS.** Este
+documento cubre sólo lo que cambia al correrlo contra el CRC local. Los pasos, las verificaciones y
+las salidas esperadas son las de allá salvo donde acá se diga otra cosa.
 
-> Para correrlo contra el CRC local, ver [`RUNBOOK-CRC.md`](./RUNBOOK-CRC.md), que documenta sólo las
-> diferencias del entorno local.
+## Lo que cambia
 
-## El contexto, primero
-
-Todos los comandos usan `$CTX`. Definilo antes de arrancar:
+**El contexto.** En vez del ARN de EKS:
 
 ```bash
-export CTX=arn:aws:eks:us-east-1:984449730514:cluster/gal-kuadrant-poc
-export AWS_PROFILE=galicia-1
-
-kubectl --context "$CTX" get nodes --no-headers | head -2
-# → dos nodos Ready, v1.34.x
+export CTX=crc-admin
 ```
 
-**Qué asume:** Kuadrant, Authorino y Gateway API instalados; el Gateway `s2s-ingress` y la
-`AuthPolicy` `s2s-validator` en el namespace `gateways`; y los workloads de la demo S2S en `payments`.
-Ese sustrato lo provee el layer `demo-kuadrant-s2s/clusters/eks` — este documento no lo reprovisiona.
+**El cluster hay que levantarlo.** No existe el equivalente en EKS:
 
-**Qué NO cubre:** la instalación de Kuadrant ni de Gateway API (eso es `specs/prerequisites/` del
-service, ya resuelto en este cluster).
+```bash
+crc status | head -2
+# → CRC VM: Running · OpenShift: Running
 
-**Datos de este cluster**, verificados el 2026-09-01:
+kubectl config current-context
+# → crc-admin
+```
 
-| | |
-|---|---|
-| Gateway | `s2s-ingress` en `gateways`, un listener HTTPS/443 `mode: Terminate` |
-| Service del gateway | `s2s-ingress-istio.gateways.svc.cluster.local:443` — es el `backendRef` de las routes |
-| `s2s-validator` | exige `x-np-token` con wristband, autoriza `ns=payments` |
-| Clave de firma | `payments-wristband-key` en `kuadrant-system` |
-| `DestinationRule` de loopback | `s2s-ingress-loopback` en `gateways` — **ya aplicado** |
-| Scope de prueba | route `k-8-s-eks-1049050904-internal`, dominio `galicia-poc-hello-world-poc-eks-arcuy.galicia-poc.nullapps.io` |
+Si está apagado, `crc start` (~3 min con la VM ya creada). Después de cada arranque conviene revisar
+el gotcha #24 del repo sobre higiene del tailnet, que aplica a la demo S2S y puede afectar lo que
+comparte sustrato con este service.
 
-**No hay DNS público** para esa zona: la delegación de `galicia-poc.nullapps.io` apunta a nameservers
-que responden `REFUSED`. Se prueba mandando el `Host` header, no resolviendo por DNS.
+**Herramientas.** Se suma `crc` a la lista del Paso 0; `aws` no hace falta.
 
-**Los resultados que figuran como "tenés que ver" son salidas reales**, medidas contra este cluster.
-Lo que se marca como **BLOQUEADO** es exactamente eso: se intentó, se documenta la causa, y no se
-inventó una salida.
+**El servicio jwks se llama distinto.** En CRC es `s2s-crc-jwks`, en EKS `s2s-eks-jwks`. Aparece en la
+salida esperada del sustrato y en los `jwksUrl` que acepta `s2s-validator`.
+
+**El backend de prueba.** En CRC está el echo server `reports` (Service en 8080, path `/whoami`) de la
+demo S2S, que no existe en EKS. Varios pasos de este documento lo usan como destino conveniente.
+
+**La ServiceAccount de RBAC.** El bloque que arma el kubeconfig para probar con impersonation lee el
+cluster `api-crc-testing:6443` del kubeconfig local. En EKS eso se resuelve con `--minify` sobre el
+contexto.
+
+## Todo lo demás
+
+Idéntico al runbook de EKS. Lo que sigue es la versión completa histórica corrida contra CRC, que se
+conserva porque sus salidas son medidas reales de ese entorno.
 
 ---
 
@@ -85,7 +84,7 @@ export NRN="organization=1636958496:account=1374028000"
 ### 1. Herramientas
 
 ```bash
-for b in kubectl jq yq gomplate np aws openssl; do
+for b in kubectl jq yq gomplate np crc openssl; do
   printf '%-10s %s\n' "$b" "$(command -v $b || echo 'FALTA')"
 done
 /opt/homebrew/bin/bash --version | head -1
@@ -97,7 +96,7 @@ jq         /usr/bin/jq
 yq         /opt/homebrew/bin/yq
 gomplate   /opt/homebrew/bin/gomplate
 np         /Users/federico.maleh/.local/bin/np
-aws        /usr/local/bin/aws
+crc        /usr/local/bin/crc
 openssl    /usr/bin/openssl
 GNU bash, version 5.3.15(1)-release (aarch64-apple-darwin24.6.0)
 ```
@@ -108,19 +107,21 @@ corre un script del service lo hace explícitamente con `/opt/homebrew/bin/bash`
 `PATH=/opt/homebrew/bin:$PATH` por delante — no alcanza con tenerlo instalado, hay que asegurarse de
 que sea el que se ejecuta.
 
-### 2. El cluster responde
+### 2. El CRC está arriba y responde
 
 ```bash
-aws sts get-caller-identity --query Account --output text
-kubectl --context "$CTX" get nodes --no-headers | wc -l
-kubectl --context "$CTX" get ns kuadrant-system payments gateways -o name
+crc status | head -2
+kubectl config current-context
+kubectl --context crc-admin get ns kuadrant-system payments other gateways -o name
 ```
 
 ```
-984449730514
-2
+CRC VM:          Running
+OpenShift:       Running (v4.21.14)
+crc-admin
 namespace/kuadrant-system
 namespace/payments
+namespace/other
 namespace/gateways
 ```
 
@@ -130,19 +131,20 @@ namespace/gateways
 arriba y que el Gateway de ingreso exista.
 
 ```bash
-kubectl --context "$CTX" -n kuadrant-system get deploy --no-headers
-kubectl --context "$CTX" get authorino -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} clusterWide={.spec.clusterWide}{"\n"}{end}'
-kubectl --context "$CTX" -n gateways get gateway s2s-ingress -o jsonpath='Programmed: {.status.conditions[?(@.type=="Programmed")].status}{"\n"}'
+kubectl --context crc-admin -n kuadrant-system get deploy --no-headers
+kubectl --context crc-admin get authorino -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name} clusterWide={.spec.clusterWide}{"\n"}{end}'
+kubectl --context crc-admin -n gateways get gateway s2s-ingress -o jsonpath='Programmed: {.status.conditions[?(@.type=="Programmed")].status}{"\n"}'
 ```
 
 ```
-authorino                               1/1   1     1     20d
-authorino-operator                      1/1   1     1     20d
-dns-operator-controller-manager         1/1   1     1     20d
-kuadrant-operator-controller-manager    1/1   1     1     20d
-limitador-limitador                     1/1   1     1     20d
-limitador-operator-controller-manager   1/1   1     1     20d
-s2s-eks-jwks                            1/1   1     1     20d
+authorino                               1/1     1            1           11d
+authorino-operator                      1/1     1            1           11d
+dns-operator-controller-manager         1/1     1            1           11d
+kuadrant-console-plugin                 1/1     1            1           11d
+kuadrant-operator-controller-manager    1/1     1            1           11d
+limitador-limitador                     1/1     1            1           11d
+limitador-operator-controller-manager   1/1     1            1           11d
+s2s-crc-jwks                            1/1     1            1           11d
 kuadrant-system/authorino clusterWide=true
 Programmed: True
 ```
@@ -150,12 +152,12 @@ Programmed: True
 ### 4. El punto de partida está limpio
 
 ```bash
-kubectl --context "$CTX" -n payments get httproute,authpolicy,gateway,destinationrule --no-headers
-kubectl --context "$CTX" -n gateways get httproute --no-headers
-kubectl --context "$CTX" -n kuadrant-system get secret -l api-manager.nullplatform.io/managed=true
-kubectl --context "$CTX" -n payments get svc reports -o jsonpath='{.spec.selector}{"\n"}'
-kubectl --context "$CTX" -n gateways get gateway s2s-ingress -o jsonpath='attachedRoutes: {.status.listeners[0].attachedRoutes}{"\n"}'
-kubectl --context "$CTX" -n gateways get authpolicy s2s-validator -o jsonpath='Accepted: {.status.conditions[?(@.type=="Accepted")].status}  Enforced: {.status.conditions[?(@.type=="Enforced")].status}{"\n"}'
+kubectl --context crc-admin -n payments get httproute,authpolicy,gateway,destinationrule --no-headers
+kubectl --context crc-admin -n gateways get httproute --no-headers
+kubectl --context crc-admin -n kuadrant-system get secret -l api-manager.nullplatform.io/managed=true
+kubectl --context crc-admin -n payments get svc reports -o jsonpath='{.spec.selector}{"\n"}'
+kubectl --context crc-admin -n gateways get gateway s2s-ingress -o jsonpath='attachedRoutes: {.status.listeners[0].attachedRoutes}{"\n"}'
+kubectl --context crc-admin -n gateways get authpolicy s2s-validator -o jsonpath='Accepted: {.status.conditions[?(@.type=="Accepted")].status}  Enforced: {.status.conditions[?(@.type=="Enforced")].status}{"\n"}'
 ```
 
 **Qué tenés que ver:**
@@ -183,7 +185,7 @@ seguir.
 ## Paso 1 — Registrar el service specification
 
 **Qué valida:** que `specs/install/` registre el service en la cuenta real. Es una acción **de
-cuenta**, no de cluster: no toca el cluster, y a diferencia de las instancias que se crean y se borran
+cuenta**, no de cluster: no toca el CRC, y a diferencia de las instancias que se crean y se borran
 en cada corrida (Paso 6 y Paso 13), el service specification **queda registrado de forma
 permanente** — es el mismo modelo que `egress-interceptor`, cuyo spec se registró una sola vez al
 principio del proyecto y nunca se destruye entre demos.
@@ -270,14 +272,14 @@ para que Api Manager esté disponible como opción real, igual que `egress-inter
 ## Paso 2 — Levantar el agente (bloqueado en este entorno)
 
 **Qué intenta:** un `np-agent` en runtime host, igual que hace
-`demo-kuadrant-s2s/start-agent-eks.sh` para `egress-interceptor`, atendiendo el `tags_selectors`
+`demo-kuadrant-s2s/start-agent-crc.sh` para `egress-interceptor`, atendiendo el `tags_selectors`
 `role=api-manager` que se acaba de registrar.
 
 Antes de arrancarlo hace falta saber qué comando va a ejecutar el agente cuando le llegue una
 notificación. Eso lo fija el **channel**, ya creado en el Paso 1:
 
 ```bash
-kubectl --context "$CTX" -n payments get pods 2>&1 | head -1  # sólo para tener algo de output real arriba
+kubectl --context crc-admin -n payments get pods 2>&1 | head -1  # sólo para tener algo de output real arriba
 tofu -chdir="$SVC/specs/install" show install.tfplan 2>&1 | grep cmdline
 ```
 
@@ -291,7 +293,7 @@ tofu -chdir="$SVC/specs/install" show install.tfplan 2>&1 | grep cmdline
 corra el agente — no a `~/.np` del usuario que lo levanta. En un agente **k8s-runtime** (un pod)
 esto es transparente: `/root` es el `HOME` de la mayoría de las imágenes base y el operator clona
 ahí. En un agente **host-runtime en esta laptop** (el modelo que usa `demo-kuadrant-s2s` para
-`egress-interceptor`, vía `start-agent-eks.sh`) hace falta que exista literalmente
+`egress-interceptor`, vía `start-agent-crc.sh`) hace falta que exista literalmente
 `/root/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override`, con este repo cloneado o
 symlinkeado ahí adentro — el mismo mecanismo que el Apéndice A de
 `demo-kuadrant-s2s/RUNBOOK-PRUEBAS.md` documenta para `~/.np`, pero apuntado a `/root` en vez de al
@@ -429,7 +431,7 @@ así que no ven RBAC. La única manera de saber si el `Role` real alcanza es cor
 **impersonando** una identidad que sólo tenga esos permisos, ni uno más.
 
 ```bash
-kubectl --context "$CTX" -n payments create serviceaccount api-manager-agent
+kubectl --context crc-admin -n payments create serviceaccount api-manager-agent
 ```
 
 ```bash
@@ -438,7 +440,7 @@ export KEYS_NAMESPACE=kuadrant-system
 export AGENT_SA=api-manager-agent
 export AGENT_NAMESPACE=payments
 gomplate -f "$SVC/manifests/rbac.yaml.tpl" -o /tmp/rbac.rendered.yaml
-kubectl --context "$CTX" apply -f /tmp/rbac.rendered.yaml
+kubectl --context crc-admin apply -f /tmp/rbac.rendered.yaml
 ```
 
 ```
@@ -455,11 +457,11 @@ Confirmar los límites, ANTES de usarlos, con `auth can-i`:
 
 ```bash
 SA="system:serviceaccount:payments:api-manager-agent"
-kubectl --context "$CTX" --as="$SA" auth can-i create httproutes -n payments
-kubectl --context "$CTX" --as="$SA" auth can-i patch authpolicies -n payments
-kubectl --context "$CTX" --as="$SA" auth can-i create secrets -n kuadrant-system
-kubectl --context "$CTX" --as="$SA" auth can-i get secrets -n kuadrant-system
-kubectl --context "$CTX" --as="$SA" auth can-i list secrets -n kuadrant-system
+kubectl --context crc-admin --as="$SA" auth can-i create httproutes -n payments
+kubectl --context crc-admin --as="$SA" auth can-i patch authpolicies -n payments
+kubectl --context crc-admin --as="$SA" auth can-i create secrets -n kuadrant-system
+kubectl --context crc-admin --as="$SA" auth can-i get secrets -n kuadrant-system
+kubectl --context crc-admin --as="$SA" auth can-i list secrets -n kuadrant-system
 ```
 
 ```
@@ -484,20 +486,20 @@ sin esos dos verbos (Paso 9 y Paso 13 lo ejercitan).
 token de la `ServiceAccount`, no con `--as` (los scripts no agregan ese flag):
 
 ```bash
-TOKEN=$(kubectl --context "$CTX" create token api-manager-agent -n payments --duration=2h)
-SERVER=$(kubectl --context "$CTX" config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')
-CA=$(kubectl --context "$CTX" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+TOKEN=$(kubectl --context crc-admin create token api-manager-agent -n payments --duration=2h)
+SERVER=$(kubectl config view --raw -o jsonpath='{.clusters[?(@.name=="api-crc-testing:6443")].cluster.server}')
+CA=$(kubectl config view --raw -o jsonpath='{.clusters[?(@.name=="api-crc-testing:6443")].cluster.certificate-authority-data}')
 
 cat > /tmp/kubeconfig-sa <<EOF
 apiVersion: v1
 kind: Config
 clusters:
-- name: apimgr-sa
+- name: crc-sa
   cluster: {server: ${SERVER}, certificate-authority-data: ${CA}}
 contexts:
-- name: apimgr-sa
-  context: {cluster: apimgr-sa, namespace: payments, user: api-manager-agent}
-current-context: apimgr-sa
+- name: crc-sa
+  context: {cluster: crc-sa, namespace: payments, user: api-manager-agent}
+current-context: crc-sa
 users:
 - name: api-manager-agent
   user: {token: ${TOKEN}}
@@ -513,12 +515,12 @@ Error from server (Forbidden): secrets is forbidden: User "system:serviceaccount
 
 De acá en adelante, todo bloque que corre `reconcile`, `mint_key`, `revoke_key` o `check_collisions`
 antepone `KUBECONFIG=/tmp/kubeconfig-sa` **sólo a esa invocación** (`KUBECONFIG=/tmp/kubeconfig-sa
-bash -c '...'`), nunca con `export` a secas. `/tmp/kubeconfig-sa` sólo define el contexto `apimgr-sa` —
+bash -c '...'`), nunca con `export` a secas. `/tmp/kubeconfig-sa` sólo define el contexto `crc-sa` —
 si quedara exportado en la terminal, los comandos de verificación que este runbook corre con
-`--context "$CTX"` (status, `curl` contra pods, inspección de Secrets) dejarían de resolver ese
-nombre de contexto y fallarían con `error: context "..." does not exist`, un síntoma que no
+`--context crc-admin` (status, `curl` contra pods, inspección de Secrets) dejarían de resolver ese
+nombre de contexto y fallarían con `error: context "crc-admin" does not exist`, un síntoma que no
 apunta para nada a la causa real. El nombre del cluster en el `kubeconfig` real puede variar según la
-máquina (`kubectl config view --raw -o json | jq -r '.contexts[]|select(.name==env.CTX)'` dice
+máquina (`kubectl config view --raw -o json | jq -r '.contexts[]|select(.name=="crc-admin")'` dice
 cuál es el `cluster` correspondiente ahí).
 
 ---
@@ -647,11 +649,11 @@ lo que responde ahora es una política, no la conexión.
 Lo agrega el módulo `kuadrant-s2s` (`accounts/galicia/demo-kuadrant-s2s/modules/kuadrant-s2s/gateway.tf`,
 recurso `kubectl_manifest.ingress_loopback`, commit `627d9a7` de `galicia-banco`), gateado por
 `var.validate_identity` — sólo se crea si ese flag está en `true` en el layer que instancia el
-módulo (`clusters/eks/main.tf`, `module "s2s"`).
+módulo (`clusters/crc/main.tf`, `module "s2s"`).
 
 ```bash
-kubectl --context "$CTX" -n gateways get destinationrule s2s-ingress-loopback
-kubectl --context "$CTX" -n gateways get secret s2s-remote-ca
+kubectl --context crc-admin -n gateways get destinationrule s2s-ingress-loopback
+kubectl --context crc-admin -n gateways get secret s2s-remote-ca
 ```
 
 ```
@@ -670,7 +672,7 @@ obligatorio antes de correr el Paso 10 en este cluster.**
 Para aplicarlo (no ejecutado acá):
 
 ```bash
-cd accounts/galicia/demo-kuadrant-s2s/clusters/eks
+cd accounts/galicia/demo-kuadrant-s2s/clusters/crc
 tofu plan   # confirmar que sólo agrega el DestinationRule + el Secret de la CA, mostrar el plan antes de aplicar
 tofu apply
 ```
@@ -784,7 +786,7 @@ porque el mock nunca ve la diferencia. Se sacó del todo de `configuration:` y d
 ⚠️ **Es obligatoria cuando GitOps está habilitado.** Con `GITOPS_REPO_URL` puesta pero sin
 `GITOPS_SUBSTRATE`, `reconcile` **aborta** — no cae a ningún default. Antes caía a `openshift` vía
 `ORIGIN` (heredado de `egress-interceptor`, que sí tiene ese concepto cross-cluster); acá acertaba en
-un CRC de pura casualidad, y en este EKS habría publicado bajo `openshift/` igual, sin
+este CRC de pura casualidad, y en un cluster EKS real habría publicado bajo `openshift/` igual, sin
 avisar. Se verifica más abajo con el mensaje real de abort.
 
 ⚠️ **Nunca poner una URL con credencial real en este documento ni en ningún commit.** Para probar acá
@@ -807,7 +809,7 @@ KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
   bash "'"$SVC"'/scripts/k8s/reconcile"
 '
 echo "EXIT=$?"
-kubectl --context "$CTX" -n payments get httproute,authpolicy
+kubectl --context crc-admin -n payments get httproute,authpolicy
 ```
 
 ```
@@ -854,7 +856,7 @@ Con el `HTTPRoute`/`AuthPolicy` del Paso 6 ya en el cluster, mirar el `resourceV
 tocar nada:
 
 ```bash
-kubectl --context "$CTX" -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
+kubectl --context crc-admin -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
   -o jsonpath='{.metadata.resourceVersion}{"\n"}'
 ```
 
@@ -864,12 +866,12 @@ kubectl --context "$CTX" -n payments get httproute api-manager-ec53bf2c-5831-4a8
 ```
 
 Reintentar el mismo `reconcile ARGS=apply` del Paso 6, esta vez con `GITOPS_REPO_URL` apuntando a un
-repo que **no existe** — y `GITOPS_SUBSTRATE` puesta (`eks`), para que el intento llegue hasta el
+repo que **no existe** — y `GITOPS_SUBSTRATE` puesta (`crc`), para que el intento llegue hasta el
 `clone` en vez de abortar antes por la variable faltante (ese caso ya se probó arriba):
 
 ```bash
 export GITOPS_REPO_URL="/no/existe/en/este/filesystem.git"
-export GITOPS_SUBSTRATE=eks
+export GITOPS_SUBSTRATE=crc
 export GITOPS_BRANCH=main
 # resto de las variables del Paso 6 sin cambios (NAMESPACE, APP_TARGET, SERVICE_ID, HOSTS_JSON, ROUTES_JSON, ...)
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
@@ -888,7 +890,7 @@ EXIT=1
 ```
 
 ```bash
-kubectl --context "$CTX" -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
+kubectl --context crc-admin -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
   -o jsonpath='{.metadata.resourceVersion}{"\n"}'
 ```
 
@@ -907,11 +909,11 @@ retorna error, nada se aplica.
 
 `GITOPS_SUBSTRATE` viaja junto a `GITOPS_REPO_URL` porque las dos son "del agente" — en una corrida
 real, las pondría quien levanta el agente en ESE cluster, no el workflow. Acá el nombre es arbitrario
-(no hay una convención impuesta); se usa `eks`, honesto sobre qué cluster es:
+(no hay una convención impuesta); se usa `crc`, honesto sobre qué cluster es:
 
 ```bash
 export GITOPS_REPO_URL=/tmp/gitops-test/remote.git
-export GITOPS_SUBSTRATE=eks
+export GITOPS_SUBSTRATE=crc
 export GITOPS_BRANCH=main
 export GITOPS_PATH_PREFIX=cross-namespace-rules
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
@@ -922,7 +924,7 @@ KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
 
 ```
 # →
-api-manager gitops: publicado cross-namespace-rules/eks/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 en main.
+api-manager gitops: publicado cross-namespace-rules/crc/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 en main.
 httproute.gateway.networking.k8s.io/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 configured
 authpolicy.kuadrant.io/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 unchanged
 api-manager: galicia-poc.hello-world-poc expuesto.
@@ -930,7 +932,7 @@ api-manager: galicia-poc.hello-world-poc expuesto.
 
 `configured`/`unchanged`, no `created`: el `HTTPRoute`/`AuthPolicy` ya existían desde el Paso 6 —
 ninguno de los intentos fallidos de arriba los tocó, así que `kubectl apply` los encuentra iguales y
-sólo actualiza. `eks` en el path es el valor que se acaba de exportar — ya no hay ningún fallback
+sólo actualiza. `crc` en el path es el valor que se acaba de exportar — ya no hay ningún fallback
 silencioso a `openshift`/`eks` en el medio: sin `GITOPS_SUBSTRATE`, el paso anterior aborta antes de
 llegar acá.
 
@@ -944,12 +946,12 @@ find /tmp/gitops-test/verify -not -path "*/.git*" -type f | sort
 ```
 # →
 /tmp/gitops-test/verify/README.md
-/tmp/gitops-test/verify/cross-namespace-rules/eks/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861/10-httproute.yaml
-/tmp/gitops-test/verify/cross-namespace-rules/eks/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861/20-authpolicy.yaml
+/tmp/gitops-test/verify/cross-namespace-rules/crc/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861/10-httproute.yaml
+/tmp/gitops-test/verify/cross-namespace-rules/crc/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861/20-authpolicy.yaml
 ```
 
 ```bash
-cat /tmp/gitops-test/verify/cross-namespace-rules/eks/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861/10-httproute.yaml
+cat /tmp/gitops-test/verify/cross-namespace-rules/crc/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861/10-httproute.yaml
 ```
 
 ```yaml
@@ -1011,9 +1013,9 @@ no se tocó ese repo desde acá, queda anotado como pendiente cruzado.
 señal que de verdad importa (Gotcha #22, primer aviso de este runbook).
 
 ```bash
-kubectl --context "$CTX" -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
+kubectl --context crc-admin -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
   -o jsonpath='{range .status.parents[*]}{.parentRef.name}: {range .conditions[*]}{.type}={.status}({.reason}) {end}{"\n"}{end}'
-kubectl --context "$CTX" -n payments get authpolicy api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
+kubectl --context crc-admin -n payments get authpolicy api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
   -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'
 ```
 
@@ -1030,7 +1032,7 @@ Enforced=True Enforced
 `kubectl -n gateways get svc` — está). El mensaje completo lo confirma:
 
 ```bash
-kubectl --context "$CTX" -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
+kubectl --context crc-admin -n payments get httproute api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 \
   -o jsonpath='{range .status.parents[*]}{range .conditions[*]}{.type}={.status}({.reason}) {.message}{end}{"\n"}{end}'
 ```
 
@@ -1085,7 +1087,7 @@ El `error` final es **esperado** (Paso 3): `np service action update` necesita u
 curso, que acá no existe. El Secret sí se creó — es lo que hay que inspeccionar:
 
 ```bash
-kubectl --context "$CTX" -n kuadrant-system get secret api-manager-linktest0001 -o yaml
+kubectl --context crc-admin -n kuadrant-system get secret api-manager-linktest0001 -o yaml
 ```
 
 ```
@@ -1125,7 +1127,7 @@ y Authorino resuelve `signingKeyRefs`/`apiKey` contra ESE namespace, no contra e
 Extraer la key para usarla en el Paso 10:
 
 ```bash
-KEY1=$(kubectl --context "$CTX" -n kuadrant-system get secret api-manager-linktest0001 -o jsonpath='{.data.api_key}' | base64 -d)
+KEY1=$(kubectl --context crc-admin -n kuadrant-system get secret api-manager-linktest0001 -o jsonpath='{.data.api_key}' | base64 -d)
 ```
 
 En un link real, este mismo valor es el que la plataforma exporta como variable de entorno
@@ -1146,14 +1148,14 @@ para dejar algo a medio crear en la cuenta). En su lugar, se crea el Secret **di
 Kuadrant compara el label, no el resto del contexto:
 
 ```bash
-kubectl --context "$CTX" -n kuadrant-system create secret generic api-manager-otraapp \
+kubectl --context crc-admin -n kuadrant-system create secret generic api-manager-otraapp \
   --from-literal=api_key="$(openssl rand -hex 32)" --dry-run=client -o yaml \
   | kubectl label --local -f - -o yaml \
       authorino.kuadrant.io/managed-by=authorino \
       api-manager.nullplatform.io/managed=true \
       apimgr-target=other.otra-app \
-  | kubectl --context "$CTX" apply -f -
-KEY2=$(kubectl --context "$CTX" -n kuadrant-system get secret api-manager-otraapp -o jsonpath='{.data.api_key}' | base64 -d)
+  | kubectl --context crc-admin apply -f -
+KEY2=$(kubectl --context crc-admin -n kuadrant-system get secret api-manager-otraapp -o jsonpath='{.data.api_key}' | base64 -d)
 ```
 
 ```
@@ -1218,23 +1220,23 @@ INGRESS="https://s2s-ingress-istio.gateways.svc.cluster.local/whoami"
 HOSTH="Host: api-test.local"
 
 echo "== 1. sin header =="
-kubectl --context "$CTX" -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
+kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
   -k --max-time 15 -H "$HOSTH" "$INGRESS"
 
 echo "== 2. key inventada =="
-kubectl --context "$CTX" -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
+kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
   -k --max-time 15 -H "$HOSTH" -H "x-api-key: no-existe-esta-key-0000" "$INGRESS"
 
 echo "== 3. key de otra app =="
-kubectl --context "$CTX" -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
+kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
   -k --max-time 15 -H "$HOSTH" -H "x-api-key: $KEY2" "$INGRESS"
 
 echo "== 4. key propia =="
-kubectl --context "$CTX" -n other exec deploy/intruso -- curl -s -k --max-time 15 \
+kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -k --max-time 15 \
   -H "$HOSTH" -H "x-api-key: $KEY1" -w '\nHTTP %{http_code}\n' "$INGRESS"
 
 echo "== 5. path no declarado =="
-kubectl --context "$CTX" -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
+kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
   -k --max-time 15 -H "$HOSTH" -H "x-api-key: $KEY1" \
   "https://s2s-ingress-istio.gateways.svc.cluster.local/no-declarada"
 ```
@@ -1340,7 +1342,7 @@ KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
   bash "'"$SVC"'/scripts/k8s/revoke_key"
 '
-kubectl --context "$CTX" -n kuadrant-system get secret api-manager-linktest0001
+kubectl --context crc-admin -n kuadrant-system get secret api-manager-linktest0001
 ```
 
 ```
@@ -1353,7 +1355,7 @@ Error from server (NotFound): secrets "api-manager-linktest0001" not found
 La MISMA key (`$KEY1`, todavía en la variable de shell) contra el mismo endpoint:
 
 ```bash
-kubectl --context "$CTX" -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
+kubectl --context crc-admin -n other exec deploy/intruso -- curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
   -k --max-time 15 -H "Host: api-test.local" -H "x-api-key: $KEY1" \
   "https://s2s-ingress-istio.gateways.svc.cluster.local/whoami"
 ```
@@ -1387,12 +1389,12 @@ export GITOPS_PATH_PREFIX=cross-namespace-rules
 export GITOPS_BRANCH=main
 
 export GITOPS_REPO_URL="/no/existe/en/este/filesystem.git"
-export GITOPS_SUBSTRATE=eks
+export GITOPS_SUBSTRATE=crc
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
   bash "'"$SVC"'/scripts/k8s/reconcile"
 '
-kubectl --context "$CTX" -n payments get httproute,authpolicy
+kubectl --context crc-admin -n payments get httproute,authpolicy
 ```
 
 ```
@@ -1414,7 +1416,7 @@ El `HTTPRoute`/`AuthPolicy` siguen ahí — `gitops_publish_removal` corre **ant
 
 ```bash
 export GITOPS_REPO_URL=/tmp/gitops-test/remote.git
-export GITOPS_SUBSTRATE=eks
+export GITOPS_SUBSTRATE=crc
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
   bash "'"$SVC"'/scripts/k8s/reconcile"
@@ -1423,7 +1425,7 @@ KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
 
 ```
 # →
-api-manager gitops: publicado cross-namespace-rules/eks/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 en main.
+api-manager gitops: publicado cross-namespace-rules/crc/payments/api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861 en main.
 authpolicy.kuadrant.io "api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861" deleted from payments namespace
 httproute.gateway.networking.k8s.io "api-manager-ec53bf2c-5831-4a85-ab4c-b16762ddd861" deleted from payments namespace
 api-manager: galicia-poc.hello-world-poc dado de baja.
@@ -1441,9 +1443,9 @@ tiene manera de enterarse de que existe. Se borra a mano, junto con todo lo dem�
 creó y que el service no gestiona:
 
 ```bash
-kubectl --context "$CTX" -n kuadrant-system delete secret api-manager-otraapp --ignore-not-found
-kubectl --context "$CTX" delete -f /tmp/rbac.rendered.yaml --ignore-not-found
-kubectl --context "$CTX" -n payments delete serviceaccount api-manager-agent --ignore-not-found
+kubectl --context crc-admin -n kuadrant-system delete secret api-manager-otraapp --ignore-not-found
+kubectl --context crc-admin delete -f /tmp/rbac.rendered.yaml --ignore-not-found
+kubectl --context crc-admin -n payments delete serviceaccount api-manager-agent --ignore-not-found
 ```
 
 ### El subárbol, después del borrado
@@ -1458,7 +1460,7 @@ find /tmp/gitops-test/verify-final/cross-namespace-rules -type f 2>&1
 find: /tmp/gitops-test/verify-final/cross-namespace-rules: No such file or directory
 ```
 
-El subárbol `cross-namespace-rules/eks/payments/api-manager-ec53bf2c-.../` desapareció del
+El subárbol `cross-namespace-rules/crc/payments/api-manager-ec53bf2c-.../` desapareció del
 repo — `gitops_sync` lo borra (`rm -rf "${work:?}/${subtree:?}"`, sin volver a poblarlo porque
 `mode=delete` no llama a `gitops_render_tree`) y commitea+pushea esa remoción antes de que
 `reconcile` toque el cluster.
@@ -1466,12 +1468,12 @@ repo — `gitops_sync` lo borra (`rm -rf "${work:?}/${subtree:?}"`, sin volver a
 ### Verificar que quedó limpio
 
 ```bash
-kubectl --context "$CTX" -n payments get httproute,authpolicy,gateway,destinationrule,serviceaccount --no-headers 2>&1 | grep -i api-manager || echo "ninguno"
-kubectl --context "$CTX" -n kuadrant-system get secret -l api-manager.nullplatform.io/managed=true
-kubectl --context "$CTX" -n payments get svc reports -o jsonpath='{.spec.selector}{"\n"}'
-kubectl --context "$CTX" get clusterrole,clusterrolebinding --no-headers 2>&1 | grep -i api-manager || echo "ninguno"
-kubectl --context "$CTX" -n gateways get gateway s2s-ingress -o jsonpath='attachedRoutes: {.status.listeners[0].attachedRoutes}{"\n"}'
-kubectl --context "$CTX" -n gateways get authpolicy s2s-validator -o jsonpath='Enforced: {.status.conditions[?(@.type=="Enforced")].status}{"\n"}'
+kubectl --context crc-admin -n payments get httproute,authpolicy,gateway,destinationrule,serviceaccount --no-headers 2>&1 | grep -i api-manager || echo "ninguno"
+kubectl --context crc-admin -n kuadrant-system get secret -l api-manager.nullplatform.io/managed=true
+kubectl --context crc-admin -n payments get svc reports -o jsonpath='{.spec.selector}{"\n"}'
+kubectl --context crc-admin get clusterrole,clusterrolebinding --no-headers 2>&1 | grep -i api-manager || echo "ninguno"
+kubectl --context crc-admin -n gateways get gateway s2s-ingress -o jsonpath='attachedRoutes: {.status.listeners[0].attachedRoutes}{"\n"}'
+kubectl --context crc-admin -n gateways get authpolicy s2s-validator -o jsonpath='Enforced: {.status.conditions[?(@.type=="Enforced")].status}{"\n"}'
 ```
 
 **Qué tenés que ver** (igual al Paso 0):
