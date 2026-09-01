@@ -13,7 +13,7 @@ setup() {
 
   export NAMESPACE=payments
   export ROUTE_NAME=api-manager-svc-1
-  unset GITOPS_REPO_URL GITOPS_SUBSTRATE ORIGIN
+  unset GITOPS_REPO_URL ORIGIN
 }
 
 aplicar_configuration_del_workflow() {
@@ -24,24 +24,24 @@ aplicar_configuration_del_workflow() {
   done < <(yq -r '.configuration | to_entries[] | [.key, .value] | @tsv' "$file")
 }
 
-@test "create.yaml no declara GITOPS_SUBSTRATE en configuration: tiene que venir del entorno del agente" {
-  run yq -r '.configuration | has("GITOPS_SUBSTRATE")' "$CREATE"
+@test "create.yaml no declara ORIGIN en configuration: tiene que venir del entorno del agente" {
+  run yq -r '.configuration | has("ORIGIN")' "$CREATE"
   [ "$output" = "false" ]
 }
 
-@test "delete.yaml no declara GITOPS_SUBSTRATE en configuration: tiene que venir del entorno del agente" {
-  run yq -r '.configuration | has("GITOPS_SUBSTRATE")' "$DELETE"
+@test "delete.yaml no declara ORIGIN en configuration: tiene que venir del entorno del agente" {
+  run yq -r '.configuration | has("ORIGIN")' "$DELETE"
   [ "$output" = "false" ]
 }
 
-@test "create.yaml no re-declara GITOPS_SUBSTRATE en el output del build context" {
+@test "create.yaml no re-declara ORIGIN en el output del build context" {
   run yq -r '.steps[] | select(.name == "build context") | .output[].name' "$CREATE"
-  ! echo "$output" | grep -qx "GITOPS_SUBSTRATE"
+  ! echo "$output" | grep -qx "ORIGIN"
 }
 
-@test "delete.yaml no re-declara GITOPS_SUBSTRATE en el output del build context" {
+@test "delete.yaml no re-declara ORIGIN en el output del build context" {
   run yq -r '.steps[] | select(.name == "build context") | .output[].name' "$DELETE"
-  ! echo "$output" | grep -qx "GITOPS_SUBSTRATE"
+  ! echo "$output" | grep -qx "ORIGIN"
 }
 
 @test "create.yaml sigue declarando las variables GITOPS_* que SÍ son por service" {
@@ -65,15 +65,15 @@ aplicar_configuration_del_workflow() {
   [ "$output" = "false" ]
 }
 
-@test "un GITOPS_SUBSTRATE puesto por el agente llega al subárbol sin que la configuration: de create.yaml lo pise" {
-  export GITOPS_SUBSTRATE=eks
+@test "un ORIGIN puesto por el agente llega al subárbol sin que la configuration: de create.yaml lo pise" {
+  export ORIGIN=EKS
   aplicar_configuration_del_workflow "$CREATE"
   run gitops_subtree
   [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
 }
 
-@test "un GITOPS_SUBSTRATE puesto por el agente llega al subárbol sin que la configuration: de delete.yaml lo pise" {
-  export GITOPS_SUBSTRATE=eks
+@test "un ORIGIN puesto por el agente llega al subárbol sin que la configuration: de delete.yaml lo pise" {
+  export ORIGIN=EKS
   aplicar_configuration_del_workflow "$DELETE"
   run gitops_subtree
   [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]

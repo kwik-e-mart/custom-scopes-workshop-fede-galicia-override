@@ -38,33 +38,18 @@ if ! type -t gitops_repo_url >/dev/null 2>&1; then
 gitops_repo_url() { printf %s "${GITOPS_REPO_URL:-}"; }
 fi
 
-if ! type -t gitops_valid_substrate >/dev/null 2>&1; then
-gitops_valid_substrate() {
-  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]
-}
-fi
-
 if ! type -t gitops_substrate >/dev/null 2>&1; then
 gitops_substrate() {
-  if [ -n "${GITOPS_SUBSTRATE:-}" ]; then
-    if ! gitops_valid_substrate "$GITOPS_SUBSTRATE"; then
-      log error "api-manager gitops: GITOPS_SUBSTRATE '${GITOPS_SUBSTRATE}' no es un nombre de directorio válido."
-      return 1
-    fi
-    printf %s "$GITOPS_SUBSTRATE"
-    return 0
-  fi
   if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
 }
 fi
 
 if ! type -t gitops_subtree >/dev/null 2>&1; then
 gitops_subtree() {
-  local prefix="${GITOPS_PATH_PREFIX:-}" substrate
+  local prefix="${GITOPS_PATH_PREFIX:-}"
   prefix="${prefix%/}"
   [ -n "$prefix" ] && prefix="$prefix/"
-  substrate=$(gitops_substrate) || return 1
-  printf '%s%s/%s/%s' "$prefix" "$substrate" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
+  printf '%s%s/%s/%s' "$prefix" "$(gitops_substrate)" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
 }
 fi
 

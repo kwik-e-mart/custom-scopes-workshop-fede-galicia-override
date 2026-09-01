@@ -22,7 +22,7 @@ setup() {
   export GITOPS_BRANCH=main
   export GITOPS_PATH_PREFIX=cross-namespace-rules
   export GITOPS_PUSH_RETRIES=5
-  unset GITOPS_REPO_URL GITOPS_SUBSTRATE ORIGIN
+  unset GITOPS_REPO_URL ORIGIN
 }
 
 make_render() {
@@ -54,7 +54,6 @@ armar_remoto() {
   git -C "$seed" push --quiet origin HEAD:refs/heads/main
   rm -rf "$seed"
   export GITOPS_REPO_URL="$REMOTE"
-  export GITOPS_SUBSTRATE=openshift
 }
 
 en_clon_del_remoto() {
@@ -97,33 +96,19 @@ HOOK
   [ "$output" = "cross-namespace-rules/openshift/payments/api-manager-svc-1" ]
 }
 
-@test "sin GITOPS_SUBSTRATE y sin ORIGIN, el fallback es openshift" {
+@test "sin ORIGIN el sustrato es openshift" {
   run gitops_subtree
   [[ "$output" == cross-namespace-rules/openshift/* ]]
 }
 
-@test "GITOPS_SUBSTRATE valido pisa el fallback de ORIGIN" {
-  export GITOPS_SUBSTRATE=eks
-  export ORIGIN=OS
+@test "con ORIGIN=EKS el sustrato es eks" {
+  export ORIGIN=EKS
   run gitops_subtree
   [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
 }
 
-@test "GITOPS_SUBSTRATE invalido ABORTA antes de tocar el filesystem" {
-  export GITOPS_SUBSTRATE='../etc'
-  run gitops_subtree
-  [ "$status" -ne 0 ]
-}
-
-@test "GITOPS_SUBSTRATE con barra tambien se rechaza" {
-  export GITOPS_SUBSTRATE='a/b'
-  run gitops_subtree
-  [ "$status" -ne 0 ]
-}
-
-@test "con GitOps habilitado y GITOPS_SUBSTRATE vacío, publica bajo el sustrato que deriva de ORIGIN" {
+@test "con ORIGIN=EKS el subárbol publicado en el remoto es el de eks" {
   armar_remoto
-  unset GITOPS_SUBSTRATE
   export ORIGIN=EKS
   make_render
   run gitops_publish "$MDIR"
@@ -132,18 +117,8 @@ HOOK
   [[ "$output" == *"cross-namespace-rules/eks/payments/api-manager-svc-1/10-httproute.yaml"* ]]
 }
 
-@test "con GitOps habilitado y un GITOPS_SUBSTRATE válido, el subárbol publicado lo usa" {
-  armar_remoto
-  export GITOPS_SUBSTRATE=eks
-  make_render
-  run gitops_publish "$MDIR"
-  [ "$status" -eq 0 ]
-  run remoto_ls
-  [[ "$output" == *"cross-namespace-rules/eks/payments/api-manager-svc-1/10-httproute.yaml"* ]]
-}
-
-@test "con GitOps deshabilitado y GITOPS_SUBSTRATE vacío, no pasa nada" {
-  unset GITOPS_REPO_URL GITOPS_SUBSTRATE
+@test "con GitOps deshabilitado no pasa nada" {
+  unset GITOPS_REPO_URL
   make_render
   run gitops_publish "$MDIR"
   [ "$status" -eq 0 ]

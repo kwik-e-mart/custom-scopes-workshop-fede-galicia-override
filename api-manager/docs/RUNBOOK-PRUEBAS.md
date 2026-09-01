@@ -804,7 +804,7 @@ una entidad de cuenta, no de cluster.
 | `mint_key` falla en `np service action update` | se está probando fuera de una acción real (Paso 3) | esperado; el Secret creado sí es real |
 | `reconcile ARGS=delete` no borra un Secret que se esperaba | ese Secret nunca pasó por `mint_key` (Paso 9) | borrarlo a mano por nombre (Paso 13) |
 | `curl: not found` dentro de un pod de `payments` | los pods de esta demo sólo traen `wget` | usar `wget -S -qO-` con `--header`, no `curl -H` |
-| `reconcile` aborta con "falló la publicación... NO se aplicó nada" | `GITOPS_REPO_URL`/`GITOPS_SUBSTRATE` mal, o el push se rechazó (Paso 7) | fail-closed a propósito; el cluster no se tocó |
+| `reconcile` aborta con "falló la publicación... NO se aplicó nada" | `GITOPS_REPO_URL` mal, o el push se rechazó (Paso 7) | fail-closed a propósito; el cluster no se tocó |
 | El agente no arranca / `cmdline` apunta a un archivo que no existe | `/root/.np/...` no existe en runtime host sobre macOS (Paso 2) | correr el agente en runtime k8s (pod) |
 | `mapfile: command not found` o `${level,,}` falla | corriendo con el `bash` 3.2 de macOS en vez de uno >= 4 | anteponer `PATH=/opt/homebrew/bin:$PATH` |
 
@@ -1169,14 +1169,13 @@ service, del `configuration:` de `create.yaml`/`delete.yaml`.** Mismo criterio q
 | Variable | De dónde sale | Por qué |
 |---|---|---|
 | `GITOPS_REPO_URL` | **entorno del agente**, nunca el workflow | es por cluster, puede llevar un token embebido |
-| `GITOPS_SUBSTRATE` | **entorno del agente**, nunca el workflow | nombra el cluster/sustrato donde corre ESE agente — para este cluster, `eks` |
+| `ORIGIN` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa → `openshift`. Ya lo exporta `start-agent-eks.sh` |
 | `GITOPS_BRANCH` | `configuration:` del workflow (`main`) | decisión del service |
 | `GITOPS_PATH_PREFIX` | `configuration:` del workflow (`cross-namespace-rules`) | separa un service del otro en el mismo repo |
 | `GITOPS_PUSH_RETRIES` | `configuration:` del workflow (`5`) | decisión del service |
 
-⚠️ **`GITOPS_SUBSTRATE` no va en `configuration:` del workflow, ni siquiera vacía** — declararla ahí
-pisa lo que traiga el agente. Y **es obligatoria** cuando `GITOPS_REPO_URL` está puesta: sin ella,
-`reconcile` aborta nombrando la variable en vez de caer a un default adivinado.
+⚠️ **`ORIGIN` no va en `configuration:` del workflow, ni siquiera vacía** — declararla ahí pisa lo
+que traiga el agente y el service publica bajo la carpeta del cluster equivocado.
 
 ⚠️ **Nunca poner una URL con credencial real en este documento.** Un repo git local
 (`file://`/path absoluto) alcanza para probar el mecanismo.
@@ -1185,7 +1184,7 @@ pisa lo que traiga el agente. Y **es obligatoria** cuando `GITOPS_REPO_URL` est�
 
 `egress-interceptor` publica bajo `intra-namespace-rules/`; este service, bajo
 `cross-namespace-rules/`. El subárbol es por **service**, no por namespace
-(`<prefix>/<substrate>/<namespace>/<route_name>`) — varias apps expuestas pueden compartir el mismo
+(`<prefix>/<eks|openshift>/<namespace>/<route_name>`) — varias apps expuestas pueden compartir el mismo
 namespace de Kubernetes, así que copiar el criterio del egress (subárbol por namespace entero)
 habría hecho que publicar la ruta de una app se llevara puesta la de su vecina.
 
@@ -1199,7 +1198,7 @@ antes/después de un intento fallido, y con el objeto todavía presente después
 
 ```bash
 export GITOPS_REPO_URL="/no/existe/en/este/filesystem.git"
-export GITOPS_SUBSTRATE=eks
+export ORIGIN=EKS
 export GITOPS_BRANCH=main
 # resto de las variables del Paso 6 sin cambios
 PATH=/opt/homebrew/bin:$PATH bash -c '

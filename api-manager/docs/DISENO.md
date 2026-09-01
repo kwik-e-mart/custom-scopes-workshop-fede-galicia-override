@@ -385,19 +385,15 @@ raíz.
 **Todo esto es opcional.** Con `GITOPS_REPO_URL` sin setear, `gitops_enabled()` da falso y el flujo
 corre igual, sin publicar. No es un requisito para usar el service.
 
-Dos cosas que hubo que tocar del lib al reusarlo, y que valen como advertencia para el próximo que lo
-copie:
+Una cosa que hubo que tocar del lib al reusarlo, y que vale como advertencia para el próximo que lo
+copie: `GITOPS_NAMESPACE_MANIFESTS` y `GITOPS_PER_SERVICE_MANIFESTS` estaban como **asignaciones
+planas**, no con el idiom `: "${VAR:=default}"` que el propio archivo usa dos líneas más abajo.
+Sourcear el lib pisaba lo que viniera del entorno, así que un segundo service no podía declarar sus
+propios manifiestos.
 
-- `GITOPS_NAMESPACE_MANIFESTS` y `GITOPS_PER_SERVICE_MANIFESTS` estaban como **asignaciones planas**,
-  no con el idiom `: "${VAR:=default}"` que el propio archivo usa dos líneas más abajo. Sourcear el
-  lib pisaba lo que viniera del entorno, así que un segundo service no podía declarar sus propios
-  manifiestos.
-- `gitops_substrate()` decide la carpeta con `ORIGIN` (`OS`/`EKS`), que es el concepto cross-sustrato
-  del egress. Este service no lo tiene: sin `ORIGIN`, el fallback devuelve `openshift` **siempre**.
-  En un CRC eso acierta por casualidad; en EKS publicaría bajo `openshift/`, una mentira en el repo
-  que es el registro de la verdad. Se reemplazó por `GITOPS_SUBSTRATE`, que **es obligatoria** cuando
-  GitOps está habilitado: sin ella el service aborta en vez de inventar un default, porque cualquier
-  default es correcto en un cluster y falso en el resto.
+`gitops_substrate()` queda igual que en el egress: la carpeta sale de `ORIGIN` (`EKS` → `eks`,
+cualquier otra cosa → `openshift`). Los dos services corren bajo el mismo agente y ese agente ya
+exporta `ORIGIN`.
 
 ### 6.2 De dónde sale cada variable
 
@@ -407,7 +403,7 @@ entorno del agente; lo que es por service, del `configuration:` del workflow.**
 | Variable | De dónde | Por qué |
 |---|---|---|
 | `GITOPS_REPO_URL` | entorno del agente | Es por cluster, y puede llevar un token embebido |
-| `GITOPS_SUBSTRATE` | entorno del agente | Nombra el cluster donde corre ese agente |
+| `ORIGIN` | entorno del agente | De ahí sale la carpeta del cluster (`EKS` → `eks`, cualquier otra cosa → `openshift`) |
 | `GITOPS_BRANCH` | `configuration:` | Decisión del service |
 | `GITOPS_PATH_PREFIX` | `configuration:` | Es lo que separa un service del otro |
 | `GITOPS_PUSH_RETRIES` | `configuration:` | Decisión del service |
@@ -416,9 +412,9 @@ Las del agente **no se declaran en el workflow**, ni en `configuration:` ni en e
 `build context`: son ambientales y todos los steps las ven. Es como el egress trata `ORIGIN` y
 `GITOPS_REPO_URL`.
 
-Declararlas igual no es inocuo: `GITOPS_SUBSTRATE: ""` en el `configuration:` **pisa** el valor que
-el operador puso en el agente. Pasó exactamente eso en la primera versión, y el resultado fue una
-variable cableada que el propio workflow anulaba — con los tests en verde, porque el mock nunca ve la
+Declararlas igual no es inocuo: un `ORIGIN: ""` en el `configuration:` **pisa** el valor que el
+operador puso en el agente, y el service publica bajo la carpeta del cluster equivocado. Pasó
+exactamente eso en la primera versión — con los tests en verde, porque el mock nunca ve la
 diferencia.
 
 ---

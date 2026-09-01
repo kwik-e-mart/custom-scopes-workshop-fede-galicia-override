@@ -333,9 +333,8 @@ run_reconcile() {
   [ "$status" -eq 0 ]
 }
 
-@test "con gitops habilitado y sin GITOPS_SUBSTRATE, el apply sigue: el sustrato lo da ORIGIN" {
+@test "con gitops habilitado, el sustrato lo da ORIGIN y el apply sigue" {
   export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
-  unset GITOPS_SUBSTRATE
   export ORIGIN=EKS
   gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
   export -f gitops_publish

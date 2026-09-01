@@ -771,58 +771,21 @@ declararse en el workflow; lo que es **por service**, del `configuration:` de
 | Variable | De dónde sale | Por qué |
 |---|---|---|
 | `GITOPS_REPO_URL` | **entorno del agente**, nunca el workflow | es por cluster, y puede llevar un token embebido |
-| `GITOPS_SUBSTRATE` | **entorno del agente**, nunca el workflow | nombra el cluster/sustrato donde corre ESE agente |
+| `ORIGIN` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa (o sin setear, como en CRC) → `openshift` |
 | `GITOPS_BRANCH` | `configuration:` del workflow (`main`) | decisión del service |
 | `GITOPS_PATH_PREFIX` | `configuration:` del workflow (`cross-namespace-rules`) | es lo que separa un service del otro en el mismo repo |
 | `GITOPS_PUSH_RETRIES` | `configuration:` del workflow (`5`) | decisión del service |
 | `GITOPS_COMMITTER_NAME`/`_EMAIL` | default del propio `gitops_lib` (`nullplatform api-manager` / `api-manager@nullplatform.io`) si no se pisan | — |
 
-⚠️ **`GITOPS_SUBSTRATE` NO va en `create.yaml`/`delete.yaml`, ni siquiera vacía.** La primera versión
-de este cambio la declaraba ahí como `GITOPS_SUBSTRATE: ""`, y ese `""` **pisaba** cualquier valor que
-el agente trajera puesto — quedaba cableada y anulada por el propio workflow, con los tests en verde
-porque el mock nunca ve la diferencia. Se sacó del todo de `configuration:` y de `output:` del step
-`build context`: como es ambiental, todos los steps la ven sin que nadie la declare.
-
-⚠️ **Es obligatoria cuando GitOps está habilitado.** Con `GITOPS_REPO_URL` puesta pero sin
-`GITOPS_SUBSTRATE`, `reconcile` **aborta** — no cae a ningún default. Antes caía a `openshift` vía
-`ORIGIN` (heredado de `egress-interceptor`, que sí tiene ese concepto cross-cluster); acá acertaba en
-este CRC de pura casualidad, y en un cluster EKS real habría publicado bajo `openshift/` igual, sin
-avisar. Se verifica más abajo con el mensaje real de abort.
+⚠️ **`ORIGIN` NO va en `create.yaml`/`delete.yaml`, ni siquiera vacía.** Un `""` ahí **pisa**
+cualquier valor que el agente traiga puesto, y el service publica bajo la carpeta del cluster
+equivocado — con los tests en verde, porque el mock nunca ve la diferencia. No está ni en
+`configuration:` ni en el `output:` del step `build context`: como es ambiental, todos los steps la
+ven sin que nadie la declare.
 
 ⚠️ **Nunca poner una URL con credencial real en este documento ni en ningún commit.** Para probar acá
 alcanza con un repo git local (`file://` o un path absoluto) — no hace falta un GitHub real, y es lo
 que se usa abajo.
-
-### GitOps habilitado sin `GITOPS_SUBSTRATE`: el abort real
-
-Antes de publicar nada, el caso que un operador se va a comer si sigue el runbook a medias: activar
-GitOps (`GITOPS_REPO_URL` puesta) sin fijar `GITOPS_SUBSTRATE`.
-
-```bash
-export GITOPS_REPO_URL=/tmp/gitops-test/remote.git
-export GITOPS_BRANCH=main
-export GITOPS_PATH_PREFIX=cross-namespace-rules
-unset GITOPS_SUBSTRATE
-# resto de las variables del Paso 6 sin cambios (NAMESPACE, APP_TARGET, SERVICE_ID, HOSTS_JSON, ROUTES_JSON, ...)
-KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
-  source "'"$SVC"'/logging"; export -f log
-  bash "'"$SVC"'/scripts/k8s/reconcile"
-'
-echo "EXIT=$?"
-kubectl --context crc-admin -n payments get httproute,authpolicy
-```
-
-```
-# →
-api-manager gitops: falta GITOPS_SUBSTRATE. Hay que nombrar el cluster/sustrato donde corre este agente: ese nombre estructura el repo gitops.
-api-manager gitops: no se pudo armar el path del repo.
-api-manager: falló la publicación de los manifiestos al repo gitops. NO se aplicó nada.
-EXIT=1
-No resources found in payments namespace.
-```
-
-Nombra la variable que falta en vez de fallar con un `500` genérico, y **nada se aplicó al cluster**
-— mismo fail-closed del resto de este paso, ahora también para el caso "GitOps a medias".
 
 ### Separación por carpetas: dos services, un repo
 
@@ -866,12 +829,10 @@ kubectl --context crc-admin -n payments get httproute api-manager-ec53bf2c-5831-
 ```
 
 Reintentar el mismo `reconcile ARGS=apply` del Paso 6, esta vez con `GITOPS_REPO_URL` apuntando a un
-repo que **no existe** — y `GITOPS_SUBSTRATE` puesta (`crc`), para que el intento llegue hasta el
-`clone` en vez de abortar antes por la variable faltante (ese caso ya se probó arriba):
+repo que **no existe**:
 
 ```bash
 export GITOPS_REPO_URL="/no/existe/en/este/filesystem.git"
-export GITOPS_SUBSTRATE=crc
 export GITOPS_BRANCH=main
 # resto de las variables del Paso 6 sin cambios (NAMESPACE, APP_TARGET, SERVICE_ID, HOSTS_JSON, ROUTES_JSON, ...)
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
@@ -905,15 +866,12 @@ falla, `gitops_sync` retorna error, y `reconcile` aborta con `die` en la línea 
 (`GITOPS_PUSH_RETRIES`, con backoff exponencial + jitter) se comporta igual: agota los reintentos,
 retorna error, nada se aplica.
 
-### Publicar de verdad, con el repo real (real de prueba) y `GITOPS_SUBSTRATE` puesta
+### Publicar de verdad, con el repo real (real de prueba)
 
-`GITOPS_SUBSTRATE` viaja junto a `GITOPS_REPO_URL` porque las dos son "del agente" — en una corrida
-real, las pondría quien levanta el agente en ESE cluster, no el workflow. Acá el nombre es arbitrario
-(no hay una convención impuesta); se usa `crc`, honesto sobre qué cluster es:
+En CRC no se exporta `ORIGIN`, así que la carpeta del cluster es `openshift`:
 
 ```bash
 export GITOPS_REPO_URL=/tmp/gitops-test/remote.git
-export GITOPS_SUBSTRATE=crc
 export GITOPS_BRANCH=main
 export GITOPS_PATH_PREFIX=cross-namespace-rules
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
@@ -932,9 +890,11 @@ api-manager: galicia-poc.hello-world-poc expuesto.
 
 `configured`/`unchanged`, no `created`: el `HTTPRoute`/`AuthPolicy` ya existían desde el Paso 6 —
 ninguno de los intentos fallidos de arriba los tocó, así que `kubectl apply` los encuentra iguales y
-sólo actualiza. `crc` en el path es el valor que se acaba de exportar — ya no hay ningún fallback
-silencioso a `openshift`/`eks` en el medio: sin `GITOPS_SUBSTRATE`, el paso anterior aborta antes de
-llegar acá.
+sólo actualiza.
+
+> ⚠️ Las salidas capturadas de esta sección y de la siguiente vienen de una corrida anterior, cuando
+> existía un override `GITOPS_SUBSTRATE` que se fijó en `crc`. Ese override se eliminó: hoy el mismo
+> comando publica bajo `openshift/` en lugar de `crc/`. El resto de la salida no cambia.
 
 ### El árbol del repo, después de publicar
 
@@ -1389,7 +1349,6 @@ export GITOPS_PATH_PREFIX=cross-namespace-rules
 export GITOPS_BRANCH=main
 
 export GITOPS_REPO_URL="/no/existe/en/este/filesystem.git"
-export GITOPS_SUBSTRATE=crc
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
   bash "'"$SVC"'/scripts/k8s/reconcile"
@@ -1416,7 +1375,6 @@ El `HTTPRoute`/`AuthPolicy` siguen ahí — `gitops_publish_removal` corre **ant
 
 ```bash
 export GITOPS_REPO_URL=/tmp/gitops-test/remote.git
-export GITOPS_SUBSTRATE=crc
 KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
   source "'"$SVC"'/logging"; export -f log
   bash "'"$SVC"'/scripts/k8s/reconcile"
@@ -1548,6 +1506,5 @@ esperado, ver la nota de ese paso.
 | `reconcile`/`check_collisions` avisan "se solapan" con un path que a simple vista parece distinto | el nuevo chequeo detecta prefijos, no sólo match exacto (Paso 11) | confirmar si uno es subárbol del otro (`/api` vs `/api/v1`); si no lo es, no debería marcar colisión — revisar `find_route_conflicts` |
 | Cualquier `kubectl` de este runbook da `Forbidden` | se está usando el `kubeconfig`/token de la `ServiceAccount` restringida y falta un verbo | revisar contra la tabla de verbos del Paso 4 antes de agregar permisos — el diseño es deliberadamente mínimo |
 | `reconcile` aborta con "falló la publicación... NO se aplicó nada" o "...No se borró nada del cluster" | `GITOPS_REPO_URL` está mal, la rama no existe, o el push se rechazó y se agotaron los reintentos (Paso 7/13) | es fail-closed a propósito; revisar la URL/rama/credencial del repo GitOps, el cluster no se tocó |
-| `api-manager gitops: falta GITOPS_SUBSTRATE` | GitOps está habilitado (`GITOPS_REPO_URL` puesta) pero nadie fijó `GITOPS_SUBSTRATE` en el entorno del agente (Paso 7) | setearla junto a `GITOPS_REPO_URL` — nunca en `configuration:` del workflow, eso la pisa (ver el aviso del Paso 7) |
 | El agente no arranca / `cmdline` apunta a un archivo que no existe | `/root/.np/...` no existe en runtime host sobre macOS (Paso 2) | correr el agente en runtime k8s (pod), o pasar `base_clone_path` a una ruta accesible — requiere tocar `install/main.tf`, fuera del alcance de este runbook |
 | `mapfile: command not found` o `${level,,}` falla | se está corriendo con el `bash` 3.2 de macOS en vez de uno >= 4 | anteponer `PATH=/opt/homebrew/bin:$PATH` o invocar `/opt/homebrew/bin/bash` explícitamente |
