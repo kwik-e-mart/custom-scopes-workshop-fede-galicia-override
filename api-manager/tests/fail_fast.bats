@@ -330,3 +330,21 @@ run_reconcile() {
   run run_reconcile delete
   [ "$status" -eq 0 ]
 }
+
+@test "con gitops habilitado y sin GITOPS_SUBSTRATE, el apply aborta nombrando la variable y no aplica nada" {
+  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
+  unset GITOPS_SUBSTRATE
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  ! grep -q "apply -f" "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "GITOPS_SUBSTRATE"
+}
+
+@test "con gitops habilitado y sin GITOPS_SUBSTRATE, el delete aborta nombrando la variable y no borra nada" {
+  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
+  unset GITOPS_SUBSTRATE
+  run run_reconcile delete
+  [ "$status" -ne 0 ]
+  ! grep -q 'delete' "$KUBECTL_CALLS_LOG"
+  echo "$output" | grep -q "GITOPS_SUBSTRATE"
+}

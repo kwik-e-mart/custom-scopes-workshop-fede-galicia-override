@@ -54,6 +54,10 @@ gitops_substrate() {
     printf %s "$GITOPS_SUBSTRATE"
     return 0
   fi
+  if gitops_enabled; then
+    log error "api-manager gitops: falta GITOPS_SUBSTRATE. Hay que nombrar el cluster/sustrato donde corre este agente: ese nombre estructura el repo gitops."
+    return 1
+  fi
   if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
 }
 fi

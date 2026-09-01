@@ -53,6 +53,7 @@ armar_remoto() {
   git -C "$seed" push --quiet origin HEAD:refs/heads/main
   rm -rf "$seed"
   export GITOPS_REPO_URL="$REMOTE"
+  export GITOPS_SUBSTRATE=openshift
 }
 
 en_clon_del_remoto() {
@@ -117,6 +118,32 @@ HOOK
   export GITOPS_SUBSTRATE='a/b'
   run gitops_subtree
   [ "$status" -ne 0 ]
+}
+
+@test "con GitOps habilitado y GITOPS_SUBSTRATE vacío, gitops_publish ABORTA nombrando la variable" {
+  armar_remoto
+  unset GITOPS_SUBSTRATE
+  make_render
+  run gitops_publish "$MDIR"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"GITOPS_SUBSTRATE"* ]]
+}
+
+@test "con GitOps habilitado y un GITOPS_SUBSTRATE válido, el subárbol publicado lo usa" {
+  armar_remoto
+  export GITOPS_SUBSTRATE=eks
+  make_render
+  run gitops_publish "$MDIR"
+  [ "$status" -eq 0 ]
+  run remoto_ls
+  [[ "$output" == *"cross-namespace-rules/eks/payments/api-manager-svc-1/10-httproute.yaml"* ]]
+}
+
+@test "con GitOps deshabilitado y GITOPS_SUBSTRATE vacío, no pasa nada" {
+  unset GITOPS_REPO_URL GITOPS_SUBSTRATE
+  make_render
+  run gitops_publish "$MDIR"
+  [ "$status" -eq 0 ]
 }
 
 @test "sin URL el publisher está apagado" {
