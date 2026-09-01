@@ -6,6 +6,22 @@ setup() {
   }
   CREATE="${BATS_TEST_DIRNAME}/../workflows/istio/create.yaml"
   DELETE="${BATS_TEST_DIRNAME}/../workflows/istio/delete.yaml"
+
+  source "${BATS_TEST_DIRNAME}/../logging"
+  source "${BATS_TEST_DIRNAME}/../scripts/k8s/gitops_lib"
+  export -f log
+
+  export NAMESPACE=payments
+  export ROUTE_NAME=api-manager-svc-1
+  unset GITOPS_REPO_URL GITOPS_SUBSTRATE ORIGIN
+}
+
+aplicar_configuration_del_workflow() {
+  local file="$1" key value
+  while IFS=$'\t' read -r key value; do
+    [ -n "$key" ] || continue
+    export "$key=$value"
+  done < <(yq -r '.configuration | to_entries[] | [.key, .value] | @tsv' "$file")
 }
 
 @test "create.yaml no declara GITOPS_SUBSTRATE en configuration: tiene que venir del entorno del agente" {
@@ -47,4 +63,18 @@ setup() {
   [ "$output" = "false" ]
   run yq -r '.configuration | has("GITOPS_REPO_URL")' "$DELETE"
   [ "$output" = "false" ]
+}
+
+@test "un GITOPS_SUBSTRATE puesto por el agente llega al subárbol sin que la configuration: de create.yaml lo pise" {
+  export GITOPS_SUBSTRATE=eks
+  aplicar_configuration_del_workflow "$CREATE"
+  run gitops_subtree
+  [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
+}
+
+@test "un GITOPS_SUBSTRATE puesto por el agente llega al subárbol sin que la configuration: de delete.yaml lo pise" {
+  export GITOPS_SUBSTRATE=eks
+  aplicar_configuration_del_workflow "$DELETE"
+  run gitops_subtree
+  [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
 }
