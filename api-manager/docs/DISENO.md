@@ -58,10 +58,37 @@ Dos cosas importantes de este dibujo:
 las apps cuelgan del mismo. Esto es distinto del `egress-interceptor`, que sí monta un Gateway por
 namespace, y es una fuente de confusión si se lee un servicio con la cabeza del otro.
 
-**El backend es un hostname, no un Service.** Va como `backendRef` de `kind: Hostname` —la extensión
-de Istio para referenciar hosts del registro— apuntando a la ruta interna del despliegue. La razón es
-el blue/green: el nombre del Service de Kubernetes cambia en cada deploy, así que apuntarle
-directamente rompería la funcionalidad. El hostname interno es la indirección estable.
+**Nunca se apunta al Service del scope.** El nombre del Service cambia en cada deploy, así que
+apuntarle rompe el blue/green. La indirección estable es la `HTTPRoute` del propio scope, que
+nullplatform mantiene al día — hay que pasar por ahí.
+
+**Pero el dominio del scope NO es el `backendRef`: es el `Host` header.** Medido contra el EKS real
+el 2026-09-01, con una route referenciando cada opción:
+
+| `backendRef` | ¿Envoy le crea cluster? | Tráfico |
+|---|---|---|
+| `s2s-ingress-istio.gateways.svc.cluster.local` (FQDN de Service) | **sí** | llega |
+| el dominio del scope | **no** | 500 |
+
+`kind: Hostname` sólo resuelve hosts del **registro de la malla**: Services y ServiceEntries. El
+dominio de un scope no es ninguna de las dos cosas — es únicamente un valor de `hostnames:` en la
+route del scope. Envoy no le construye cluster.
+
+La forma correcta, la misma que usa el `egress-interceptor`:
+
+- `backendRefs` → **FQDN del Service del gateway de ingreso**, puerto 443
+- `filters.URLRewrite.hostname` → **el dominio del scope**, para que el gateway que recibe matchee
+  la route correcta
+
+Ojo con una lectura equivocada que ya hicimos: el egress hace ese `URLRewrite` *y además* acuña un
+wristband, y es fácil concluir que la reescritura existe para la firma. Son independientes. Acá no se
+firma nada —la API key ya se validó— y el `URLRewrite` hace falta igual.
+
+**El salto de vuelta al gateway necesita TLS.** El listener es HTTPS con `mode: Terminate`, y el hop
+sale en plano: da 503. Lo resuelve un `DestinationRule` que origine TLS hacia ese host. Vive en el
+namespace del gateway (`gateways`) y **lo crea el módulo `kuadrant-s2s`**, no el service: el cliente
+del salto es el gateway compartido, no un workload de la app. Una regla puesta en el namespace de la
+app con `exportTo: ["."]` no la ve nadie — verificado.
 
 **No hace falta tocar NetworkPolicies.** El gateway global ya alcanza a las apps —es como funciona el
 ingreso normal hoy—, así que los agujeros ya existen. El aislamiento A→B directo sigue intacto: el
@@ -221,10 +248,26 @@ Por aplicación expuesta, dos objetos en su namespace de Kubernetes.
 
 - `parentRefs` → el gateway global (cross-namespace).
 - `hostnames` → los hosts declarados por el dev.
-- Una `rule` por ruta declarada, cada una con su `matches` (path + methods) y su `backendRefs` de
-  `kind: Hostname` apuntando al dominio del scope de esa ruta.
+- Una `rule` por ruta declarada, cada una con su `matches` (path + methods), su `backendRefs` de
+  `kind: Hostname` al **FQDN del Service del gateway de ingreso** (puerto 443), y un filtro
+  `URLRewrite` cuyo `hostname` es el **dominio del scope de esa ruta** (ver §2).
 
-Rutas de distintos scopes conviven en el mismo `HTTPRoute`: cada `rule` lleva su propio backend.
+Rutas de distintos scopes conviven en el mismo `HTTPRoute`: los filtros son por `rule`, así que cada
+una reescribe al dominio de su propio scope. El `backendRef`, en cambio, es el mismo para todas — el
+gateway de ingreso.
+
+### AuthPolicy y la política del Gateway
+
+**Una `AuthPolicy` a nivel route sobreescribe a la del Gateway.** Verificado contra el EKS real el
+2026-09-01: sobre `s2s-ingress`, que tiene la `s2s-validator` exigiendo un wristband en `x-np-token`,
+una route con su propia `AuthPolicy` de `apiKey` respondió **200 con sólo `x-api-key`**, sin wristband.
+
+Importa porque despeja una duda razonable: el wristband del s2s **no aplica** a las routes de este
+service. Cada uno valida lo suyo.
+
+El segundo salto es distinto: aterriza sobre la route del **scope**, que no tiene política propia y
+por lo tanto hereda `s2s-validator`. Ese es el punto donde los dos mecanismos se tocan, y es el que
+hay que resolver si se quiere que el tráfico del api-manager llegue hasta el pod.
 
 ### AuthPolicy
 
@@ -426,16 +469,16 @@ Kubernetes, pero `get`/`list` sí se pueden negar por completo, que es lo que im
 Gotcha #27 de este repo dice que Istio no marca como resueltos los `backendRefs` de `kind: Hostname`,
 y que la `HTTPRoute` reporta `ResolvedRefs=False (BackendNotFound)` con el tráfico funcionando.
 
-**Corregido el 2026-08-31, verificado en los dos sentidos contra el CRC:** eso no es universal. Da
-`False` **sólo cuando Istio no conoce ese hostname** en su registro. Si el hostname existe, la
-condición resuelve bien.
+**El gotcha original es correcto. Verificado contra el EKS real el 2026-09-01.**
 
-O sea que `ResolvedRefs=False` no es un falso negativo constante sino un indicador honesto de que el
-destino todavía no está en el registro — que es un estado transitorio y legítimo mientras el scope se
-despliega. Sigue sin servir como compuerta del apply, porque haría que el reconcile dependa del orden
-de despliegue y cuelgue cuando el destino todavía no existe, pero **sí sirve como diagnóstico**: si el
-tráfico no llega y `ResolvedRefs` está en `False`, el hostname del backend está mal o el scope no está
-desplegado.
+Una corrección previa de este documento afirmaba que `False` aparece sólo cuando Istio desconoce el
+hostname. Es falso, y se midió: con una route referenciando
+`s2s-ingress-istio.gateways.svc.cluster.local`, el Envoy del gateway **sí tiene el cluster**
+(`outbound|443||s2s-ingress-istio.gateways.svc.cluster.local` aparece en `/clusters`) y la condición
+reporta `ResolvedRefs=False (BackendNotFound)` igual.
+
+O sea: es un falso negativo constante para `kind: Hostname`, no un indicador de nada. **No sirve ni
+como compuerta ni como diagnóstico.** La señal es el comportamiento del tráfico.
 
 El `reconcile` del `egress-interceptor` espera esa condición para su route de ingreso. **Copiarlo tal
 cual colgaría el apply.** La señal de la compuerta acá es `Accepted`, y nada más.
