@@ -378,9 +378,11 @@ intra-namespace-rules/     <- egress-interceptor
 cross-namespace-rules/     <- este service
 ```
 
-Sale de `GITOPS_PATH_PREFIX`, que `gitops_subtree()` ya antepone: no hizo falta cambiar la lógica del
-lib, sólo setear la variable distinto en cada service. Antes el egress usaba `""` y escribía en la
-raíz.
+El prefijo es una **constante del service** (`API_MANAGER_GITOPS_PREFIX` en `gitops_lib`), no una
+variable de entorno. Tiene que serlo: el env del agente le gana al `configuration:` del workflow, y
+los dos services corren bajo el **mismo** agente — un `GITOPS_PATH_PREFIX` compartido ahí los
+mandaría a los dos a la misma carpeta, que es exactamente lo que esta separación evita. Este service
+ignora `GITOPS_PATH_PREFIX`; hay un test que lo fija.
 
 **Todo esto es opcional.** Con `GITOPS_REPO_URL` sin setear, `gitops_enabled()` da falso y el flujo
 corre igual, sin publicar. No es un requisito para usar el service.
@@ -405,17 +407,21 @@ entorno del agente; lo que es por service, del `configuration:` del workflow.**
 | `GITOPS_REPO_URL` | entorno del agente | Es por cluster, y puede llevar un token embebido |
 | `ORIGIN` | entorno del agente | De ahí sale la carpeta del cluster (`EKS` → `eks`, cualquier otra cosa → `openshift`) |
 | `GITOPS_BRANCH` | entorno del agente | Es del repo gitops, no del service: los dos services publican a la misma rama |
-| `GITOPS_PATH_PREFIX` | `configuration:` | Es lo que separa un service del otro |
+| ~~`GITOPS_PATH_PREFIX`~~ | — | No se usa: el prefijo es constante del service, ver arriba |
 | `GITOPS_PUSH_RETRIES` | `configuration:` | Decisión del service |
 
 Las del agente **no se declaran en el workflow**, ni en `configuration:` ni en el `output:` del
 `build context`: son ambientales y todos los steps las ven. Es como el egress trata `ORIGIN` y
 `GITOPS_REPO_URL`.
 
-Declararlas igual no es inocuo: un `ORIGIN: ""` en el `configuration:` **pisa** el valor que el
-operador puso en el agente, y el service publica bajo la carpeta del cluster equivocado. Pasó
-exactamente eso en la primera versión — con los tests en verde, porque el mock nunca ve la
-diferencia.
+El env del agente **le gana** al `configuration:` del workflow (confirmado por el operador). O sea
+que declarar ahí una variable ambiental no la pisa — pero sí queda como el **único** valor cuando el
+agente no la trae, que es peor: en vez de un default pensado, el service arranca con lo que el
+workflow adivinó. Es lo que pasó en la primera versión con una variable declarada en `""`.
+
+De la misma precedencia sale la otra consecuencia, la del prefijo: una variable de entorno
+compartida no puede distinguir dos services que corren bajo el mismo agente. Por eso el prefijo es
+constante del código, no configuración.
 
 ---
 

@@ -1171,11 +1171,12 @@ service, del `configuration:` de `create.yaml`/`delete.yaml`.** Mismo criterio q
 | `GITOPS_REPO_URL` | **entorno del agente**, nunca el workflow | es por cluster, puede llevar un token embebido |
 | `ORIGIN` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa → `openshift`. Ya lo exporta `start-agent-eks.sh` |
 | `GITOPS_BRANCH` | **entorno del agente** (default `main` si no está) | es del repo gitops, no del service |
-| `GITOPS_PATH_PREFIX` | `configuration:` del workflow (`cross-namespace-rules`) | separa un service del otro en el mismo repo |
+| ~~`GITOPS_PATH_PREFIX`~~ | — | no se usa: `cross-namespace-rules` es constante del service (`API_MANAGER_GITOPS_PREFIX` en `gitops_lib`) |
 | `GITOPS_PUSH_RETRIES` | `configuration:` del workflow (`5`) | decisión del service |
 
-⚠️ **`ORIGIN` no va en `configuration:` del workflow, ni siquiera vacía** — declararla ahí pisa lo
-que traiga el agente y el service publica bajo la carpeta del cluster equivocado.
+⚠️ **`ORIGIN` no va en `configuration:` del workflow, ni siquiera vacía.** El env del agente le gana
+al `configuration:`, así que declararla ahí no la pisa — pero queda como único valor si el agente no
+la trae, y el service publica bajo la carpeta del cluster equivocado sin avisar.
 
 ⚠️ **Nunca poner una URL con credencial real en este documento.** Un repo git local
 (`file://`/path absoluto) alcanza para probar el mecanismo.

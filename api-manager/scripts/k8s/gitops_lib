@@ -3,6 +3,8 @@
 : "${GITOPS_NAMESPACE_MANIFESTS:=}"
 : "${GITOPS_PER_SERVICE_MANIFESTS:=10-httproute.yaml 20-authpolicy.yaml}"
 
+API_MANAGER_GITOPS_PREFIX=cross-namespace-rules
+
 : "${GITOPS_COMMITTER_NAME:=nullplatform api-manager}"
 : "${GITOPS_COMMITTER_EMAIL:=api-manager@nullplatform.io}"
 
@@ -46,10 +48,7 @@ fi
 
 if ! type -t gitops_subtree >/dev/null 2>&1; then
 gitops_subtree() {
-  local prefix="${GITOPS_PATH_PREFIX:-}"
-  prefix="${prefix%/}"
-  [ -n "$prefix" ] && prefix="$prefix/"
-  printf '%s%s/%s/%s' "$prefix" "$(gitops_substrate)" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
+  printf '%s/%s/%s/%s' "$API_MANAGER_GITOPS_PREFIX" "$(gitops_substrate)" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
 }
 fi
 
@@ -140,7 +139,7 @@ gitops_sync() {
   }
   if ! gitops_valid_subtree "$subtree"; then
     log error "api-manager gitops: el path del repo que se armó no es un subárbol relativo válido."
-    log error "  Revisá GITOPS_PATH_PREFIX, el namespace y el nombre de la ruta."
+    log error "  Revisá el namespace y el nombre de la ruta."
     return 1
   fi
   work=$(mktemp -d) || return 1

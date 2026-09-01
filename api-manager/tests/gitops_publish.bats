@@ -20,7 +20,6 @@ setup() {
   export NAMESPACE=payments
   export ROUTE_NAME=api-manager-svc-1
   export GITOPS_BRANCH=main
-  export GITOPS_PATH_PREFIX=cross-namespace-rules
   export GITOPS_PUSH_RETRIES=5
   unset GITOPS_REPO_URL ORIGIN
 }
@@ -115,6 +114,12 @@ HOOK
   [ "$status" -eq 0 ]
   run remoto_ls
   [[ "$output" == *"cross-namespace-rules/eks/payments/api-manager-svc-1/10-httproute.yaml"* ]]
+}
+
+@test "un GITOPS_PATH_PREFIX del entorno NO puede mover el subárbol de este service" {
+  export GITOPS_PATH_PREFIX=gitops_manifests
+  run gitops_subtree
+  [ "$output" = "cross-namespace-rules/openshift/payments/api-manager-svc-1" ]
 }
 
 @test "con GitOps deshabilitado no pasa nada" {

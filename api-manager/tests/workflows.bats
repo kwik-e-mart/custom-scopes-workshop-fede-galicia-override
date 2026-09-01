@@ -46,16 +46,16 @@ aplicar_configuration_del_workflow() {
 
 @test "create.yaml sigue declarando las variables GITOPS_* que SÍ son por service" {
   run yq -r '.configuration | keys | .[]' "$CREATE"
-  echo "$output" | grep -qx "GITOPS_PATH_PREFIX"
   echo "$output" | grep -qx "GITOPS_PUSH_RETRIES"
   ! echo "$output" | grep -qx "GITOPS_BRANCH"
+  ! echo "$output" | grep -qx "GITOPS_PATH_PREFIX"
 }
 
 @test "delete.yaml sigue declarando las variables GITOPS_* que SÍ son por service" {
   run yq -r '.configuration | keys | .[]' "$DELETE"
-  echo "$output" | grep -qx "GITOPS_PATH_PREFIX"
   echo "$output" | grep -qx "GITOPS_PUSH_RETRIES"
   ! echo "$output" | grep -qx "GITOPS_BRANCH"
+  ! echo "$output" | grep -qx "GITOPS_PATH_PREFIX"
 }
 
 @test "ningún workflow declara GITOPS_REPO_URL: lleva credencial y va solo por el env del agente" {
