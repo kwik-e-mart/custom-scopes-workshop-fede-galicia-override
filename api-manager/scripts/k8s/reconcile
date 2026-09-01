@@ -15,9 +15,6 @@ trap 'rm -rf "$OUTDIR"' EXIT
 
 case "$ACTION" in
   apply)
-    kubectl -n "$KEYS_NAMESPACE" get secret "$WRISTBAND_SECRET" >/dev/null 2>&1 \
-      || die "api-manager: no existe el Secret de firma '$WRISTBAND_SECRET' en '$KEYS_NAMESPACE'. Es infraestructura del módulo kuadrant-s2s, no la crea este service: pedísela al operador antes de reintentar."
-
     CTX="$OUTDIR/context.json"
     jq -n \
       --arg namespace "$NAMESPACE" \
