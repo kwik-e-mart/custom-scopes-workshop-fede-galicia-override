@@ -404,7 +404,7 @@ entorno del agente; lo que es por service, del `configuration:` del workflow.**
 |---|---|---|
 | `GITOPS_REPO_URL` | entorno del agente | Es por cluster, y puede llevar un token embebido |
 | `ORIGIN` | entorno del agente | De ahí sale la carpeta del cluster (`EKS` → `eks`, cualquier otra cosa → `openshift`) |
-| `GITOPS_BRANCH` | `configuration:` | Decisión del service |
+| `GITOPS_BRANCH` | entorno del agente | Es del repo gitops, no del service: los dos services publican a la misma rama |
 | `GITOPS_PATH_PREFIX` | `configuration:` | Es lo que separa un service del otro |
 | `GITOPS_PUSH_RETRIES` | `configuration:` | Decisión del service |
 

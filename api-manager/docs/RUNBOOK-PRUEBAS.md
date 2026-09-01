@@ -1170,7 +1170,7 @@ service, del `configuration:` de `create.yaml`/`delete.yaml`.** Mismo criterio q
 |---|---|---|
 | `GITOPS_REPO_URL` | **entorno del agente**, nunca el workflow | es por cluster, puede llevar un token embebido |
 | `ORIGIN` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa → `openshift`. Ya lo exporta `start-agent-eks.sh` |
-| `GITOPS_BRANCH` | `configuration:` del workflow (`main`) | decisión del service |
+| `GITOPS_BRANCH` | **entorno del agente** (default `main` si no está) | es del repo gitops, no del service |
 | `GITOPS_PATH_PREFIX` | `configuration:` del workflow (`cross-namespace-rules`) | separa un service del otro en el mismo repo |
 | `GITOPS_PUSH_RETRIES` | `configuration:` del workflow (`5`) | decisión del service |
 
