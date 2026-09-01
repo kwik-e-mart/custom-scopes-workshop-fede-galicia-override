@@ -56,7 +56,7 @@ causa, y no se inventó una salida.
 | 1 | Registrar el service specification (Terraform, `specs/install/`) — ya hecho, sólo verificación |
 | 2 | Levantar el agente **reusando el del `egress-interceptor`** — un agente, dos services |
 | 3 | Cómo se prueba sin un agente vivo (metodología del resto del runbook) |
-| 4 | RBAC de prueba: `ServiceAccount` restringida + `kubeconfig` con impersonation — **agujero real encontrado** |
+| 4 | RBAC de prueba: `ServiceAccount` restringida + `kubeconfig` con impersonation |
 | 5 | `build_context` contra un scope real y alcanzable |
 | 5.1 | Prerequisito: TLS de origen en el loopback — **APLICADO** |
 | 6 | Crear la instancia: `reconcile apply` |
@@ -395,31 +395,22 @@ no
 no
 ```
 
-### ⚠️ Agujero real encontrado esta corrida: el `Role` quedó desactualizado
+### El `Role` restringido alcanza para todo el ciclo — verificado
 
-El último `get` de arriba (`get secret/payments-wristband-key`) da **`no`**. Desde el commit
-`d849411` (mintear el wristband en la `AuthPolicy`), `reconcile ARGS=apply` agregó una
-**precondición**: antes de renderizar nada, hace
-`kubectl -n "$KEYS_NAMESPACE" get secret "$WRISTBAND_SECRET"` y aborta si no existe — para no
-aplicar una `AuthPolicy` que referencia una clave de firma inexistente. El `Role` de
-`kuadrant-system` (`rbac.yaml.tpl`) sigue con `verbs: ["create", "delete"]`, **sin `get`**, así que
-esa precondición nueva SIEMPRE falla bajo el `Role` restringido, incluso cuando el Secret existe de
-verdad (`payments-wristband-key` existe — verificado, ver Paso 5.1). El mensaje de error además
-**engaña**: dice "no existe" cuando en realidad el problema es de permisos.
+El `get secret/payments-wristband-key` de arriba da **`no`**, y está bien que así sea: `get` sobre
+secrets en `kuadrant-system` permitiría **leer la clave de firma del wristband** del
+`egress-interceptor`, que vive en ese namespace.
+
+> **Historia, por si te la cruzás en un log viejo.** El commit `d849411` había agregado una
+> precondición en `reconcile apply` que hacía `kubectl get secret` sobre la clave de firma. Bajo este
+> `Role` esa precondición fallaba **siempre**, con un mensaje que decía "no existe el Secret" cuando
+> el problema era de permisos. Se sacó en `4272bd1`: la restricción de RBAC gana, y una clave faltante
+> o mal formada se manifiesta como `401` en el tráfico (Paso 10), no en el apply — consistente con el
+> gotcha #25, que dice que una clave mal formada falla con todo reportando verde.
+
+**Verificado el 2026-09-01:** `reconcile ARGS=apply` corre completo bajo la identidad restringida.
 
 ```bash
-export APP_TARGET=galicia-poc.hello-world-poc
-export SERVICE_ID=ec53bf2c-5831-4a85-ab4c-b16762ddd861
-export HOSTS_JSON='["api-test.local"]'
-export ROUTES_JSON='[{"path":"/whoami","methods":["GET"],"scope":"eks","backend":"galicia-poc-hello-world-poc-eks-arcuy.galicia-poc.nullapps.io"}]'
-export GATEWAY_NAME=s2s-ingress
-export GATEWAY_NAMESPACE=gateways
-export API_KEY_HEADER=x-api-key
-export LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local
-export WRISTBAND_SECRET=payments-wristband-key
-export TOKEN_DURATION=300
-export ARGS=apply
-
 TOKEN=$(kubectl --context "$CTX" create token api-manager-agent -n payments --duration=2h)
 SERVER=$(kubectl --context "$CTX" config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')
 CA=$(kubectl --context "$CTX" config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
@@ -431,25 +422,18 @@ contexts: [{name: apimgr-sa, context: {cluster: apimgr-sa, namespace: payments, 
 current-context: apimgr-sa
 users: [{name: api-manager-agent, user: {token: ${TOKEN}}}]
 EOF
-
-KUBECONFIG=/tmp/kubeconfig-sa PATH=/opt/homebrew/bin:$PATH bash -c '
-  source "'"$SVC"'/logging"; export -f log
-  bash "'"$SVC"'/scripts/k8s/reconcile"
-'
 ```
 
 ```
 # →
-api-manager: no existe el Secret de firma 'payments-wristband-key' en 'kuadrant-system'. Es infraestructura del módulo kuadrant-s2s, no la crea este service: pedísela al operador antes de reintentar.
+api-manager gitops: sin repo configurado, no se publica.
+httproute.gateway.networking.k8s.io/api-manager-<service-id> created
+authpolicy.kuadrant.io/api-manager-<service-id> created
+api-manager: <app-target> expuesto.
 ```
 
-**Con el `Role` documentado hoy, `reconcile apply` no funciona en absoluto bajo la identidad
-restringida** mientras exista esta precondición — es un bloqueo real de producción, no un detalle de
-testing. Reportado al team lead; tocar el `Role` o la precondición es una decisión de diseño de
-otro, no mía. **El resto de este runbook, de acá en adelante, corre `reconcile` con el `kubeconfig`
-admin de `$CTX`** (no con `/tmp/kubeconfig-sa`) para poder seguir probando el resto del mecanismo —
-declarado explícitamente donde corresponde. `mint_key`, `revoke_key` y `check_collisions` no tocan
-`WRISTBAND_SECRET` y siguen funcionando bien bajo el `Role` restringido (Paso 9, 11, 12, 13).
+**Todo el runbook corre con `/tmp/kubeconfig-sa`**, no con el admin. Si algún paso falla por permisos,
+es un hallazgo real del RBAC, no un artefacto del setup.
 
 ---
 
@@ -575,7 +559,7 @@ key (Paso 9), el segundo salto autoriza — es la cadena completa que el Paso 10
 
 **Qué valida:** el camino de `create` — renderizar los manifiestos (`HTTPRoute` + `AuthPolicy`) y
 aplicarlos —, **sin GitOps** todavía (Paso 7 lo agrega: es opcional). Corrido con el `kubeconfig`
-admin de `$CTX` por el agujero de RBAC del Paso 4 (`get` faltante sobre el Secret de firma).
+`/tmp/kubeconfig-sa` del Paso 4, o sea con la identidad restringida.
 
 ```bash
 export NAMESPACE=payments
