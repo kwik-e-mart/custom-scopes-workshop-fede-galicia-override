@@ -2,3 +2,4 @@
 
 : "${MANAGED_LABEL:=api-manager.nullplatform.io/managed}"
 : "${TARGET_LABEL:=apimgr-target}"
+: "${CATCHALL_LABEL:=api-manager.nullplatform.io/catchall}"

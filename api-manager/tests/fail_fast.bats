@@ -337,8 +337,47 @@ run_reconcile() {
   export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
   export ORIGIN=EKS
   gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
-  export -f gitops_publish
+  gitops_publish_shared() { echo "GITOPS_SHARED_CALLED $2" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  export -f gitops_publish gitops_publish_shared
   run run_reconcile apply
   [ "$status" -eq 0 ]
   grep -q "apply -f" "$KUBECTL_CALLS_LOG"
+}
+
+@test "el delete borra la catch-all cuando nadie mas publica el dominio" {
+  export KUBECTL_MOCK_ROUTES='[]'
+  run run_reconcile delete
+  [ "$status" -eq 0 ]
+  grep -q "delete httproute api-manager-deny-api-expuesta-com" "$KUBECTL_CALLS_LOG"
+  grep -q "delete authpolicy api-manager-deny-api-expuesta-com" "$KUBECTL_CALLS_LOG"
+}
+
+@test "el delete CONSERVA la catch-all si otro service sigue publicando el dominio" {
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-target":"payments.appy"}},"spec":{"hostnames":["api.expuesta.com"]}}]'
+  run run_reconcile delete
+  [ "$status" -eq 0 ]
+  ! grep -q "delete httproute api-manager-deny-" "$KUBECTL_CALLS_LOG"
+}
+
+@test "el apply publica la catch-all al subárbol compartido antes de aplicarla" {
+  gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  gitops_publish_shared() { echo "GITOPS_SHARED_CALLED $2" >>"$KUBECTL_CALLS_LOG"; return 0; }
+  export -f gitops_publish gitops_publish_shared
+  run run_reconcile apply
+  [ "$status" -eq 0 ]
+  local publish_line apply_line
+  publish_line=$(grep -n "GITOPS_SHARED_CALLED api-manager-deny-" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  apply_line=$(grep -n "apply -f .*catchall.yaml" "$KUBECTL_CALLS_LOG" | head -1 | cut -d: -f1)
+  [ -n "$publish_line" ]
+  [ -n "$apply_line" ]
+  [ "$publish_line" -lt "$apply_line" ]
+}
+
+@test "si falla la publicación de la catch-all al repo gitops, no se aplica nada" {
+  gitops_publish() { return 0; }
+  gitops_publish_shared() { return 1; }
+  export -f gitops_publish gitops_publish_shared
+  run run_reconcile apply
+  [ "$status" -ne 0 ]
+  ! grep -q "apply -f" "$KUBECTL_CALLS_LOG"
 }

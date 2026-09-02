@@ -344,6 +344,47 @@ de firma del wristband, y es lo que obliga al RBAC de §7.2.
 
 ---
 
+### 5.4 La ruta catch-all por dominio: que un 404 no diga qué existe
+
+Con sólo las rutas declaradas, un path que ninguna cubre no llega nunca a Kuadrant: Envoy hace el
+match de ruta **antes** del ext_authz, y si no hay ruta responde 404 por su cuenta. La consecuencia
+medida sobre EKS fue un oráculo de enumeración: sin ninguna credencial, `/whoami` daba 401 y
+`/health` 404, y esa diferencia lista los paths publicados — los de todas las apps que comparten el
+dominio, no sólo los de una.
+
+Por eso cada dominio publicado lleva además una **ruta catch-all**: `PathPrefix: /` (precedencia
+mínima, cualquier ruta declarada le gana) con una `AuthPolicy` que autentica con cualquier key del
+api-manager y después deniega siempre. El invariante que fija es **nunca un 404**:
+
+| | path propio | path de otra app | path no declarado |
+|---|---|---|---|
+| sin key | 401 | 401 | 401 |
+| key válida | 200 | 403 | 403 |
+
+Tres propiedades la hacen compartible sin coordinación entre services:
+
+- **Una por `(dominio, namespace)`**, no por dominio a secas. Dos namespaces que publiquen el mismo
+  dominio generan dos objetos idénticos en comportamiento; cuál gane el desempate de Gateway API es
+  indistinguible. A cambio, ningún namespace queda dependiendo de otro para su borrado.
+- **El nombre se deriva sólo del dominio** (normalizado + hash del original). Misma entrada, mismo
+  nombre: el segundo service que publica genera el mismo objeto en vez de competir por uno nuevo.
+- **El manifiesto no lleva ninguna etiqueta de dueño.** Si llevara el `apimgr-target` del que la
+  creó, dos services renderizarían contenidos distintos y cada apply pisaría al del otro en loop.
+
+El borrado cuenta cuántas rutas del namespace siguen declarando ese dominio, y sólo la retira cuando
+queda en cero. Si ese listado falla, la conserva: una catch-all huérfana deja un dominio sin apps
+respondiendo 401, mientras que borrarla de más devuelve el 404 que filtra.
+
+**La trampa que casi entra con esto:** `/` se solapa con todos los paths, así que el guard de
+colisiones habría visto la catch-all como una ruta más y habría rechazado a la segunda app del
+dominio. Lleva un label propio y el guard la excluye; hay un test que falla si se saca la exclusión.
+
+En GitOps va a un subárbol aparte, `<prefix>/<substrate>/<ns>/_shared/<nombre>`, hermano de los
+subárboles por service. Tiene que estar afuera porque cada publish reescribe el subárbol propio
+entero: adentro, el publish de una app borraría del repo la catch-all que su vecina todavía necesita.
+
+---
+
 ## 6. Ciclo de vida
 
 | Acción | Qué hace |

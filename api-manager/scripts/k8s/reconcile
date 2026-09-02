@@ -39,10 +39,29 @@ case "$ACTION" in
     mapfile -t MANIFESTS <"$MANIFEST_LIST"
     [ "${#MANIFESTS[@]}" -gt 0 ] || die "api-manager: el render no produjo ningún manifiesto."
 
+    CATCHALL_DIR="$OUTDIR/catchall"
+    CATCHALL_LIST="$OUTDIR/catchall-list.txt"
+    render_catchalls "$CTX" "$CATCHALL_DIR" >"$CATCHALL_LIST" \
+      || die "api-manager: falló el render de las rutas catch-all."
+    mapfile -t CATCHALLS <"$CATCHALL_LIST"
+    [ "${#CATCHALLS[@]}" -gt 0 ] || die "api-manager: el render no produjo ninguna ruta catch-all."
+
     gitops_publish "$OUTDIR" \
       || die "api-manager: falló la publicación de los manifiestos al repo gitops. NO se aplicó nada."
 
+    for CATCHALL in "${CATCHALLS[@]}"; do
+      gitops_publish_shared "$CATCHALL" "$(basename "$CATCHALL")" \
+        || die "api-manager: falló la publicación de la ruta catch-all $(basename "$CATCHALL") al repo gitops. NO se aplicó nada."
+    done
+
     apply_manifests "${MANIFESTS[@]}" || die "api-manager: falló el apply de los manifiestos."
+
+    for CATCHALL in "${CATCHALLS[@]}"; do
+      apply_manifests "$CATCHALL/catchall.yaml" \
+        || die "api-manager: falló el apply de la ruta catch-all $(basename "$CATCHALL"). Sin ella, un path no declarado de este dominio responde 404 y filtra qué está expuesto."
+      wait_route_condition "$NAMESPACE" "$(basename "$CATCHALL")" Accepted "${WAIT_TIMEOUT:-60}" \
+        || die "api-manager: la ruta catch-all $(basename "$CATCHALL") no quedó Accepted."
+    done
 
     wait_route_condition "$NAMESPACE" "$ROUTE_NAME" Accepted "${WAIT_TIMEOUT:-60}" \
       || die "api-manager: la HTTPRoute '$ROUTE_NAME' no quedó Accepted. Revisar que el Gateway '$GATEWAY_NAME' exista en '$GATEWAY_NAMESPACE' y admita routes de este namespace."
@@ -80,6 +99,22 @@ $RACE_CONFLICTS"
       || die "api-manager: falló el borrado de la AuthPolicy '$ROUTE_NAME'."
     kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
       || die "api-manager: falló el borrado de la HTTPRoute '$ROUTE_NAME'."
+
+    while IFS= read -r HOST; do
+      [ -n "$HOST" ] || continue
+      CATCHALL_NAME=$(catchall_name_for_host "$HOST") \
+        || die "api-manager: no se pudo derivar el nombre de la ruta catch-all de '$HOST'."
+      if host_still_claimed "$NAMESPACE" "$HOST" "$MANAGED_LABEL" "$CATCHALL_LABEL"; then
+        log info "api-manager: el dominio $HOST lo siguen publicando otros services, se conserva su ruta catch-all."
+        continue
+      fi
+      gitops_remove_shared "$CATCHALL_NAME" \
+        || die "api-manager: falló la publicación del borrado de la ruta catch-all de '$HOST'. No se borró del cluster."
+      kubectl -n "$NAMESPACE" delete authpolicy "$CATCHALL_NAME" --ignore-not-found \
+        || die "api-manager: falló el borrado de la AuthPolicy catch-all '$CATCHALL_NAME'."
+      kubectl -n "$NAMESPACE" delete httproute "$CATCHALL_NAME" --ignore-not-found \
+        || die "api-manager: falló el borrado de la HTTPRoute catch-all '$CATCHALL_NAME'."
+    done < <(printf %s "$HOSTS_JSON" | jq -r '.[]')
     LINK_IDS_JSON=$(np link list --service-id "$SERVICE_ID" --all --format json --query '[ (.results? // .) | .[]? | .id ]') \
       || die "api-manager: falló el listado de links del service '$SERVICE_ID'. No se borra ninguna key: sin ese listado no hay forma de saber cuáles son propias."
 

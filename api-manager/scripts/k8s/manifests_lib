@@ -2,6 +2,52 @@
 
 MANIFESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/expose}"
+: "${SHARED_MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/shared}"
+
+if ! type -t catchall_name_for_host >/dev/null 2>&1; then
+catchall_name_for_host() {
+  local host="$1" norm hash
+  norm=$(printf %s "$host" \
+    | tr 'A-Z' 'a-z' \
+    | sed -e 's/\.$//' -e 's/[^a-z0-9]/-/g' -e 's/^-*//' \
+    | cut -c1-40 \
+    | sed -e 's/-*$//') || return 1
+  hash=$(printf %s "$host" | openssl dgst -sha256 | awk '{print $NF}' | cut -c1-10) || return 1
+  if [ -z "$hash" ]; then
+    log error "api-manager: no se pudo derivar el nombre de la ruta catch-all de '$host'."
+    return 1
+  fi
+  printf 'api-manager-deny-%s-%s' "${norm:-host}" "$hash"
+}
+fi
+
+if ! type -t render_catchalls >/dev/null 2>&1; then
+render_catchalls() {
+  local ctx="$1" outdir="$2" tpl host name dest
+  tpl="$SHARED_MANIFESTS_DIR/catchall.yaml.tpl"
+
+  if [ ! -f "$tpl" ]; then
+    log error "api-manager: no existe el template de la ruta catch-all '$tpl'"
+    return 1
+  fi
+
+  while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    name=$(catchall_name_for_host "$host") || return 1
+    dest="$outdir/$name"
+    mkdir -p "$dest" || return 1
+    jq --arg host "$host" --arg catchall_name "$name" --arg catchall_label "$CATCHALL_LABEL" \
+      '. + {host: $host, catchall_name: $catchall_name, catchall_label: $catchall_label}' \
+      "$ctx" >"$dest/context.json" || return 1
+    if ! gomplate -c .="$dest/context.json" -f "$tpl" -o "$dest/catchall.yaml" </dev/null; then
+      log error "api-manager: falló el render de la ruta catch-all de '$host'."
+      return 1
+    fi
+    printf '%s\n' "$dest"
+  done < <(jq -r '.hosts[]' "$ctx")
+  return 0
+}
+fi
 
 if ! type -t render_manifests >/dev/null 2>&1; then
 render_manifests() {

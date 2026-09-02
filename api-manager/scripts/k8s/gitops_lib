@@ -52,6 +52,24 @@ gitops_subtree() {
 }
 fi
 
+if ! type -t gitops_shared_subtree >/dev/null 2>&1; then
+gitops_shared_subtree() {
+  printf '%s/%s/%s/_shared/%s' "$API_MANAGER_GITOPS_PREFIX" "$(gitops_substrate)" "${NAMESPACE:-}" "$1"
+}
+fi
+
+if ! type -t gitops_render_dir >/dev/null 2>&1; then
+gitops_render_dir() {
+  local mdir="$1" dest="$2" file
+  mkdir -p "$dest" || return 1
+  for file in "$mdir"/*.yaml; do
+    [ -f "$file" ] || continue
+    cp "$file" "$dest/$(basename "$file")" || return 1
+  done
+  return 0
+}
+fi
+
 if ! type -t gitops_sleep >/dev/null 2>&1; then
 gitops_sleep() { sleep "$1"; }
 fi
@@ -110,7 +128,7 @@ fi
 
 if ! type -t gitops_sync >/dev/null 2>&1; then
 gitops_sync() {
-  local mode="$1" mdir="${2:-}"
+  local mode="$1" mdir="${2:-}" subtree_override="${3:-}" render_fn="${4:-gitops_render_tree}"
   local url work subtree branch rc
   local attempt=1 espera=1
   local max="${GITOPS_PUSH_RETRIES:-5}"
@@ -133,10 +151,14 @@ gitops_sync() {
   fi
 
   branch="${GITOPS_BRANCH:-main}"
-  subtree=$(gitops_subtree) || {
-    log error "api-manager gitops: no se pudo armar el path del repo."
-    return 1
-  }
+  if [ -n "$subtree_override" ]; then
+    subtree="$subtree_override"
+  else
+    subtree=$(gitops_subtree) || {
+      log error "api-manager gitops: no se pudo armar el path del repo."
+      return 1
+    }
+  fi
   if ! gitops_valid_subtree "$subtree"; then
     log error "api-manager gitops: el path del repo que se armó no es un subárbol relativo válido."
     log error "  Revisá el namespace y el nombre de la ruta."
@@ -152,7 +174,7 @@ gitops_sync() {
 
   while [ "$attempt" -le "$max" ]; do
     rm -rf "${work:?}/${subtree:?}"
-    if [ "$mode" = apply ] && ! gitops_render_tree "$mdir" "$work/$subtree"; then
+    if [ "$mode" = apply ] && ! "$render_fn" "$mdir" "$work/$subtree"; then
       rm -rf "$work"
       return 1
     fi
@@ -206,4 +228,16 @@ fi
 
 if ! type -t gitops_publish_removal >/dev/null 2>&1; then
 gitops_publish_removal() { gitops_sync delete; }
+fi
+
+if ! type -t gitops_publish_shared >/dev/null 2>&1; then
+gitops_publish_shared() {
+  gitops_sync apply "$1" "$(gitops_shared_subtree "$2")" gitops_render_dir
+}
+fi
+
+if ! type -t gitops_remove_shared >/dev/null 2>&1; then
+gitops_remove_shared() {
+  gitops_sync delete "" "$(gitops_shared_subtree "$1")" gitops_render_dir
+}
 fi

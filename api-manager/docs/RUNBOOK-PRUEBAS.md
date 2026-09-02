@@ -629,7 +629,7 @@ HTTP/1.1 403
 == 4. key propia ==
 {"service":"reports","namespace":"payments","cluster":"eks-kong","pod":"d-1049050904-789675678-6bc68b9885-mqcmj","vpc_ip":"10.60.2.52","spoke":"galicia-1"}
 == 5. path no declarado ==
-HTTP/1.1 404
+HTTP/1.1 403
 ```
 
 Los casos 1, 2, 4 y 5 se corrieron con esta URL exacta. El **3** se midió en la corrida anterior:
@@ -641,7 +641,11 @@ requiere una segunda key emitida desde otra aplicación, y en este cluster hoy h
 | 2 | key que no existe | **401** | ninguna key con ese valor está registrada como `Secret` |
 | 3 | key válida, de `other.otra-app` | **403** | autenticó (la key existe), pero `apimgr-target` no matchea |
 | 4 | key válida, propia | **200**, body real del scope | control positivo, atravesando los dos saltos completos |
-| 5 | key propia, path no declarado | **404** | ningún `match` del `HTTPRoute` cubre `/no-declarada` |
+| 5 | key propia, path no declarado | **403** | lo agarra la ruta catch-all del dominio, que autentica y deniega siempre |
+
+**Nunca un 404.** Un path no declarado tiene que responder igual que uno ajeno, si no el código
+mismo dice cuáles existen: sin credencial 401 y con credencial 403 son, los dos, indistinguibles
+entre "no está declarado" y "es de otra app". Ver el Paso 7.1.
 
 El caso 4 atraviesa la cadena completa: `x-api-key` válida → la `AuthPolicy` de este service
 autentica y **acuña un wristband** (`x-np-token`, firmado con `payments-wristband-key`) → el
@@ -664,6 +668,60 @@ primer request. El primer salto (el que agrega este service) **no** exige el wri
 gateway compartido; su propia regla de `authentication` (`apiKey`) es la que manda para las rutas
 que declara. El wristband recién hace falta en el **segundo** salto (el loopback hacia la route del
 scope), y lo pone la `AuthPolicy` de este service, no el cliente.
+
+---
+
+## Paso 7.1 — Que un path no declarado no filtre que no existe
+
+Un dominio publicado tiene, además de las rutas declaradas, una **ruta catch-all** por dominio:
+`PathPrefix: /`, precedencia mínima, con una `AuthPolicy` que autentica con cualquier key del
+api-manager y después **deniega siempre**. Cualquier path que ninguna ruta declarada cubra cae ahí.
+
+```bash
+kubectl --context "$CTX" -n payments get httproute \
+  -l api-manager.nullplatform.io/catchall=true \
+  -o custom-columns=NAME:.metadata.name,HOSTS:.spec.hostnames
+```
+
+Verificar que sea un path no declarado el que responde, y con qué:
+
+```bash
+for P in /whoami /health /admin; do
+  printf "%-10s " "$P"
+  kubectl --context "$CTX" -n payments exec deploy/ledger -c app -- \
+    wget -S -qO- --timeout=10 "https://api-publica.galicia-poc.nullapps.io$P" \
+    2>&1 | grep -oE "HTTP/[0-9.]+ [0-9]+" | head -1
+done
+```
+
+```
+# →
+/whoami    HTTP/1.1 401
+/health    HTTP/1.1 401
+/admin     HTTP/1.1 401
+```
+
+**Los tres iguales es el resultado que importa.** Antes de la catch-all, `/whoami` daba 401 y los
+otros dos 404: la diferencia entre ambos códigos le enumeraba a cualquiera —sin ninguna credencial—
+la lista exacta de paths publicados, y no sólo los de una app: los de **todas** las que comparten el
+dominio.
+
+### Por qué la catch-all es compartida y quién la borra
+
+El dominio es de todos los que publican en él, así que la ruta es una sola por `(dominio, namespace)`
+y su nombre se deriva del dominio — misma entrada, mismo nombre, así el segundo service que publica
+genera un manifiesto **idéntico** en vez de pelearse por el objeto. Por eso no lleva ninguna etiqueta
+de dueño: si llevara el `apimgr-target` del que la creó, cada apply pisaría al del otro en loop.
+
+En el `delete`, se borra sólo si **ningún otro** service del namespace sigue declarando ese dominio.
+Si el listado para averiguarlo falla, se conserva: borrarla a ciegas devolvería el 404 que filtra.
+
+### La trampa que esto casi introduce
+
+La catch-all matchea `/`, y `/` se solapa con todo. El guard de colisiones la habría visto como una
+ruta más y habría **rechazado a la segunda app** que quisiera publicar en ese dominio. Lleva un label
+propio (`api-manager.nullplatform.io/catchall=true`) y el guard la excluye; hay un test que falla si
+alguien saca esa exclusión.
 
 ---
 
@@ -848,7 +906,7 @@ una entidad de cuenta, no de cluster.
 | `bad address` / `SERVFAIL` en el host declarado | falta la private hosted zone (Paso 6.1) | aplicar `clusters/eks` |
 | `HTTP 401` en el segundo salto (no en el primero) | falta el wristband, o la route del scope no lo acepta | confirmar que la `AuthPolicy` de este service tiene el bloque `response.success.headers["x-np-token"].wristband` (commit `d849411`) y que `WRISTBAND_SECRET` apunta a un Secret real |
 | `HTTP 500` en el caso 200 (modelo de ruteo anterior) | el `backendRef` apuntaba directo al dominio del scope | ya no aplica — desde el 2026-09-01 el `backendRef` va siempre al gateway local (Paso 5) |
-| `404` en vez de 401/403/200 | el `Host` no matchea ningún `HTTPRoute`, o el path no está declarado | confirmar `--header="Host: ..."` contra los `hosts` declarados |
+| `404` en cualquier caso | **es un bug**: falta la ruta catch-all del dominio, o su `AuthPolicy` no quedó `Enforced` | `kubectl -n <ns> get httproute -l api-manager.nullplatform.io/catchall=true` y revisar `Enforced` de su AuthPolicy |
 | `403` en TODOS los casos, incluida la key propia | el selector de `authorization` está mal | probar el caso 200 (Paso 10) antes de asumir que el 403 "funciona" |
 | `ResolvedRefs=False (BackendNotFound)` | esperado con `kind: Hostname` cross-namespace (Paso 8) | no es un síntoma por sí solo; mirar `Enforced` |
 | Secret con las labels correctas pero todo da 401 | el Secret está en el namespace de la app, no en `kuadrant-system` | recrearlo en `kuadrant-system` (Paso 9) |
