@@ -8,19 +8,19 @@ fi
 
 if ! type -t find_route_conflicts >/dev/null 2>&1; then
 find_route_conflicts() {
-  local route_name="$1" managed_label="$2" target_label="$3" hosts_json="$4" routes_json="$5"
+  local route_name="$1" managed_label="$2" owner_label="$3" hosts_json="$4" routes_json="$5"
   local catchall_label="${6:-${CATCHALL_LABEL:-api-manager.nullplatform.io/catchall}}"
   local existing claimed wanted conflicts
 
   existing=$(kubectl get httproutes -A -l "${managed_label}=true" -o json) \
     || { log error "api-manager: no se pudo listar las rutas existentes. No se aplica nada: sin ese listado no hay cómo detectar una colisión de dominios."; return 2; }
 
-  claimed=$(printf %s "$existing" | jq -c --arg route_name "$route_name" --arg target_label "$target_label" --arg catchall_label "$catchall_label" '
+  claimed=$(printf %s "$existing" | jq -c --arg route_name "$route_name" --arg owner_label "$owner_label" --arg catchall_label "$catchall_label" '
     def normalize_path: (if endswith("*") then rtrimstr("*") else . end) | rtrimstr("/");
     [ .items[]
       | select(.metadata.name != $route_name)
       | select((.metadata.labels[$catchall_label] // "") != "true")
-      | .metadata.labels[$target_label] as $owner
+      | .metadata.labels[$owner_label] as $owner
       | . as $r
       | $r.spec.hostnames[] as $h
       | $r.spec.rules[]?.matches[]?.path.value as $p

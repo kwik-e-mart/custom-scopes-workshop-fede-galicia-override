@@ -52,10 +52,11 @@ if [ -z "$SERVICE_ID" ]; then
 fi
 require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
-APP_TARGET=$(resolve_app_target_from_service "$SERVICE_ID") \
+APP_LABEL_VALUE=$(resolve_app_target_from_service "$SERVICE_ID") \
   || { log error "api-manager: no se pudo resolver el target de '$SERVICE_ID'. No se sigue con un target adivinado."; exit 1; }
-if [ "${#APP_TARGET}" -gt 63 ]; then
-  log error "api-manager: '$APP_TARGET' excede los 63 caracteres que admite un valor de label."
+APP_TARGET="$SERVICE_ID"
+if [ "${#APP_LABEL_VALUE}" -gt 63 ]; then
+  log error "api-manager: '$APP_LABEL_VALUE' excede los 63 caracteres que admite un valor de label."
   exit 1
 fi
 
@@ -106,12 +107,13 @@ if [ "${ARGS:-apply}" != "delete" ]; then
   done < <(printf %s "$ROUTES_JSON" | jq -r '.[] | [.scope, .backend] | @tsv')
 fi
 
-export NAMESPACE APP_TARGET SERVICE_ID HOSTS_JSON ROUTES_JSON
+export NAMESPACE APP_TARGET APP_LABEL_VALUE SERVICE_ID HOSTS_JSON ROUTES_JSON
 export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER LOCAL_INGRESS_HOST
 export WRISTBAND_SECRET TOKEN_DURATION
 
-log info "api-manager: exponiendo $APP_TARGET key=$WRISTBAND_SECRET"
+log info "api-manager: exponiendo $APP_LABEL_VALUE (service $SERVICE_ID) key=$WRISTBAND_SECRET"
 printf %s "$HOSTS_JSON" | jq -r '.[] | "  dominio: \(.)"' | while IFS= read -r L; do log info "$L"; done
 printf %s "$ROUTES_JSON" | jq -r '.[] | "  ruta: \(.methods | join(",")) \(.path) → scope \(.scope) = \(.backend)"' \
   | while IFS= read -r L; do log info "$L"; done
 echo "APP_TARGET=$APP_TARGET"
+echo "APP_LABEL_VALUE=$APP_LABEL_VALUE"

@@ -7,7 +7,7 @@ source "$CHECK_COLLISIONS_DIR/collisions_lib"
 
 ROUTE_NAME=$(route_name_for_service "$SERVICE_ID")
 
-if CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$TARGET_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
+if CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$APP_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
   return 0 2>/dev/null || exit 0
 fi
 STATUS=$?

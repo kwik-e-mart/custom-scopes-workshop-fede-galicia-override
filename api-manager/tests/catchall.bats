@@ -120,18 +120,18 @@ ctx_para() {
 
 @test "el guard de colisiones IGNORA las catch-all: si no, la segunda app del dominio queda rechazada" {
   export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-deny-api-expuesta-com-abc","namespace":"payments","labels":{"api-manager.nullplatform.io/catchall":"true"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/"}}]}]}}]'
-  run find_route_conflicts api-manager-svc-2 "$MANAGED_LABEL" "$TARGET_LABEL" '["api.expuesta.com"]' '[{"path":"/y"}]'
+  run find_route_conflicts api-manager-svc-2 "$MANAGED_LABEL" "$APP_LABEL" '["api.expuesta.com"]' '[{"path":"/y"}]'
   [ "$status" -eq 0 ]
 }
 
 @test "el guard sigue detectando una colisión real entre dos apps" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-1","namespace":"payments","labels":{"apimgr-target":"payments.appx"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/y"}}]}]}}]'
-  run find_route_conflicts api-manager-svc-2 "$MANAGED_LABEL" "$TARGET_LABEL" '["api.expuesta.com"]' '[{"path":"/y"}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-1","namespace":"payments","labels":{"apimgr-app":"payments.appx"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/y"}}]}]}}]'
+  run find_route_conflicts api-manager-svc-2 "$MANAGED_LABEL" "$APP_LABEL" '["api.expuesta.com"]' '[{"path":"/y"}]'
   [ "$status" -eq 1 ]
 }
 
 @test "host_still_claimed es verdadero si otra ruta del namespace declara el host" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-target":"payments.appy"}},"spec":{"hostnames":["api.expuesta.com"]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-app":"payments.appy"}},"spec":{"hostnames":["api.expuesta.com"]}}]'
   run host_still_claimed payments api.expuesta.com "$MANAGED_LABEL" "$CATCHALL_LABEL"
   [ "$status" -eq 0 ]
 }
@@ -143,7 +143,7 @@ ctx_para() {
 }
 
 @test "host_still_claimed es falso si nadie mas declara el host" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-target":"payments.appy"}},"spec":{"hostnames":["otro.expuesta.com"]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-app":"payments.appy"}},"spec":{"hostnames":["otro.expuesta.com"]}}]'
   run host_still_claimed payments api.expuesta.com "$MANAGED_LABEL" "$CATCHALL_LABEL"
   [ "$status" -ne 0 ]
 }

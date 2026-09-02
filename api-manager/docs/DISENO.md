@@ -182,9 +182,10 @@ corre en este repo y funciona es el del guión.
 Cuando una app consumidora se linkea al servicio expuesto, la acción `create` del link:
 
 1. Genera un valor opaco aleatorio de 32 bytes.
-2. Lo guarda como `Secret` en `kuadrant-system` con tres labels: el que lo hace visible a Authorino
-   (`authorino.kuadrant.io/managed-by`), el marcador `api-manager.nullplatform.io/managed`, y la
-   identidad `apimgr-target: <app-expuesta>` (sin prefijo de dominio, ver §7.4).
+2. Lo guarda como `Secret` en `kuadrant-system` con cuatro labels: el que lo hace visible a Authorino
+   (`authorino.kuadrant.io/managed-by`), el marcador `api-manager.nullplatform.io/managed`, la
+   identidad `apimgr-target: <service_id>` (sin prefijo de dominio, ver §7.4) y el informativo
+   `apimgr-app: <namespace>.<application>`, que no participa de la autorización.
 3. Lo devuelve en los results de la acción.
 
 El `delete` del link borra el Secret. **Revocar es un `kubectl delete`**, inmediato y total.
@@ -341,6 +342,33 @@ mismos Secrets con los mismos labels funcionan.
 La conclusión operativa de la PoC era correcta; su explicación no. Importa porque invita a "arreglarlo"
 poniendo `clusterWide: true` y descubrir que ya estaba puesto. Es el mismo límite que sufre el Secret
 de firma del wristband, y es lo que obliga al RBAC de §7.2.
+
+---
+
+### 5.3.1 La granularidad del target es el service instance, no la application
+
+El valor que compara la autorización es el **id del service instance**, no `<namespace>.<application>`.
+La diferencia sólo se nota cuando una misma application tiene **dos** instancias del api-manager, y
+ahí es total: con el target por application las dos rutas quedan con el mismo valor, así que una key
+emitida por el link de la primera abre también los paths de la segunda. Medido sobre EKS:
+
+```
+api-manager-af3b2386…  target: galicia-poc.hello-world-poc   paths: /whoami
+api-manager-d46d785f…  target: galicia-poc.hello-world-poc   paths: /health
+key del link a la primera → abría /health
+```
+
+Es un desajuste de granularidad, no un error de la lógica de autorización: **el link se crea sobre un
+service instance, así que la credencial tiene que valer para ese instance y nada más.** Un consumidor
+que necesite dos publicaciones de la misma application hace dos links y manda la key que corresponde.
+
+El label informativo `apimgr-app: <namespace>.<application>` existe para que `kubectl get -l` y los
+mensajes de colisión sigan siendo legibles: el id no le dice nada a nadie. **No participa de la
+autorización** — si alguna vez la comparación vuelve a apoyarse en él, el agujero vuelve.
+
+Por qué no se detectó antes: todas las pruebas de aislación usaron applications distintas
+(`payments.reports` contra `other.otra-app`), donde `<namespace>.<application>` sí identifica
+unívocamente al service. Recién con dos instancias sobre una misma app aparece el colapso.
 
 ---
 
@@ -536,7 +564,7 @@ Pero el selector del diseño original estaba mal, y falla del peor modo posible:
 
 | Prueba | Selector | Resultado |
 |---|---|---|
-| A | `labels.apimgr-target`, valor `payments.reports` | **200** |
+| A | `labels.apimgr-target`, valor `<service_id>` | **200** |
 | B | `labels['apimgrtarget']` | 403 |
 | C | `labels['api-manager.nullplatform.io/target']` (lo propuesto) | 403 |
 

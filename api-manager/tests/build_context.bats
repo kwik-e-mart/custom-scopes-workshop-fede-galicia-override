@@ -125,21 +125,23 @@ notif() {
   [ "$status" -ne 0 ]
 }
 
-@test "arma APP_TARGET como namespace.application" {
+@test "el APP_TARGET de autorizacion es el service id, no la application" {
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
   export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
   run run_build_context
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q 'APP_TARGET=payments.reports'
+  echo "$output" | grep -q 'APP_TARGET=svc-1'
+  echo "$output" | grep -q 'APP_LABEL_VALUE=payments.reports'
 }
 
-@test "sin application.slug en el CONTEXT, igual arma el APP_TARGET porque ya no depende de el" {
+@test "sin application.slug en el CONTEXT, igual arma el APP_LABEL_VALUE porque ya no depende de el" {
   APP_SLUG=""
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
   export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
   run run_build_context
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q 'APP_TARGET=payments.reports'
+  echo "$output" | grep -q 'APP_TARGET=svc-1'
+  echo "$output" | grep -q 'APP_LABEL_VALUE=payments.reports'
 }
 
 @test "sin application.id en el CONTEXT, aborta: no se pueden resolver los scopes de las rutas" {
@@ -178,14 +180,14 @@ notif() {
   echo "$output" | grep -q "local_ingress_host"
 }
 
-@test "el APP_TARGET sale del namespace de nullplatform del service, no del namespace de Kubernetes" {
+@test "el APP_LABEL_VALUE sale del namespace de nullplatform del service, no del namespace de Kubernetes" {
   NS_PROVIDER="k8s-namespace-distinto"
   ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
   export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
   run run_build_context
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q 'APP_TARGET=payments.reports'
-  ! echo "$output" | grep -q 'APP_TARGET=k8s-namespace-distinto'
+  echo "$output" | grep -q 'APP_LABEL_VALUE=payments.reports'
+  ! echo "$output" | grep -q 'APP_LABEL_VALUE=k8s-namespace-distinto'
 }
 
 @test "aborta si no se puede resolver el target del service en vez de seguir con uno adivinado" {
@@ -235,5 +237,6 @@ notif() {
   export ARGS=delete NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
   run run_build_context
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q 'APP_TARGET=payments.reports'
+  echo "$output" | grep -q 'APP_TARGET=svc-1'
+  echo "$output" | grep -q 'APP_LABEL_VALUE=payments.reports'
 }

@@ -32,6 +32,7 @@ make_render() {
     namespace: "payments", route_name: $route_name, app_target: "payments.reports",
     gateway_name: "s2s-ingress", gateway_namespace: "gateways", api_key_header: "x-api-key",
     managed_label: "api-manager.nullplatform.io/managed", target_label: "apimgr-target",
+    app_label: "apimgr-app", app_label_value: "payments.reports",
     authpolicy_api_version: "kuadrant.io/v1",
     wristband_secret: "payments-wristband-key", token_duration: 300,
     hosts: ["api.expuesta.com"],

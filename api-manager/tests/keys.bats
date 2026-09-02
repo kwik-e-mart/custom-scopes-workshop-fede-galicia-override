@@ -98,15 +98,33 @@ MOCK
   [ "$status" -eq 0 ]
   grep -q '"authorino.kuadrant.io/managed-by":"authorino"' "$KUBECTL_STDIN_LOG"
   grep -q '"api-manager.nullplatform.io/managed":"true"' "$KUBECTL_STDIN_LOG"
-  grep -q '"apimgr-target":"payments.reports"' "$KUBECTL_STDIN_LOG"
+  grep -q '"apimgr-target":"svc-1"' "$KUBECTL_STDIN_LOG"
+  grep -q '"apimgr-app":"payments.reports"' "$KUBECTL_STDIN_LOG"
 }
 
 @test "el target del secret sale del service, no de un APP_TARGET heredado del contexto" {
   export APP_TARGET="consumidor-ns.consumidor-app"
   run bash "$MINT"
   [ "$status" -eq 0 ]
-  grep -q '"apimgr-target":"payments.reports"' "$KUBECTL_STDIN_LOG"
+  grep -q '"apimgr-target":"svc-1"' "$KUBECTL_STDIN_LOG"
   ! grep -q "consumidor" "$KUBECTL_STDIN_LOG"
+}
+
+@test "dos service instances de la MISMA application reciben targets distintos" {
+  local primero segundo
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+  primero=$(grep -o '"apimgr-target":"[^"]*"' "$KUBECTL_STDIN_LOG" | tail -1)
+
+  : >"$KUBECTL_STDIN_LOG"
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-2",link:{id:"778"},service:{id:"svc-2"}}}')
+  run bash "$MINT"
+  [ "$status" -eq 0 ]
+  segundo=$(grep -o '"apimgr-target":"[^"]*"' "$KUBECTL_STDIN_LOG" | tail -1)
+
+  [ "$primero" != "$segundo" ]
+  grep -q '"apimgr-app":"payments.reports"' "$KUBECTL_STDIN_LOG"
 }
 
 @test "mint_key crea el secret con un create puro (POST), no con apply" {

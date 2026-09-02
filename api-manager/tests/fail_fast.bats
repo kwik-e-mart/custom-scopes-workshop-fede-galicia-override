@@ -12,7 +12,8 @@ setup() {
   export -f log
 
   export NAMESPACE=payments
-  export APP_TARGET=payments.reports
+  export APP_TARGET=svc-1
+  export APP_LABEL_VALUE=payments.reports
   export SERVICE_ID=svc-1
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/r1","methods":["GET"],"scope":"prod","backend":"appy.internas.com"}]'
@@ -208,7 +209,7 @@ run_reconcile() {
   [ "$status" -eq 0 ]
 
   : >"$KUBECTL_CALLS_LOG"
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-rival","namespace":"other","labels":{"apimgr-target":"other.app"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/r1"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-rival","namespace":"other","labels":{"apimgr-app":"other.app"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/r1"}}]}]}}]'
   run run_reconcile apply
   [ "$status" -ne 0 ]
   grep -q "delete authpolicy api-manager-svc-1" "$KUBECTL_CALLS_LOG"
@@ -224,7 +225,7 @@ run_reconcile() {
 }
 
 @test "si falla el borrado de rollback de la carrera, lo dice en vez de dejar la ruta colgada en silencio" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-rival","namespace":"other","labels":{"apimgr-target":"other.app"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/r1"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-rival","namespace":"other","labels":{"apimgr-app":"other.app"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/r1"}}]}]}}]'
   export KUBECTL_MOCK_FAIL=delete-authpolicy
   run run_reconcile apply
   [ "$status" -ne 0 ]
@@ -353,7 +354,7 @@ run_reconcile() {
 }
 
 @test "el delete CONSERVA la catch-all si otro service sigue publicando el dominio" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-target":"payments.appy"}},"spec":{"hostnames":["api.expuesta.com"]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-9","labels":{"apimgr-app":"payments.appy"}},"spec":{"hostnames":["api.expuesta.com"]}}]'
   run run_reconcile delete
   [ "$status" -eq 0 ]
   ! grep -q "delete httproute api-manager-deny-" "$KUBECTL_CALLS_LOG"

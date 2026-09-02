@@ -7,6 +7,7 @@ metadata:
   labels:
     {{ .managed_label }}: "true"
     {{ .target_label }}: {{ .app_target | quote }}
+    {{ .app_label }}: {{ .app_label_value | quote }}
     nullplatform: "true"
 spec:
   targetRef:

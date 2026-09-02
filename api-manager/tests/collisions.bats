@@ -9,7 +9,8 @@ setup() {
   source "${BATS_TEST_DIRNAME}/../logging"
   export -f log
 
-  export APP_TARGET=payments.reports
+  export APP_TARGET=svc-1
+  export APP_LABEL_VALUE=payments.reports
   export SERVICE_ID=svc-1
   export HOSTS_JSON='[]'
   export ROUTES_JSON='[]'
@@ -41,7 +42,10 @@ render_route_json() {
     "gateway_name":"s2s-ingress","gateway_namespace":"gateways","api_key_header":"x-api-key",
     "managed_label":"api-manager.nullplatform.io/managed",
     "target_label":"apimgr-target",
+    "app_label":"apimgr-app",
+    "app_label_value":"reports.otra",
     "authpolicy_api_version":"kuadrant.io/v1",
+    "wristband_secret":"reports-wristband-key","token_duration":300,
     "hosts":["api.expuesta.com"],
     "routes":[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]
   }'
@@ -55,7 +59,7 @@ render_route_json() {
 }
 
 @test "permite el mismo host con paths distintos" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-target":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/reportes"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-app":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/reportes"}}]}]}}]'
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]'
   run bash "$CHECK"
@@ -63,7 +67,7 @@ render_route_json() {
 }
 
 @test "rechaza el mismo host con el mismo path de otra app" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-target":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-app":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]'
   run bash "$CHECK"
@@ -72,8 +76,9 @@ render_route_json() {
 }
 
 @test "no colisiona consigo misma en un update" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-1","namespace":"payments","labels":{"apimgr-target":"payments.reports"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
-  export APP_TARGET=payments.reports
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-1","namespace":"payments","labels":{"apimgr-app":"payments.reports"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
+  export APP_TARGET=svc-1
+  export APP_LABEL_VALUE=payments.reports
   export SERVICE_ID=svc-1
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]'
@@ -82,8 +87,9 @@ render_route_json() {
 }
 
 @test "dos instancias de la misma app se pisan si declaran el mismo host y path" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-vieja","namespace":"payments","labels":{"apimgr-target":"payments.reports"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
-  export APP_TARGET=payments.reports
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"api-manager-svc-vieja","namespace":"payments","labels":{"apimgr-app":"payments.reports"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
+  export APP_TARGET=svc-1
+  export APP_LABEL_VALUE=payments.reports
   export SERVICE_ID=svc-nueva
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]'
@@ -110,7 +116,7 @@ render_route_json() {
 }
 
 @test "colisiona un path con comodin contra el mismo path exacto que declaro otra app" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-target":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-app":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos/*","methods":["GET"],"scope":"prod","backend":"b.com"}]'
   run bash "$CHECK"
@@ -119,7 +125,7 @@ render_route_json() {
 }
 
 @test "rechaza declarar un path si otra app ya tiene un comodin que lo cubre" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-target":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-app":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/"}}]}]}}]'
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]'
   run bash "$CHECK"
@@ -128,7 +134,7 @@ render_route_json() {
 }
 
 @test "rechaza declarar un comodin si ya cubre un path angosto de otra app" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-target":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-app":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagos"}}]}]}}]'
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/*","methods":["GET"],"scope":"prod","backend":"b.com"}]'
   run bash "$CHECK"
@@ -137,7 +143,7 @@ render_route_json() {
 }
 
 @test "no colisiona por match de substring, /pagos contra /pagosxyz" {
-  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-target":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagosxyz"}}]}]}}]'
+  export KUBECTL_MOCK_ROUTES='[{"metadata":{"name":"otra","namespace":"reports","labels":{"apimgr-app":"reports.otra"}},"spec":{"hostnames":["api.expuesta.com"],"rules":[{"matches":[{"path":{"value":"/pagosxyz"}}]}]}}]'
   export HOSTS_JSON='["api.expuesta.com"]'
   export ROUTES_JSON='[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]'
   run bash "$CHECK"

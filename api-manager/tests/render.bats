@@ -13,6 +13,8 @@ setup() {
     "gateway_name":"s2s-ingress","gateway_namespace":"gateways","api_key_header":"x-api-key",
     "managed_label":"api-manager.nullplatform.io/managed",
     "target_label":"apimgr-target",
+    "app_label":"apimgr-app",
+    "app_label_value":"payments.reports",
     "authpolicy_api_version":"kuadrant.io/v1",
     "local_ingress_host":"s2s-ingress-istio.gateways.svc.cluster.local",
     "wristband_secret":"payments-wristband-key",
@@ -81,7 +83,7 @@ render_ctx() {
   [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "otro-gateway.gateways.svc.cluster.local" ]
 }
 
-@test "el httproute lleva el label del target para poder detectar colisiones" {
+@test "el httproute lleva el label del target y el informativo de la app" {
   run render_ctx '{"app_target":"payments.reports"}'
   [ "$status" -eq 0 ]
   [ "$(yq -r '.metadata.labels["apimgr-target"]' "$OUT/10-httproute.yaml")" = "payments.reports" ]

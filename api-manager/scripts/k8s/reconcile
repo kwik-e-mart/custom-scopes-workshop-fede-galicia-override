@@ -20,6 +20,8 @@ case "$ACTION" in
       --arg namespace "$NAMESPACE" \
       --arg route_name "$ROUTE_NAME" \
       --arg app_target "$APP_TARGET" \
+      --arg app_label "$APP_LABEL" \
+      --arg app_label_value "$APP_LABEL_VALUE" \
       --arg gateway_name "$GATEWAY_NAME" \
       --arg gateway_namespace "$GATEWAY_NAMESPACE" \
       --arg api_key_header "$API_KEY_HEADER" \
@@ -66,8 +68,8 @@ case "$ACTION" in
     wait_route_condition "$NAMESPACE" "$ROUTE_NAME" Accepted "${WAIT_TIMEOUT:-60}" \
       || die "api-manager: la HTTPRoute '$ROUTE_NAME' no quedó Accepted. Revisar que el Gateway '$GATEWAY_NAME' exista en '$GATEWAY_NAMESPACE' y admita routes de este namespace."
 
-    if RACE_CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$TARGET_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
-      log info "api-manager: $APP_TARGET expuesto."
+    if RACE_CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$APP_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
+      log info "api-manager: $APP_LABEL_VALUE (service $SERVICE_ID) expuesto."
     else
       RACE_STATUS=$?
       if ! gitops_publish_removal; then
@@ -82,9 +84,9 @@ $RACE_CONFLICTS"
       kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
         || die "api-manager: se detectó una posible carrera al re-chequear colisiones y falló el rollback de la HTTPRoute '$ROUTE_NAME'. Queda expuesta una ruta que puede estar secuestrando tráfico ajeno: revisar manualmente."
       if [ "$RACE_STATUS" -eq 2 ]; then
-        die "api-manager: no se pudo re-verificar colisiones después del apply. Se revirtieron la HTTPRoute y la AuthPolicy de '$APP_TARGET' por las dudas: sin ese re-chequeo no se puede confirmar que no haya una carrera con otra app."
+        die "api-manager: no se pudo re-verificar colisiones después del apply. Se revirtieron la HTTPRoute y la AuthPolicy del service '$SERVICE_ID' por las dudas: sin ese re-chequeo no se puede confirmar que no haya una carrera con otra app."
       fi
-      die "api-manager: se detectó una carrera: otra aplicación declaró el mismo dominio y path mientras esta acción estaba en curso. Se revirtieron la HTTPRoute y la AuthPolicy de '$APP_TARGET'. Reintentar la acción.
+      die "api-manager: se detectó una carrera: otra aplicación declaró el mismo dominio y path mientras esta acción estaba en curso. Se revirtieron la HTTPRoute y la AuthPolicy del service '$SERVICE_ID'. Reintentar la acción.
 $RACE_CONFLICTS"
     fi
     ;;
@@ -128,7 +130,7 @@ $RACE_CONFLICTS"
       done <<< "$LINK_IDS"
     fi
 
-    log info "api-manager: $APP_TARGET dado de baja."
+    log info "api-manager: $APP_LABEL_VALUE (service $SERVICE_ID) dado de baja."
     ;;
   *)
     die "api-manager: acción desconocida '$ACTION'."
