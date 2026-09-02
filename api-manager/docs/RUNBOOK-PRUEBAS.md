@@ -701,7 +701,21 @@ done
 /admin     HTTP/1.1 401
 ```
 
-**Los tres iguales es el resultado que importa.** Antes de la catch-all, `/whoami` daba 401 y los
+Y lo mismo agregando `--header="x-api-key: $KEY"`:
+
+```
+# →
+/whoami    HTTP/1.1 200
+/health    HTTP/1.1 403
+/admin     HTTP/1.1 403
+```
+
+**Los tres 401 y los dos 403 son el resultado que importa.** `/health` y `/admin` responden igual
+entre sí, y además igual que un path que pertenece a otra app: el código dejó de decir qué existe.
+
+⚠️ **Medí dos veces si venís de aplicar recién.** Hay unos segundos en los que la ruta ya está pero
+la política todavía no llegó a todos los Envoy, y ahí el resultado no es el definitivo — se observó
+un 200 transitorio en un path no declarado. `Accepted=True` no garantiza que el data plane convergió. Antes de la catch-all, `/whoami` daba 401 y los
 otros dos 404: la diferencia entre ambos códigos le enumeraba a cualquiera —sin ninguna credencial—
 la lista exacta de paths publicados, y no sólo los de una app: los de **todas** las que comparten el
 dominio.
