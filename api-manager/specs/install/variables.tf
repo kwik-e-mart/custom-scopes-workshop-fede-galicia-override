@@ -37,3 +37,9 @@ variable "extra_visible_to_nrns" {
   default     = []
   description = "NRNs adicionales que tienen que ver el service specification."
 }
+
+variable "manage_notification_channel" {
+  type        = bool
+  default     = true
+  description = "Si esta capa crea el notification channel que asocia el service al agente. Se pone en false cuando el channel se administra por fuera: dos channels con el mismo filtro disparan la accion dos veces."
+}

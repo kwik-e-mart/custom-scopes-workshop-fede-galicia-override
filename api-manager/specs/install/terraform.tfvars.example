@@ -9,3 +9,4 @@ tags_selectors = {
 repository_service_spec_repo = "kwik-e-mart/custom-scopes-workshop-fede-galicia-override"
 service_path                 = "api-manager"
 extra_visible_to_nrns        = []
+manage_notification_channel  = true

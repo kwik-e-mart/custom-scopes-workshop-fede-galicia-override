@@ -1,5 +1,5 @@
 {
-  "name": "Api Manager",
+  "name": "API Manager Publisher",
   "type": "dependency",
   "visible_to": ["{{ env.Getenv `NRN` }}"],
   "dimensions": {},
@@ -17,7 +17,7 @@
           {
             "type": "Label",
             "options": { "format": "markdown" },
-            "text": "## Api Manager\n\n### FAQ\n\n**¿Cuándo tengo que usarlo?** Cuando otra aplicación, que corre en otro namespace, necesita consumir la tuya. Por defecto las aplicaciones de distintos namespaces no se ven entre sí.\n\n**¿Qué hace el servicio?** Publica los paths que declarás acá bajo los dominios que elijas, y los deja alcanzables desde otros namespaces. Lo que no declarás sigue siendo inalcanzable.\n\n**¿Cómo hace otra app para consumirme?** Se linkea a este servicio. En ese momento recibe su propia credencial como variable de entorno, sin que nadie copie ni pegue nada.\n\n**¿Puedo cortarle el acceso a alguien?** Sí, borrando el link. Es inmediato y sólo afecta a esa aplicación.\n\n**¿Tengo que cambiar algo en mi código?** No. Tu aplicación sigue escuchando donde escucha hoy."
+            "text": "## API Manager Publisher\n\n### FAQ\n\n**¿Cuándo tengo que usarlo?** Cuando otra aplicación, que corre en otro namespace, necesita consumir la tuya. Por defecto las aplicaciones de distintos namespaces no se ven entre sí.\n\n**¿Qué hace el servicio?** Publica los paths que declarás acá bajo los dominios que elijas, y los deja alcanzables desde otros namespaces. Lo que no declarás sigue siendo inalcanzable.\n\n**¿Cómo hace otra app para consumirme?** Se linkea a este servicio. En ese momento recibe su propia credencial como variable de entorno, sin que nadie copie ni pegue nada.\n\n**¿Puedo cortarle el acceso a alguien?** Sí, borrando el link. Es inmediato y sólo afecta a esa aplicación.\n\n**¿Tengo que cambiar algo en mi código?** No. Tu aplicación sigue escuchando donde escucha hoy."
           },
           {
             "type": "Control",

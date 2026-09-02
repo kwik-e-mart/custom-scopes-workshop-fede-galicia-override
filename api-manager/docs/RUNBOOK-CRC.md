@@ -59,7 +59,7 @@ conserva porque sus salidas son medidas reales de ese entorno.
 | 6 | Crear la instancia: `reconcile apply` |
 | 7 | GitOps: publicar antes de aplicar |
 | 8 | Verificar lo materializado: `HTTPRoute` `Accepted`, `AuthPolicy` **`Enforced`** |
-| 9 | Linkear una app consumidora: `mint_key` y la env var `API_MANAGER_API_KEY` |
+| 9 | Linkear una app consumidora: `mint_key` y la env var `<SERVICE_SLUG>_API_KEY` |
 | 10 | Los cuatro códigos + el quinto (404) |
 | 11 | Colisión de dominios |
 | 12 | Revocar el link |
@@ -1090,8 +1090,8 @@ KEY1=$(kubectl --context crc-admin -n kuadrant-system get secret api-manager-lin
 ```
 
 En un link real, este mismo valor es el que la plataforma exporta como variable de entorno
-`API_MANAGER_API_KEY` a la app consumidora (`specs/links/connect.json.tpl`:
-`export.target: API_MANAGER_API_KEY`, `export.secret: true`) — acá no hay una app consumidora
+`<SERVICE_SLUG>_API_KEY` a la app consumidora (`specs/links/connect.json.tpl`:
+`export.target: <SERVICE_SLUG>_API_KEY`, `export.secret: true`) — acá no hay una app consumidora
 desplegada de verdad, así que ese último tramo (la env var llegando al pod) no se pudo ejercitar en
 esta corrida; queda declarado como pendiente en el reporte.
 

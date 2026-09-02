@@ -17,7 +17,7 @@
           "editableOn": [],
           "export": {
             "type": "environment_variable",
-            "target": "API_MANAGER_API_KEY",
+            "target": "${service.slug}_API_KEY",
             "secret": true
           }
         }

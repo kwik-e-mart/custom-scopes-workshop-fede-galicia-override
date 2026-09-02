@@ -493,7 +493,7 @@ np link action create --linkId "$LINK_ID" --body "$(jq -n \
 ```
 
 La key queda en el Secret que crea el agente, y la plataforma la expone como
-`API_MANAGER_API_KEY` en el consumidor:
+`<SERVICE_SLUG>_API_KEY` en el consumidor:
 
 ```bash
 kubectl --context "$CTX" -n kuadrant-system get secret "api-manager-$LINK_ID" \
@@ -1436,7 +1436,7 @@ traduce toda `AuthPolicy` a un `AuthConfig` en el namespace de la `AuthPolicy`, 
 KEY1=$(kubectl --context "$CTX" -n kuadrant-system get secret api-manager-linktest0001 -o jsonpath='{.data.api_key}' | base64 -d)
 ```
 
-En un link real, este valor es el que la plataforma exporta como `API_MANAGER_API_KEY` a la app
+En un link real, este valor es el que la plataforma exporta como `<SERVICE_SLUG>_API_KEY` a la app
 consumidora (`specs/links/connect.json.tpl`) — acá no hay una app consumidora real desplegada, así
 que ese último tramo (la env var llegando al pod) sigue sin ejercitarse.
 

@@ -34,7 +34,7 @@ regla. No hay `HTTPRoute` → no hay match → 404 del gateway.
 app X (ns A)
    │
    │  curl https://api.expuesta.com/ruta-1
-   │       -H "x-api-key: $API_MANAGER_API_KEY"
+   │       -H "x-api-key: $<SERVICE_SLUG>_API_KEY"
    ▼
   DNS
    │
@@ -190,6 +190,12 @@ Cuando una app consumidora se linkea al servicio expuesto, la acción `create` d
 
 El `delete` del link borra el Secret. **Revocar es un `kubectl delete`**, inmediato y total.
 
+El nombre de la variable **se deriva del service expuesto** (`${service.slug}_API_KEY`), no es fijo:
+con un nombre constante, una app que consume dos services distintos recibe dos parámetros con el
+mismo nombre y el segundo pisa al primero. Se usa la forma objeto de `export` y no el booleano
+`export: true`, que también deriva el nombre pero **no admite `secret: true`** — sería cambiar una
+colisión de nombres por una credencial en texto plano.
+
 ### Cómo llega a la app
 
 La property en el link spec lleva el `export`, y la plataforma hace el resto:
@@ -200,7 +206,7 @@ La property en el link spec lleva el `export`, y la plataforma hace el resto:
   "readOnly": true,
   "export": {
     "type": "environment_variable",
-    "target": "API_MANAGER_API_KEY",
+    "target": "${service.slug}_API_KEY",
     "secret": true
   }
 }
