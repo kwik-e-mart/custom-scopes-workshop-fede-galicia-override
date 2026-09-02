@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REVOKE_KEY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$REVOKE_KEY_DIR/notification_lib"
+
+NOTIFICATION=$(read_notification) || exit 1
+LINK_ID=$(require_link_id "$NOTIFICATION") || exit 1
+
+kubectl -n "$KEYS_NAMESPACE" delete secret "api-manager-${LINK_ID}" --ignore-not-found \
+  || { log error "api-manager: falló el borrado de la credencial del link $LINK_ID. La credencial sigue siendo válida."; exit 1; }
+
+log info "api-manager: credencial del link $LINK_ID revocada."

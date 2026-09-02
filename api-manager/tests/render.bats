@@ -1,0 +1,149 @@
+setup() {
+  [ "${BASH_VERSINFO[0]}" -ge 4 ] || {
+    echo "bats necesita bash >= 4 (tenés ${BASH_VERSION}). Corré: PATH=/opt/homebrew/bin:\$PATH bats tests/" >&2
+    return 1
+  }
+  export LIB="${BATS_TEST_DIRNAME}/../scripts/k8s/manifests_lib"
+  export OUT="$BATS_TEST_TMPDIR/out"
+  export CTX="$BATS_TEST_TMPDIR/ctx.json"
+  source "${BATS_TEST_DIRNAME}/../logging"
+  export -f log
+  BASE='{
+    "namespace":"payments","route_name":"api-manager-1","app_target":"payments.reports",
+    "gateway_name":"s2s-ingress","gateway_namespace":"gateways","api_key_header":"x-api-key",
+    "managed_label":"api-manager.nullplatform.io/managed",
+    "target_label":"apimgr-target",
+    "app_label":"apimgr-app",
+    "app_label_value":"payments.reports",
+    "authpolicy_api_version":"kuadrant.io/v1",
+    "local_ingress_host":"s2s-ingress-istio.gateways.svc.cluster.local",
+    "wristband_secret":"payments-wristband-key",
+    "token_duration":300,
+    "hosts":["api.expuesta.com"],
+    "routes":[{"path":"/r1","methods":["GET"],"scope":"prod","backend":"appy.internas.com"}]
+  }'
+}
+
+render_ctx() {
+  printf %s "$BASE" | jq -c ". + $1" >"$CTX"
+  source "$LIB"
+  render_manifests "$CTX" "$OUT" >/dev/null
+}
+
+@test "el httproute lleva un match por metodo y el backend de la ruta viaja como host reescrito" {
+  run render_ctx '{"routes":[{"path":"/r1","methods":["GET","POST"],"scope":"prod","backend":"appy.internas.com"}]}'
+  [ "$status" -eq 0 ]
+  [ "$(yq '.spec.rules[0].matches | length' "$OUT/10-httproute.yaml")" = "2" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].kind' "$OUT/10-httproute.yaml")" = "Hostname" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "s2s-ingress-istio.gateways.svc.cluster.local" ]
+  [ "$(yq -r '.spec.rules[0].filters[0].type' "$OUT/10-httproute.yaml")" = "URLRewrite" ]
+  [ "$(yq -r '.spec.rules[0].filters[0].urlRewrite.hostname' "$OUT/10-httproute.yaml")" = "appy.internas.com" ]
+}
+
+@test "cada match conserva el path de su ruta y no queda vacio" {
+  run render_ctx '{"routes":[{"path":"/pagos","methods":["GET","POST"],"scope":"prod","backend":"appy.internas.com"}]}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].matches[0].path.value' "$OUT/10-httproute.yaml")" = "/pagos" ]
+  [ "$(yq -r '.spec.rules[0].matches[1].path.value' "$OUT/10-httproute.yaml")" = "/pagos" ]
+}
+
+@test "un path con asterisco se traduce a PathPrefix sin el asterisco" {
+  run render_ctx '{"routes":[{"path":"/files/*","methods":["GET"],"scope":"prod","backend":"appy.internas.com"}]}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].matches[0].path.type' "$OUT/10-httproute.yaml")" = "PathPrefix" ]
+  [ "$(yq -r '.spec.rules[0].matches[0].path.value' "$OUT/10-httproute.yaml")" = "/files/" ]
+}
+
+@test "cada regla reescribe el host al backend de SU scope y no al de la primera" {
+  run render_ctx '{"routes":[
+    {"path":"/a","methods":["GET"],"scope":"prod","backend":"prod.internas.com"},
+    {"path":"/b","methods":["GET"],"scope":"dev","backend":"dev.internas.com"}]}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].filters[0].urlRewrite.hostname' "$OUT/10-httproute.yaml")" = "prod.internas.com" ]
+  [ "$(yq -r '.spec.rules[1].filters[0].urlRewrite.hostname' "$OUT/10-httproute.yaml")" = "dev.internas.com" ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "s2s-ingress-istio.gateways.svc.cluster.local" ]
+  [ "$(yq -r '.spec.rules[1].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "s2s-ingress-istio.gateways.svc.cluster.local" ]
+}
+
+@test "el httproute declara todos los hosts" {
+  run render_ctx '{"hosts":["a.example.com","b.example.com"]}'
+  [ "$status" -eq 0 ]
+  [ "$(yq '.spec.hostnames | length' "$OUT/10-httproute.yaml")" = "2" ]
+}
+
+@test "el backendref usa el puerto 443, fijo, no configurable" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$OUT/10-httproute.yaml")" = "443" ]
+}
+
+@test "un local_ingress_host explicito en el contexto llega al backendref renderizado" {
+  run render_ctx '{"local_ingress_host":"otro-gateway.gateways.svc.cluster.local"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$OUT/10-httproute.yaml")" = "otro-gateway.gateways.svc.cluster.local" ]
+}
+
+@test "el httproute lleva el label del target y el informativo de la app" {
+  run render_ctx '{"app_target":"payments.reports"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.metadata.labels["apimgr-target"]' "$OUT/10-httproute.yaml")" = "payments.reports" ]
+}
+
+@test "la authpolicy autoriza por igualdad exacta y no por regexp" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.authorization["allowed-target"].patternMatching.patterns[0].operator' "$OUT/20-authpolicy.yaml")" = "eq" ]
+}
+
+@test "la authpolicy autoriza contra el app_target del contexto" {
+  run render_ctx '{"app_target":"payments.reports"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.authorization["allowed-target"].patternMatching.patterns[0].value' "$OUT/20-authpolicy.yaml")" = "payments.reports" ]
+}
+
+@test "el selector de apiKey NO filtra por app, para que una key ajena de 403 y no 401" {
+  run render_ctx '{"app_target":"payments.reports"}'
+  [ "$status" -eq 0 ]
+  run yq -r '.spec.rules.authentication["consumer-key"].apiKey.selector.matchLabels | keys | .[]' "$OUT/20-authpolicy.yaml"
+  ! echo "$output" | grep -q 'target'
+}
+
+@test "la authpolicy mintea el wristband en x-np-token" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.signingKeyRefs[0].name' "$OUT/20-authpolicy.yaml")" = "payments-wristband-key" ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.signingKeyRefs[0].algorithm' "$OUT/20-authpolicy.yaml")" = "RS256" ]
+}
+
+@test "el wristband firma con el namespace de la app, NO con el app_target" {
+  run render_ctx '{"namespace":"payments","app_target":"payments.reports"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.issuer' "$OUT/20-authpolicy.yaml")" = "payments" ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.customClaims.ns.value' "$OUT/20-authpolicy.yaml")" = "payments" ]
+}
+
+@test "el wristband usa la clave de firma del contexto, con el namespace propio" {
+  run render_ctx '{"namespace":"other","app_target":"other.reports","wristband_secret":"other-wristband-key"}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.signingKeyRefs[0].name' "$OUT/20-authpolicy.yaml")" = "other-wristband-key" ]
+}
+
+@test "el token duration del wristband viaja como entero" {
+  run render_ctx '{"token_duration":60}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.response.success.headers["x-np-token"].wristband.tokenDuration' "$OUT/20-authpolicy.yaml")" = "60" ]
+}
+
+@test "el wristband es aditivo: la autenticacion por api key y la autorizacion por target siguen intactas" {
+  run render_ctx '{}'
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.spec.rules.authentication["consumer-key"].apiKey.selector.matchLabels["api-manager.nullplatform.io/managed"]' "$OUT/20-authpolicy.yaml")" = "true" ]
+  [ "$(yq -r '.spec.rules.authorization["allowed-target"].patternMatching.patterns[0].value' "$OUT/20-authpolicy.yaml")" = "payments.reports" ]
+}
+
+@test "render_manifests falla si el directorio de manifiestos esta vacio" {
+  export MANIFESTS_DIR="$BATS_TEST_TMPDIR/vacio"
+  mkdir -p "$MANIFESTS_DIR"
+  run timeout 10 bash -c 'source "$LIB"; render_manifests "$CTX" "$OUT"'
+  [ "$status" -eq 1 ]
+}

@@ -1,0 +1,12 @@
+np_api_key    = "REEMPLAZAR_CON_LA_API_KEY_DEL_PROVIDER"
+agent_api_key = "REEMPLAZAR_CON_LA_API_KEY_DEL_AGENTE"
+nrn           = "organization=REEMPLAZAR:account=REEMPLAZAR"
+
+tags_selectors = {
+  role = "api-manager"
+}
+
+repository_service_spec_repo = "kwik-e-mart/custom-scopes-workshop-fede-galicia-override"
+service_path                 = "api-manager"
+extra_visible_to_nrns        = []
+manage_notification_channel  = true

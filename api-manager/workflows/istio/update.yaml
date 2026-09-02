@@ -1,0 +1,2 @@
+include:
+  - "$SERVICE_PATH/workflows/istio/create.yaml"

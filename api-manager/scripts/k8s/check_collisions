@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHECK_COLLISIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$CHECK_COLLISIONS_DIR/labels_lib"
+source "$CHECK_COLLISIONS_DIR/collisions_lib"
+
+ROUTE_NAME=$(route_name_for_service "$SERVICE_ID")
+
+if CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$APP_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
+  return 0 2>/dev/null || exit 0
+fi
+STATUS=$?
+
+if [ "$STATUS" -eq 2 ]; then
+  log error "api-manager: no se pudo verificar colisiones de dominios y paths."
+  exit 1
+fi
+
+log error "api-manager: hay dominios y paths que se solapan con los de otra aplicación."
+log error "$CONFLICTS"
+log error "  Compartir un dominio está permitido: lo que no se puede es solapar el mismo subárbol de path con otra app. La barra final y el '*' de subárbol no cuentan como una ruta distinta."
+exit 1

@@ -1,0 +1,4 @@
+kubeconfig_path = "~/.kube/config"
+kube_context    = "REEMPLAZAR"
+
+manage_gateway_api_crds = false

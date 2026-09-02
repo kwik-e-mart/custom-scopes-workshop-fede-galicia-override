@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RECONCILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$RECONCILE_DIR/labels_lib"
+source "$RECONCILE_DIR/manifests_lib"
+source "$RECONCILE_DIR/reconcile_lib"
+source "$RECONCILE_DIR/collisions_lib"
+source "$RECONCILE_DIR/gitops_lib"
+
+ACTION="${1:-${ARGS:-apply}}"
+ROUTE_NAME=$(route_name_for_service "$SERVICE_ID")
+OUTDIR=$(mktemp -d) || die "api-manager: no se pudo crear el directorio temporal."
+trap 'rm -rf "$OUTDIR"' EXIT
+
+case "$ACTION" in
+  apply)
+    CTX="$OUTDIR/context.json"
+    jq -n \
+      --arg namespace "$NAMESPACE" \
+      --arg route_name "$ROUTE_NAME" \
+      --arg app_target "$APP_TARGET" \
+      --arg app_label "$APP_LABEL" \
+      --arg app_label_value "$APP_LABEL_VALUE" \
+      --arg gateway_name "$GATEWAY_NAME" \
+      --arg gateway_namespace "$GATEWAY_NAMESPACE" \
+      --arg api_key_header "$API_KEY_HEADER" \
+      --arg managed_label "$MANAGED_LABEL" \
+      --arg target_label "$TARGET_LABEL" \
+      --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
+      --arg local_ingress_host "${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}" \
+      --arg wristband_secret "$WRISTBAND_SECRET" \
+      --argjson token_duration "$TOKEN_DURATION" \
+      --argjson hosts "$HOSTS_JSON" \
+      --argjson routes "$ROUTES_JSON" \
+      '$ARGS.named' >"$CTX" || die "api-manager: no se pudo armar el contexto de render."
+
+    MANIFEST_LIST="$OUTDIR/manifest-list.txt"
+    render_manifests "$CTX" "$OUTDIR" >"$MANIFEST_LIST" \
+      || die "api-manager: falló el render de los manifiestos."
+    mapfile -t MANIFESTS <"$MANIFEST_LIST"
+    [ "${#MANIFESTS[@]}" -gt 0 ] || die "api-manager: el render no produjo ningún manifiesto."
+
+    CATCHALL_DIR="$OUTDIR/catchall"
+    CATCHALL_LIST="$OUTDIR/catchall-list.txt"
+    render_catchalls "$CTX" "$CATCHALL_DIR" >"$CATCHALL_LIST" \
+      || die "api-manager: falló el render de las rutas catch-all."
+    mapfile -t CATCHALLS <"$CATCHALL_LIST"
+    [ "${#CATCHALLS[@]}" -gt 0 ] || die "api-manager: el render no produjo ninguna ruta catch-all."
+
+    gitops_publish "$OUTDIR" \
+      || die "api-manager: falló la publicación de los manifiestos al repo gitops. NO se aplicó nada."
+
+    for CATCHALL in "${CATCHALLS[@]}"; do
+      gitops_publish_shared "$CATCHALL" "$(basename "$CATCHALL")" \
+        || die "api-manager: falló la publicación de la ruta catch-all $(basename "$CATCHALL") al repo gitops. NO se aplicó nada."
+    done
+
+    apply_manifests "${MANIFESTS[@]}" || die "api-manager: falló el apply de los manifiestos."
+
+    for CATCHALL in "${CATCHALLS[@]}"; do
+      apply_manifests "$CATCHALL/catchall.yaml" \
+        || die "api-manager: falló el apply de la ruta catch-all $(basename "$CATCHALL"). Sin ella, un path no declarado de este dominio responde 404 y filtra qué está expuesto."
+      wait_route_condition "$NAMESPACE" "$(basename "$CATCHALL")" Accepted "${WAIT_TIMEOUT:-60}" \
+        || die "api-manager: la ruta catch-all $(basename "$CATCHALL") no quedó Accepted."
+    done
+
+    wait_route_condition "$NAMESPACE" "$ROUTE_NAME" Accepted "${WAIT_TIMEOUT:-60}" \
+      || die "api-manager: la HTTPRoute '$ROUTE_NAME' no quedó Accepted. Revisar que el Gateway '$GATEWAY_NAME' exista en '$GATEWAY_NAMESPACE' y admita routes de este namespace."
+
+    if RACE_CONFLICTS=$(find_route_conflicts "$ROUTE_NAME" "$MANAGED_LABEL" "$APP_LABEL" "$HOSTS_JSON" "$ROUTES_JSON"); then
+      log info "api-manager: $APP_LABEL_VALUE (service $SERVICE_ID) expuesto."
+    else
+      RACE_STATUS=$?
+      if ! gitops_publish_removal; then
+        if [ "$RACE_STATUS" -eq 2 ]; then
+          die "api-manager: no se pudo re-verificar colisiones después del apply y además falló la publicación del borrado al repo gitops. El cluster y el repo quedaron divergentes: revisar manualmente antes de reintentar."
+        fi
+        die "api-manager: se detectó una carrera y además falló la publicación del borrado al repo gitops. El cluster y el repo quedaron divergentes: revisar manualmente antes de reintentar.
+$RACE_CONFLICTS"
+      fi
+      kubectl -n "$NAMESPACE" delete authpolicy "$ROUTE_NAME" --ignore-not-found \
+        || die "api-manager: se detectó una posible carrera al re-chequear colisiones y falló el rollback de la AuthPolicy '$ROUTE_NAME'. Queda expuesta una ruta que puede estar secuestrando tráfico ajeno: revisar manualmente."
+      kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
+        || die "api-manager: se detectó una posible carrera al re-chequear colisiones y falló el rollback de la HTTPRoute '$ROUTE_NAME'. Queda expuesta una ruta que puede estar secuestrando tráfico ajeno: revisar manualmente."
+      if [ "$RACE_STATUS" -eq 2 ]; then
+        die "api-manager: no se pudo re-verificar colisiones después del apply. Se revirtieron la HTTPRoute y la AuthPolicy del service '$SERVICE_ID' por las dudas: sin ese re-chequeo no se puede confirmar que no haya una carrera con otra app."
+      fi
+      die "api-manager: se detectó una carrera: otra aplicación declaró el mismo dominio y path mientras esta acción estaba en curso. Se revirtieron la HTTPRoute y la AuthPolicy del service '$SERVICE_ID'. Reintentar la acción.
+$RACE_CONFLICTS"
+    fi
+    ;;
+  delete)
+    gitops_publish_removal \
+      || die "api-manager: falló la publicación del borrado al repo gitops. No se borró nada del cluster."
+
+    kubectl -n "$NAMESPACE" get httproutes -l "${MANAGED_LABEL}=true" >/dev/null \
+      || die "api-manager: no se pudo listar las HTTPRoutes de '$NAMESPACE'. No se borra nada: esto sólo verifica que se puede leer el namespace antes de un borrado destructivo, no que la ruta sea de esta app."
+
+    kubectl -n "$NAMESPACE" delete authpolicy "$ROUTE_NAME" --ignore-not-found \
+      || die "api-manager: falló el borrado de la AuthPolicy '$ROUTE_NAME'."
+    kubectl -n "$NAMESPACE" delete httproute "$ROUTE_NAME" --ignore-not-found \
+      || die "api-manager: falló el borrado de la HTTPRoute '$ROUTE_NAME'."
+
+    while IFS= read -r HOST; do
+      [ -n "$HOST" ] || continue
+      CATCHALL_NAME=$(catchall_name_for_host "$HOST") \
+        || die "api-manager: no se pudo derivar el nombre de la ruta catch-all de '$HOST'."
+      if host_still_claimed "$NAMESPACE" "$HOST" "$MANAGED_LABEL" "$CATCHALL_LABEL"; then
+        log info "api-manager: el dominio $HOST lo siguen publicando otros services, se conserva su ruta catch-all."
+        continue
+      fi
+      gitops_remove_shared "$CATCHALL_NAME" \
+        || die "api-manager: falló la publicación del borrado de la ruta catch-all de '$HOST'. No se borró del cluster."
+      kubectl -n "$NAMESPACE" delete authpolicy "$CATCHALL_NAME" --ignore-not-found \
+        || die "api-manager: falló el borrado de la AuthPolicy catch-all '$CATCHALL_NAME'."
+      kubectl -n "$NAMESPACE" delete httproute "$CATCHALL_NAME" --ignore-not-found \
+        || die "api-manager: falló el borrado de la HTTPRoute catch-all '$CATCHALL_NAME'."
+    done < <(printf %s "$HOSTS_JSON" | jq -r '.[]')
+    LINK_IDS_JSON=$(np link list --service-id "$SERVICE_ID" --all --format json --query '[ (.results? // .) | .[]? | .id ]') \
+      || die "api-manager: falló el listado de links del service '$SERVICE_ID'. No se borra ninguna key: sin ese listado no hay forma de saber cuáles son propias."
+
+    LINK_IDS=$(printf %s "$LINK_IDS_JSON" | jq -r '.[]') \
+      || die "api-manager: no se pudo procesar el listado de links del service '$SERVICE_ID'."
+
+    if [ -n "$LINK_IDS" ]; then
+      while IFS= read -r LINK_ID; do
+        kubectl -n "$KEYS_NAMESPACE" delete secret "api-manager-${LINK_ID}" --ignore-not-found \
+          || die "api-manager: falló el borrado de la key del link '$LINK_ID'. Queda una credencial viva para una app que ya no está expuesta."
+      done <<< "$LINK_IDS"
+    fi
+
+    log info "api-manager: $APP_LABEL_VALUE (service $SERVICE_ID) dado de baja."
+    ;;
+  *)
+    die "api-manager: acción desconocida '$ACTION'."
+    ;;
+esac

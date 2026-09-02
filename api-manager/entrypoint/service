@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+echo "Executing service action=$SERVICE_ACTION type=$SERVICE_ACTION_TYPE"
+
+ACTION_TO_EXECUTE="$SERVICE_ACTION_TYPE"
+case "$SERVICE_ACTION_TYPE" in
+  "custom") ACTION_TO_EXECUTE="$SERVICE_ACTION" ;;
+esac
+
+if [[ ! "$ACTION_TO_EXECUTE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "acción inválida: '$ACTION_TO_EXECUTE'" >&2
+  exit 1
+fi
+
+if [ "$ACTION_TO_EXECUTE" = "null" ]; then
+  echo "La notificación no trae tipo de acción" >&2
+  exit 1
+fi
+
+WORKFLOW_PATH="$SERVICE_PATH/workflows/istio/$ACTION_TO_EXECUTE.yaml"
+
+if [ ! -f "$WORKFLOW_PATH" ]; then
+  echo "Workflow no existe: $WORKFLOW_PATH" >&2
+  exit 1
+fi
+
+np service workflow exec --workflow "$WORKFLOW_PATH" --build-context --include-secrets

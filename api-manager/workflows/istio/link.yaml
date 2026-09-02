@@ -1,0 +1,17 @@
+provider_categories:
+  - container-orchestration
+configuration:
+  KEYS_NAMESPACE: kuadrant-system
+steps:
+  - name: load logging
+    type: script
+    file: "$SERVICE_PATH/logging"
+    output:
+      - name: log
+        type: function
+        parameters:
+          level: string
+          message: string
+  - name: mint key
+    type: script
+    file: $SERVICE_PATH/scripts/k8s/mint_key

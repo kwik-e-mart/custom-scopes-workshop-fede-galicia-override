@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RESULTS=$(printf %s "$NP_ACTION_CONTEXT" | jq -c \
+  --argjson hosts "$HOSTS_JSON" \
+  --argjson routes "$ROUTES_JSON" \
+  '(.notification.parameters // .parameters // {}) + {hosts: $hosts, routes: $routes}') \
+  || { log error "api-manager: no se pudieron armar los resultados de la acción."; exit 1; }
+
+np service action update --results "$RESULTS" \
+  || { log error "api-manager: falló la escritura de los resultados de la acción."; exit 1; }

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MINT_KEY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MINT_KEY_DIR/labels_lib"
+source "$MINT_KEY_DIR/service_target_lib"
+source "$MINT_KEY_DIR/notification_lib"
+
+NOTIFICATION=$(read_notification) || exit 1
+LINK_ID=$(require_link_id "$NOTIFICATION") || exit 1
+LINK_ACTION_ID=$(require_link_action_id "$NOTIFICATION") || exit 1
+
+SERVICE_ID=$(printf %s "$NOTIFICATION" | jq -r '.service.id // empty') \
+  || { log error "api-manager: no se pudo leer service.id de la notificación."; exit 1; }
+if [ -z "$SERVICE_ID" ]; then
+  log error "api-manager: la notificación no trae service.id. Sin eso no se puede resolver a qué aplicación pertenece este link."
+  exit 1
+fi
+if [[ ! "$SERVICE_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+  log error "api-manager: service.id inválido: '$SERVICE_ID'"
+  exit 1
+fi
+
+APP_LABEL_VALUE=$(resolve_app_target_from_service "$SERVICE_ID") \
+  || { log error "api-manager: no se pudo resolver la aplicación del service '$SERVICE_ID'. No se emite ninguna key con un target adivinado."; exit 1; }
+APP_TARGET="$SERVICE_ID"
+if [ "${#APP_LABEL_VALUE}" -gt 63 ]; then
+  log error "api-manager: '$APP_LABEL_VALUE' excede los 63 caracteres que admite un valor de label."
+  exit 1
+fi
+
+SECRET_NAME="api-manager-${LINK_ID}"
+API_KEY=$(openssl rand -hex 32) || { log error "api-manager: no se pudo generar la api key."; exit 1; }
+
+SECRET_MANIFEST=$(jq -nc \
+  --arg name "$SECRET_NAME" \
+  --arg namespace "$KEYS_NAMESPACE" \
+  --arg managed_label "$MANAGED_LABEL" \
+  --arg target_label "$TARGET_LABEL" \
+  --arg target "$APP_TARGET" \
+  --arg app_label "$APP_LABEL" \
+  --arg app_label_value "$APP_LABEL_VALUE" \
+  --arg key "$API_KEY" \
+  '{
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: $name,
+      namespace: $namespace,
+      labels: ({
+        "authorino.kuadrant.io/managed-by": "authorino"
+      } + { ($managed_label): "true" } + { ($target_label): $target } + { ($app_label): $app_label_value })
+    },
+    stringData: { api_key: $key }
+  }') || { log error "api-manager: no se pudo armar el manifiesto del Secret '$SECRET_NAME'."; exit 1; }
+
+printf %s "$SECRET_MANIFEST" | kubectl create -f - \
+  || { log error "api-manager: falló la creación del Secret '$SECRET_NAME' en '$KEYS_NAMESPACE'. Si ya existía (AlreadyExists), hay dos links pisando el mismo id."; exit 1; }
+
+RESULTS=$(jq -nc --arg k "$API_KEY" '{api_key: $k}') \
+  || { log error "api-manager: no se pudieron armar los resultados del link."; exit 1; }
+
+if ! np link action update --link-id "$LINK_ID" --link-action-id "$LINK_ACTION_ID" --results "$RESULTS"; then
+  log error "api-manager: falló la escritura de los resultados del link."
+  if kubectl delete secret "$SECRET_NAME" -n "$KEYS_NAMESPACE" --ignore-not-found; then
+    log error "api-manager: se retiró el Secret '$SECRET_NAME'. Reintentar el link es seguro."
+  else
+    log error "api-manager: quedó el Secret '$SECRET_NAME' en '$KEYS_NAMESPACE' sin credencial entregada. Borralo a mano antes de reintentar el link."
+  fi
+  exit 1
+fi
+
+log info "api-manager: credencial emitida para consumir $APP_LABEL_VALUE (service $SERVICE_ID)."

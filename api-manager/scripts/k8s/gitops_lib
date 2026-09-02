@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+
+: "${GITOPS_NAMESPACE_MANIFESTS:=}"
+: "${GITOPS_PER_SERVICE_MANIFESTS:=10-httproute.yaml 20-authpolicy.yaml}"
+
+API_MANAGER_GITOPS_PREFIX=cross-namespace-rules
+
+: "${GITOPS_COMMITTER_NAME:=nullplatform api-manager}"
+: "${GITOPS_COMMITTER_EMAIL:=api-manager@nullplatform.io}"
+
+if ! type -t gitops_redact >/dev/null 2>&1; then
+gitops_redact() { sed 's#://[^/]*@#://***@#g'; }
+fi
+
+if ! type -t gitops_valid_repo_url >/dev/null 2>&1; then
+gitops_valid_repo_url() {
+  local url="$1"
+  case "$url" in *..*) return 1 ;; esac
+  [[ "$url" =~ ^https://([A-Za-z0-9._~%+:-]+@)?[A-Za-z0-9._-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%+/-]*)?$ ]] && return 0
+  [[ "$url" =~ ^/[A-Za-z0-9._~%+/-]+$ ]] && return 0
+  return 1
+}
+fi
+
+if ! type -t gitops_valid_subtree >/dev/null 2>&1; then
+gitops_valid_subtree() {
+  local subtree="$1"
+  case "$subtree" in
+    ""|/*|*..*|*//*) return 1 ;;
+  esac
+  [[ "$subtree" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$ ]]
+}
+fi
+
+if ! type -t gitops_enabled >/dev/null 2>&1; then
+gitops_enabled() { [ -n "${GITOPS_REPO_URL:-}" ]; }
+fi
+
+if ! type -t gitops_repo_url >/dev/null 2>&1; then
+gitops_repo_url() { printf %s "${GITOPS_REPO_URL:-}"; }
+fi
+
+if ! type -t gitops_substrate >/dev/null 2>&1; then
+gitops_substrate() {
+  if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
+}
+fi
+
+if ! type -t gitops_subtree >/dev/null 2>&1; then
+gitops_subtree() {
+  printf '%s/%s/%s/%s' "$API_MANAGER_GITOPS_PREFIX" "$(gitops_substrate)" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
+}
+fi
+
+if ! type -t gitops_shared_subtree >/dev/null 2>&1; then
+gitops_shared_subtree() {
+  printf '%s/%s/%s/_shared/%s' "$API_MANAGER_GITOPS_PREFIX" "$(gitops_substrate)" "${NAMESPACE:-}" "$1"
+}
+fi
+
+if ! type -t gitops_render_dir >/dev/null 2>&1; then
+gitops_render_dir() {
+  local mdir="$1" dest="$2" file
+  mkdir -p "$dest" || return 1
+  for file in "$mdir"/*.yaml; do
+    [ -f "$file" ] || continue
+    cp "$file" "$dest/$(basename "$file")" || return 1
+  done
+  return 0
+}
+fi
+
+if ! type -t gitops_sleep >/dev/null 2>&1; then
+gitops_sleep() { sleep "$1"; }
+fi
+
+if ! type -t gitops_render_tree >/dev/null 2>&1; then
+gitops_render_tree() {
+  local mdir="$1" dest="$2" file
+  mkdir -p "$dest" || return 1
+  for file in $GITOPS_NAMESPACE_MANIFESTS $GITOPS_PER_SERVICE_MANIFESTS; do
+    [ -f "$mdir/$file" ] || continue
+    cp "$mdir/$file" "$dest/$file" || return 1
+  done
+  return 0
+}
+fi
+
+if ! type -t gitops_git_redacted >/dev/null 2>&1; then
+gitops_git_redacted() {
+  local err rc=0
+  err=$(mktemp) || return 1
+  GIT_TERMINAL_PROMPT=0 git "$@" 2>"$err" || rc=$?
+  if [ -s "$err" ]; then gitops_redact <"$err" >&2; fi
+  rm -f "$err"
+  return "$rc"
+}
+fi
+
+if ! type -t gitops_git >/dev/null 2>&1; then
+gitops_git() {
+  local dir="$1"
+  shift
+  gitops_git_redacted -C "$dir" \
+    -c "user.name=$GITOPS_COMMITTER_NAME" \
+    -c "user.email=$GITOPS_COMMITTER_EMAIL" \
+    "$@"
+}
+fi
+
+if ! type -t gitops_clone >/dev/null 2>&1; then
+gitops_clone() {
+  gitops_git_redacted clone --quiet --depth=1 \
+    --branch "${GITOPS_BRANCH:-main}" -- "$1" "$2"
+}
+fi
+
+if ! type -t gitops_stage >/dev/null 2>&1; then
+gitops_stage() {
+  local work="$1" subtree="$2" tracked
+  tracked=$(gitops_git "$work" ls-files -- "$subtree") || return 2
+  if [ -z "$tracked" ] && [ ! -d "$work/$subtree" ]; then return 1; fi
+  gitops_git "$work" add -A -- "$subtree" || return 2
+  if gitops_git "$work" diff --cached --quiet -- "$subtree"; then return 1; fi
+  return 0
+}
+fi
+
+if ! type -t gitops_sync >/dev/null 2>&1; then
+gitops_sync() {
+  local mode="$1" mdir="${2:-}" subtree_override="${3:-}" render_fn="${4:-gitops_render_tree}"
+  local url work subtree branch rc
+  local attempt=1 espera=1
+  local max="${GITOPS_PUSH_RETRIES:-5}"
+
+  if ! gitops_enabled; then
+    log info "api-manager gitops: sin repo configurado, no se publica."
+    return 0
+  fi
+
+  url=$(gitops_repo_url) || return 1
+  if [ -z "$url" ]; then
+    log error "api-manager gitops: la URL del repo está vacía."
+    return 1
+  fi
+  if ! gitops_valid_repo_url "$url"; then
+    log error "api-manager gitops: la URL del repo no tiene una forma aceptada."
+    log error "  Se espera https://[credencial@]host[:puerto]/path o un path absoluto local."
+    log error "  Se rechazan otros esquemas (ext::, ssh://, http://) y las credenciales con '/' sin codificar."
+    return 1
+  fi
+
+  branch="${GITOPS_BRANCH:-main}"
+  if [ -n "$subtree_override" ]; then
+    subtree="$subtree_override"
+  else
+    subtree=$(gitops_subtree) || {
+      log error "api-manager gitops: no se pudo armar el path del repo."
+      return 1
+    }
+  fi
+  if ! gitops_valid_subtree "$subtree"; then
+    log error "api-manager gitops: el path del repo que se armó no es un subárbol relativo válido."
+    log error "  Revisá el namespace y el nombre de la ruta."
+    return 1
+  fi
+  work=$(mktemp -d) || return 1
+
+  if ! gitops_clone "$url" "$work"; then
+    log error "api-manager gitops: no se pudo clonar $(printf %s "$url" | gitops_redact) (branch $branch)."
+    rm -rf "$work"
+    return 1
+  fi
+
+  while [ "$attempt" -le "$max" ]; do
+    rm -rf "${work:?}/${subtree:?}"
+    if [ "$mode" = apply ] && ! "$render_fn" "$mdir" "$work/$subtree"; then
+      rm -rf "$work"
+      return 1
+    fi
+
+    gitops_stage "$work" "$subtree"
+    rc=$?
+    if [ "$rc" -eq 1 ]; then
+      log info "api-manager gitops: $subtree ya estaba al día, no se commitea."
+      rm -rf "$work"
+      return 0
+    fi
+    if [ "$rc" -ne 0 ]; then
+      log error "api-manager gitops: no se pudo preparar el commit de $subtree."
+      rm -rf "$work"
+      return 1
+    fi
+
+    if ! gitops_git "$work" commit --quiet -m "api-manager: $subtree ($mode)"; then
+      log error "api-manager gitops: no se pudo commitear $subtree."
+      rm -rf "$work"
+      return 1
+    fi
+
+    if gitops_git "$work" push --quiet origin "HEAD:refs/heads/$branch"; then
+      log info "api-manager gitops: publicado $subtree en $branch."
+      rm -rf "$work"
+      return 0
+    fi
+
+    log info "api-manager gitops: push rechazado (intento $attempt/$max), se reintenta sobre $branch actualizado."
+    if ! gitops_git "$work" fetch --quiet --depth=1 origin "$branch" \
+       || ! gitops_git "$work" reset --hard --quiet FETCH_HEAD; then
+      log error "api-manager gitops: no se pudo resincronizar con $branch."
+      rm -rf "$work"
+      return 1
+    fi
+    gitops_sleep "$espera.$(( RANDOM % 900 + 100 ))"
+    [ "$espera" -lt 8 ] && espera=$(( espera * 2 ))
+    attempt=$(( attempt + 1 ))
+  done
+
+  log error "api-manager gitops: no se pudo pushear $subtree después de $max intentos."
+  rm -rf "$work"
+  return 1
+}
+fi
+
+if ! type -t gitops_publish >/dev/null 2>&1; then
+gitops_publish() { gitops_sync apply "$1"; }
+fi
+
+if ! type -t gitops_publish_removal >/dev/null 2>&1; then
+gitops_publish_removal() { gitops_sync delete; }
+fi
+
+if ! type -t gitops_publish_shared >/dev/null 2>&1; then
+gitops_publish_shared() {
+  gitops_sync apply "$1" "$(gitops_shared_subtree "$2")" gitops_render_dir
+}
+fi
+
+if ! type -t gitops_remove_shared >/dev/null 2>&1; then
+gitops_remove_shared() {
+  gitops_sync delete "" "$(gitops_shared_subtree "$1")" gitops_render_dir
+}
+fi
