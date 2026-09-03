@@ -42,19 +42,27 @@ fi
 
 if ! type -t gitops_substrate >/dev/null 2>&1; then
 gitops_substrate() {
-  if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
+  if [ -z "${SITE:-}" ]; then
+    log error "api-manager gitops: falta SITE. Sale de la dimension 'site' de la instancia y nombra la carpeta del sustrato."
+    return 1
+  fi
+  printf %s "$SITE"
 }
 fi
 
 if ! type -t gitops_subtree >/dev/null 2>&1; then
 gitops_subtree() {
-  printf '%s/%s/%s/%s' "$API_MANAGER_GITOPS_PREFIX" "$(gitops_substrate)" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
+  local substrate
+  substrate=$(gitops_substrate) || return 1
+  printf '%s/%s/%s/%s' "$API_MANAGER_GITOPS_PREFIX" "$substrate" "${NAMESPACE:-}" "${ROUTE_NAME:-}"
 }
 fi
 
 if ! type -t gitops_shared_subtree >/dev/null 2>&1; then
 gitops_shared_subtree() {
-  printf '%s/%s/%s/_shared/%s' "$API_MANAGER_GITOPS_PREFIX" "$(gitops_substrate)" "${NAMESPACE:-}" "$1"
+  local substrate
+  substrate=$(gitops_substrate) || return 1
+  printf '%s/%s/%s/_shared/%s' "$API_MANAGER_GITOPS_PREFIX" "$substrate" "${NAMESPACE:-}" "$1"
 }
 fi
 

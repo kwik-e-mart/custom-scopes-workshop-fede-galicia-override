@@ -765,19 +765,19 @@ sigue es lo mismo, con `GITOPS_REPO_URL` puesta.
 **No todas salen del mismo lugar, y la línea que las separa es deliberada** (§6.2 de
 `plans/api-manager-diseno.md`): lo que es **por cluster** viene del entorno del agente, sin
 declararse en el workflow; lo que es **por service**, del `configuration:` de
-`create.yaml`/`delete.yaml`. Es el mismo criterio que `egress-interceptor` ya usa para `ORIGIN` y
+`create.yaml`/`delete.yaml`. Es el mismo criterio que `egress-interceptor` ya usa para `site` y
 `GITOPS_REPO_URL`.
 
 | Variable | De dónde sale | Por qué |
 |---|---|---|
 | `GITOPS_REPO_URL` | **entorno del agente**, nunca el workflow | es por cluster, y puede llevar un token embebido |
-| `ORIGIN` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa (o sin setear, como en CRC) → `openshift` |
+| `site` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa (o sin setear, como en CRC) → `openshift` |
 | `GITOPS_BRANCH` | **entorno del agente** (default `main` si no está) | es del repo gitops, no del service |
 | ~~`GITOPS_PATH_PREFIX`~~ | — | no se usa: `cross-namespace-rules` es constante del service (`API_MANAGER_GITOPS_PREFIX` en `gitops_lib`) |
 | `GITOPS_PUSH_RETRIES` | `configuration:` del workflow (`5`) | decisión del service |
 | `GITOPS_COMMITTER_NAME`/`_EMAIL` | default del propio `gitops_lib` (`nullplatform api-manager` / `api-manager@nullplatform.io`) si no se pisan | — |
 
-⚠️ **`ORIGIN` NO va en `create.yaml`/`delete.yaml`, ni siquiera vacía.** El env del agente le gana al
+⚠️ **`site` NO va en `create.yaml`/`delete.yaml`, ni siquiera vacía.** El env del agente le gana al
 `configuration:`, así que un `""` ahí no la pisa — pero queda como único valor si el agente no la
 trae, y el service publica bajo la carpeta del cluster equivocado con los tests en verde, porque el
 mock nunca ve la diferencia. No está ni en `configuration:` ni en el `output:` del step
@@ -868,7 +868,7 @@ retorna error, nada se aplica.
 
 ### Publicar de verdad, con el repo real (real de prueba)
 
-En CRC no se exporta `ORIGIN`, así que la carpeta del cluster es `openshift`:
+En CRC no se exporta `site`, así que la carpeta del cluster es `openshift`:
 
 ```bash
 export GITOPS_REPO_URL=/tmp/gitops-test/remote.git

@@ -59,10 +59,20 @@ ctx() {
 
 notif() {  # <type> <attrs> <params>
   jq -nc --arg t "${1:-create}" --argjson a "${2:-$ATTRS}" --argjson p "${3:-$PARAMS}" \
-    '{notification:{type:$t, service:{id:"svc-1", attributes:$a}, parameters:$p}}'
+    '{notification:{type:$t, service:{id:"svc-1", attributes:$a, dimensions:{site:"openshift-crc"}}, parameters:$p}}'
 }
 
 run_bc() { CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif "$@")" run bash "$BC"; }
+
+run_bc_site() {  # <json de dimensions, o "" para omitirlas>
+  local dims="$1" n
+  if [ -z "$dims" ]; then
+    n=$(jq -nc --argjson a "$ATTRS" '{notification:{type:"create", service:{id:"svc-1", attributes:$a}, parameters:{}}}')
+  else
+    n=$(jq -nc --argjson a "$ATTRS" --argjson d "$dims" '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:$d}, parameters:{}}}')
+  fi
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$n" run bash "$BC"
+}
 
 interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTIONS_JSON=//'; }
 
@@ -77,7 +87,7 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   # Son dos fuentes distintas: si se confundieran, el reconcile tocaría el namespace equivocado.
   NS_PROVIDER=""
   CONTEXT="$(ctx)" \
-  NP_ACTION_CONTEXT="$(jq -nc --argjson a "$ATTRS" '{notification:{type:"create",service:{id:"s",attributes:($a+{namespace:"desde-la-notificacion"})},parameters:{}}}')" \
+  NP_ACTION_CONTEXT="$(jq -nc --argjson a "$ATTRS" '{notification:{type:"create",service:{id:"s",attributes:($a+{namespace:"desde-la-notificacion"}),dimensions:{site:"openshift-crc"}},parameters:{}}}')" \
     run bash "$BC"
   [ "$status" -eq 0 ]
   [[ "$output" != *"ns=desde-la-notificacion"* ]]
@@ -179,11 +189,29 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   [ "$status" -eq 0 ]
 }
 
-@test "build_context defaultea ORIGIN a OS" {
-  unset ORIGIN
+@test "la plataforma sale del site, no del entorno del agente" {
   run_bc
   [ "$status" -eq 0 ]
-  [[ "$output" == *"origin=OS"* ]]
+  [[ "$output" == *"site=openshift-crc"* ]]
+  [[ "$output" == *"platform=openshift"* ]]
+}
+
+@test "un site con prefijo aws- resuelve a la plataforma eks" {
+  run_bc_site '{"site":"aws-us-east-1"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"platform=eks"* ]]
+}
+
+@test "sin la dimension site ABORTA en vez de asumir una plataforma" {
+  run_bc_site ""
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no declara la dimension"* ]]
+}
+
+@test "un site con prefijo desconocido ABORTA" {
+  run_bc_site '{"site":"gcp-europe"}'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no reconocido"* ]]
 }
 
 # ── resolución de scope → FQDN ────────────────────────────────────────────────────────────────
@@ -456,7 +484,7 @@ rule() {  # <service_name tal cual lo escribe el dev>
   export GITOPS_REPO_URL=https://tok@example.com/o/r.git
   run_bc
   [ "$status" -eq 0 ]
-  [[ "$output" == *"openshift/payments"* ]]
+  [[ "$output" == *"openshift-crc/payments"* ]]
 }
 
 @test "un GITOPS_BRANCH con inyección ABORTA" {

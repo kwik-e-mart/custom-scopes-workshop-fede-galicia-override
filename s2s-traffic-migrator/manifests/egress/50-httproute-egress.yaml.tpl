@@ -18,7 +18,7 @@ sobre orígenes: reparte entre peer y local.
 {{- $svc := .service_name -}}
 {{- $pct := conv.ToInt .percent -}}
 {{- $to_peer := $pct -}}
-{{- if eq $.origin "EKS" }}{{ $to_peer = math.Sub 100 $pct }}{{ end -}}
+{{- if eq $.platform "eks" }}{{ $to_peer = math.Sub 100 $pct }}{{ end -}}
 {{- $fqdn := .scope_fqdn }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -46,11 +46,11 @@ spec:
           requestHeaderModifier:
             set:
               - name: X-NP-Origin
-                value: {{ $.origin | quote }}
+                value: {{ $.platform | quote }}
               # Lo migrado corre siempre en el sustrato opuesto al origen, y el ingreso de allá
               # matchea por el nombre con que ese sustrato identifica al destino: EKS lo conoce
               # por el FQDN de su scope, OpenShift por el nombre de su Service.
-{{- if eq $.origin "EKS" }}
+{{- if eq $.platform "eks" }}
               - name: X-NP-SVC
                 value: {{ $svc | quote }}
 {{- else }}
@@ -86,7 +86,7 @@ spec:
           weight: {{ $to_peer }}
 {{- end }}
 {{- if lt $to_peer 100 }}
-{{- if eq $.origin "EKS" }}
+{{- if eq $.platform "eks" }}
         # Al Gateway de ingreso de este cluster, NO al FQDN del scope: un backendRef necesita un
         # host del registro de Istio, y el FQDN de un scope sólo existe como `hostnames` de un
         # HTTPRoute — eso hace que el Gateway lo ATIENDA, no que un Envoy pueda conectarse ahí.

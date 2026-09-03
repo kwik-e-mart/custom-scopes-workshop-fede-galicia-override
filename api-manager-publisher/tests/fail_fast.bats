@@ -13,6 +13,7 @@ setup() {
 
   export NAMESPACE=payments
   export APP_TARGET=svc-1
+  export SITE=openshift-crc
   export APP_LABEL_VALUE=payments.reports
   export SERVICE_ID=svc-1
   export HOSTS_JSON='["api.expuesta.com"]'
@@ -334,9 +335,9 @@ run_reconcile() {
   [ "$status" -eq 0 ]
 }
 
-@test "con gitops habilitado, el sustrato lo da ORIGIN y el apply sigue" {
+@test "con gitops habilitado, el sustrato lo da SITE y el apply sigue" {
   export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
-  export ORIGIN=EKS
+  export SITE=aws-us-east-1
   gitops_publish() { echo "GITOPS_PUBLISH_CALLED" >>"$KUBECTL_CALLS_LOG"; return 0; }
   gitops_publish_shared() { echo "GITOPS_SHARED_CALLED $2" >>"$KUBECTL_CALLS_LOG"; return 0; }
   export -f gitops_publish gitops_publish_shared

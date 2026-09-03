@@ -52,6 +52,21 @@ if [ -z "$SERVICE_ID" ]; then
 fi
 require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
+SITE=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.dimensions.site // empty') \
+  || { log error "api-manager: no se pudo leer la dimension site de la notificacion."; exit 1; }
+if [ -z "$SITE" ]; then
+  log error "api-manager: la instancia no declara la dimension 'site'. Es obligatoria: de ahi sale en que plataforma corre y en que carpeta del repo gitops se publica."
+  exit 1
+fi
+require_match "$SITE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "service.dimensions.site"
+case "$SITE" in
+  aws-*) PLATFORM=eks ;;
+  openshift-*) PLATFORM=openshift ;;
+  *)
+    log error "api-manager: site '$SITE' no reconocido. Se esperan los prefijos 'aws-' (EKS) u 'openshift-'."
+    exit 1 ;;
+esac
+
 APP_LABEL_VALUE=$(resolve_app_target_from_service "$SERVICE_ID") \
   || { log error "api-manager: no se pudo resolver el target de '$SERVICE_ID'. No se sigue con un target adivinado."; exit 1; }
 APP_TARGET="$SERVICE_ID"
@@ -107,7 +122,7 @@ if [ "${ARGS:-apply}" != "delete" ]; then
   done < <(printf %s "$ROUTES_JSON" | jq -r '.[] | [.scope, .backend] | @tsv')
 fi
 
-export NAMESPACE APP_TARGET APP_LABEL_VALUE SERVICE_ID HOSTS_JSON ROUTES_JSON
+export NAMESPACE APP_TARGET APP_LABEL_VALUE SERVICE_ID SITE PLATFORM HOSTS_JSON ROUTES_JSON
 export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER LOCAL_INGRESS_HOST
 export WRISTBAND_SECRET TOKEN_DURATION
 
@@ -117,3 +132,5 @@ printf %s "$ROUTES_JSON" | jq -r '.[] | "  ruta: \(.methods | join(",")) \(.path
   | while IFS= read -r L; do log info "$L"; done
 echo "APP_TARGET=$APP_TARGET"
 echo "APP_LABEL_VALUE=$APP_LABEL_VALUE"
+echo "SITE=$SITE"
+echo "PLATFORM=$PLATFORM"

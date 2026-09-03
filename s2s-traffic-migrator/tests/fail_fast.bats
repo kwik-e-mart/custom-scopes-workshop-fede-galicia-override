@@ -52,7 +52,7 @@ MOCK
 # Corre el reconcile como lo corre el runner: con errexit NEUTRALIZADO.
 correr() {
   ARGS=apply \
-  NAMESPACE=payments ORIGIN=EKS CLUSTER_LABEL=eks-kuadrant \
+  NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
@@ -69,7 +69,7 @@ correr() {
 # Igual que `correr`, pero por la rama de delete.
 correr_delete() {
   ARGS=delete \
-  NAMESPACE=payments ORIGIN=EKS CLUSTER_LABEL=eks-kuadrant \
+  NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \

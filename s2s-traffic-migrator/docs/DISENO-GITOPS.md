@@ -51,8 +51,9 @@ openshift/payments/
     └── 60-httproute-ingress.yaml
 ```
 
-El segmento de substrato se **deriva** de `ORIGIN` (`eks` cuando `ORIGIN=EKS`, `openshift` en
-cualquier otro caso). No es configurable: es una propiedad del cluster donde corre el agente.
+El segmento de substrato **es** el valor de la dimensión `site` de la instancia (`aws-us-east-1`,
+`openshift-crc`), verbatim. No es configurable ni sale del entorno del agente: viaja en la
+notificación, que es lo que permite que un mismo agente atienda instancias de sustratos distintos.
 
 ### Por qué el substrato va antes del namespace
 
@@ -102,9 +103,9 @@ Los seis manifiestos no tienen la misma cardinalidad. Solo dos hacen `range .int
 | `10-gateway.yaml` | 1 por namespace | namespace |
 | `20-authpolicy.yaml` | 1 por namespace | namespace |
 | `30-destinationrule-peer.yaml` | 1 por namespace (si hay reglas) | namespace |
-| `40-destinationrule-local-ingress.yaml` | 1 por namespace (solo `ORIGIN=EKS`) | namespace |
+| `40-destinationrule-local-ingress.yaml` | 1 por namespace (solo plataforma `eks`) | namespace |
 | `50-httproute-egress.yaml` | 1 por regla | servicio |
-| `60-httproute-ingress.yaml` | 1 por regla (solo `ORIGIN=OS`) | servicio |
+| `60-httproute-ingress.yaml` | 1 por regla (solo plataforma `openshift`) | servicio |
 
 Los cuatro de namespace van sueltos en el nivel del namespace, sin carpeta de servicio. Duplicarlos
 en cada hoja daría N `Gateway` homónimos peleándose por el mismo objeto.
@@ -358,7 +359,7 @@ Casos:
   subárboles quedan presentes.
 - **Exhaustividad** de la clasificación de templates por nivel.
 - **Layout:** los cuatro de namespace en el nivel del namespace, `50-`/`60-` en la hoja del servicio,
-  substrato derivado de `ORIGIN`, prefix aplicado.
+  substrato derivado de `site`, prefix aplicado.
 - **Equivalencia:** los objetos publicados son los mismos que los aplicados.
 - **Prune:** sacar una regla borra su hoja; el `delete` borra el subárbol.
 - **No-op:** sin cambios no se crea commit.

@@ -37,11 +37,25 @@ GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
 INGRESS_AUTHPOLICY="${INGRESS_AUTHPOLICY:-s2s-validator}"
 
 
-# Propiedad del cluster donde corre el agente, no del form.
-export ORIGIN="${ORIGIN:-OS}"
-# Cómo se identifica ESTE cluster en el header x-s2s-cluster. Se calcula DESPUÉS de ORIGIN: con
+# La plataforma sale de la dimension 'site' de la instancia, no del entorno del agente: un agente
+# puede atender instancias de sustratos distintos.
+SITE=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.dimensions.site // empty') \
+  || { log error "egress-interceptor: no se pudo leer la dimension site de la notificacion."; exit 1; }
+if [ -z "$SITE" ]; then
+  log error "egress-interceptor: la instancia no declara la dimension 'site'. Es obligatoria: de ahi sale en que plataforma corre y en que carpeta del repo gitops se publica."
+  exit 1
+fi
+case "$SITE" in
+  aws-*) PLATFORM=eks ;;
+  openshift-*) PLATFORM=openshift ;;
+  *)
+    log error "egress-interceptor: site '$SITE' no reconocido. Se esperan los prefijos 'aws-' (EKS) u 'openshift-'."
+    exit 1 ;;
+esac
+export SITE PLATFORM
+# Cómo se identifica ESTE cluster en el header x-s2s-cluster. Se calcula DESPUÉS de SITE: con
 # `set -u`, leerlo antes aborta el script con "unbound variable".
-CLUSTER_LABEL="${CLUSTER_LABEL:-$ORIGIN}"
+CLUSTER_LABEL="${CLUSTER_LABEL:-$SITE}"
 
 # Estos valores se interpolan en YAML que el cluster aplica y en comandos del reconcile.
 require_match() {  # <value> <regex> <field>
@@ -60,7 +74,7 @@ WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
 require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
 
 gitops_substrate_hint() {
-  if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
+  printf %s "$SITE"
 }
 
 GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
@@ -193,7 +207,7 @@ fi
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY
-log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') origin=$ORIGIN key=$WRISTBAND_SECRET"
+log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \
   | while IFS= read -r RULE_LINE; do log info "$RULE_LINE"; done
 # Dato de salida que parsean los tests, no una traza: va con echo para que no lo filtre LOG_LEVEL.

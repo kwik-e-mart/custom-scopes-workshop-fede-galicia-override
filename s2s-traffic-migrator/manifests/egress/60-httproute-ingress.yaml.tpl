@@ -10,7 +10,7 @@ enforcear en silencio (Gotcha #22).
 En EKS no hay equivalente: allá el destino se alcanza por el HTTPRoute del propio scope, que ya
 cuelga de ese Gateway.
 */ -}}
-{{- if ne .origin "EKS" }}
+{{- if ne .platform "eks" }}
 {{- range .interceptions }}
 {{- $svc := .service_name }}
 ---

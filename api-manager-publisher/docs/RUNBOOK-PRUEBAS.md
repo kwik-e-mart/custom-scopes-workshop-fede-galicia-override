@@ -1287,17 +1287,17 @@ Ya quedó demostrado en el Paso 6: con `GITOPS_REPO_URL` sin setear, `gitops_ena
 
 **Lo que es por cluster viene del entorno del agente, sin declararse en el workflow; lo que es por
 service, del `configuration:` de `create.yaml`/`delete.yaml`.** Mismo criterio que
-`egress-interceptor` usa para `ORIGIN`/`GITOPS_REPO_URL`.
+`egress-interceptor` usa para `site`/`GITOPS_REPO_URL`.
 
 | Variable | De dónde sale | Por qué |
 |---|---|---|
 | `GITOPS_REPO_URL` | **entorno del agente**, nunca el workflow | es por cluster, puede llevar un token embebido |
-| `ORIGIN` | **entorno del agente**, nunca el workflow | de ahí sale la carpeta del cluster: `EKS` → `eks`, cualquier otra cosa → `openshift`. Ya lo exporta `start-agent-eks.sh` |
+| dimensión `site` | **de la instancia**, nunca el agente ni el workflow | es la carpeta del sustrato, verbatim. `aws-*` → plataforma `eks`; `openshift-*` → `openshift`. Sin ella, `build_context` aborta |
 | `GITOPS_BRANCH` | **entorno del agente** (default `main` si no está) | es del repo gitops, no del service |
 | ~~`GITOPS_PATH_PREFIX`~~ | — | no se usa: `cross-namespace-rules` es constante del service (`API_MANAGER_GITOPS_PREFIX` en `gitops_lib`) |
 | `GITOPS_PUSH_RETRIES` | `configuration:` del workflow (`5`) | decisión del service |
 
-⚠️ **`ORIGIN` no va en `configuration:` del workflow, ni siquiera vacía.** El env del agente le gana
+⚠️ **`site` no va en `configuration:` del workflow, ni siquiera vacía.** El env del agente le gana
 al `configuration:`, así que declararla ahí no la pisa — pero queda como único valor si el agente no
 la trae, y el service publica bajo la carpeta del cluster equivocado sin avisar.
 
@@ -1322,7 +1322,7 @@ antes/después de un intento fallido, y con el objeto todavía presente después
 
 ```bash
 export GITOPS_REPO_URL="/no/existe/en/este/filesystem.git"
-export ORIGIN=EKS
+export SITE=aws-us-east-1
 export GITOPS_BRANCH=main
 # resto de las variables del Paso 6 sin cambios
 PATH=/opt/homebrew/bin:$PATH bash -c '

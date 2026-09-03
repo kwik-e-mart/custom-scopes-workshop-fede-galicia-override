@@ -21,7 +21,8 @@ setup() {
   export ROUTE_NAME=api-manager-svc-1
   export GITOPS_BRANCH=main
   export GITOPS_PUSH_RETRIES=5
-  unset GITOPS_REPO_URL ORIGIN
+  export SITE=openshift-crc
+  unset GITOPS_REPO_URL
 }
 
 make_render() {
@@ -93,34 +94,35 @@ HOOK
 
 @test "el path del subárbol es prefix/substrato/namespace/ruta" {
   run gitops_subtree
-  [ "$output" = "cross-namespace-rules/openshift/payments/api-manager-svc-1" ]
+  [ "$output" = "cross-namespace-rules/openshift-crc/payments/api-manager-svc-1" ]
 }
 
-@test "sin ORIGIN el sustrato es openshift" {
+@test "sin SITE el subarbol falla en vez de inventar una carpeta" {
+  unset SITE
   run gitops_subtree
-  [[ "$output" == cross-namespace-rules/openshift/* ]]
+  [ "$status" -ne 0 ]
 }
 
-@test "con ORIGIN=EKS el sustrato es eks" {
-  export ORIGIN=EKS
+@test "el sustrato es el site, verbatim" {
+  export SITE=aws-us-east-1
   run gitops_subtree
-  [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
+  [ "$output" = "cross-namespace-rules/aws-us-east-1/payments/api-manager-svc-1" ]
 }
 
-@test "con ORIGIN=EKS el subárbol publicado en el remoto es el de eks" {
+@test "el subárbol publicado en el remoto usa el site" {
   armar_remoto
-  export ORIGIN=EKS
+  export SITE=aws-us-east-1
   make_render
   run gitops_publish "$MDIR"
   [ "$status" -eq 0 ]
   run remoto_ls
-  [[ "$output" == *"cross-namespace-rules/eks/payments/api-manager-svc-1/10-httproute.yaml"* ]]
+  [[ "$output" == *"cross-namespace-rules/aws-us-east-1/payments/api-manager-svc-1/10-httproute.yaml"* ]]
 }
 
 @test "un GITOPS_PATH_PREFIX del entorno NO puede mover el subárbol de este service" {
   export GITOPS_PATH_PREFIX=gitops_manifests
   run gitops_subtree
-  [ "$output" = "cross-namespace-rules/openshift/payments/api-manager-svc-1" ]
+  [ "$output" = "cross-namespace-rules/openshift-crc/payments/api-manager-svc-1" ]
 }
 
 @test "con GitOps deshabilitado no pasa nada" {
@@ -223,8 +225,8 @@ HOOK
   run gitops_publish "$MDIR"
   [ "$status" -eq 0 ]
   run remoto_ls
-  [[ "$output" == *"cross-namespace-rules/openshift/payments/api-manager-svc-1/10-httproute.yaml"* ]]
-  [[ "$output" == *"cross-namespace-rules/openshift/payments/api-manager-svc-1/20-authpolicy.yaml"* ]]
+  [[ "$output" == *"cross-namespace-rules/openshift-crc/payments/api-manager-svc-1/10-httproute.yaml"* ]]
+  [[ "$output" == *"cross-namespace-rules/openshift-crc/payments/api-manager-svc-1/20-authpolicy.yaml"* ]]
 }
 
 @test "sin URL configurada no publica y NO falla" {

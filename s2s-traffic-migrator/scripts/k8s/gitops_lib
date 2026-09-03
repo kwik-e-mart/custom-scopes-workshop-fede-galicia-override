@@ -40,7 +40,11 @@ fi
 
 if ! type -t gitops_substrate >/dev/null 2>&1; then
 gitops_substrate() {
-  if [ "${ORIGIN:-OS}" = "EKS" ]; then printf eks; else printf openshift; fi
+  if [ -z "${SITE:-}" ]; then
+    log error "egress-interceptor gitops: falta SITE. Sale de la dimension 'site' de la instancia y nombra la carpeta del sustrato."
+    return 1
+  fi
+  printf %s "$SITE"
 }
 fi
 
@@ -49,7 +53,9 @@ gitops_subtree() {
   local prefix="${GITOPS_PATH_PREFIX:-}"
   prefix="${prefix%/}"
   [ -n "$prefix" ] && prefix="$prefix/"
-  printf '%s%s/%s' "$prefix" "$(gitops_substrate)" "${NAMESPACE:-}"
+  local substrate
+  substrate=$(gitops_substrate) || return 1
+  printf '%s%s/%s' "$prefix" "$substrate" "${NAMESPACE:-}"
 }
 fi
 

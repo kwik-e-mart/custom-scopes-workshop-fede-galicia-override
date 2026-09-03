@@ -31,8 +31,8 @@ tipea en el formulario. Si el scope elegido no está activo o todavía no tiene 
 
 La aplicación consumidora se **linkea** a este service (link `connect`). En ese momento se le emite
 una credencial propia (una key opaca, no un JWT ni nada que se pueda decodificar) y la recibe como
-variable de entorno `<SERVICE_SLUG>_API_KEY`, inyectada como secret parameter — nunca en texto plano en
-ningún lado que un humano tenga que copiar. Ese `<SERVICE_SLUG>_API_KEY` va en el header `x-api-key` de
+variable de entorno `${service.slug}_API_KEY`, inyectada como secret parameter — nunca en texto plano en
+ningún lado que un humano tenga que copiar. Ese `${service.slug}_API_KEY` va en el header `x-api-key` de
 cada request hacia la app expuesta. Borrar el link revoca el acceso de inmediato: no hay expiración
 que esperar.
 

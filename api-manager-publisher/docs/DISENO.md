@@ -468,9 +468,9 @@ planas**, no con el idiom `: "${VAR:=default}"` que el propio archivo usa dos l�
 Sourcear el lib pisaba lo que viniera del entorno, así que un segundo service no podía declarar sus
 propios manifiestos.
 
-`gitops_substrate()` queda igual que en el egress: la carpeta sale de `ORIGIN` (`EKS` → `eks`,
-cualquier otra cosa → `openshift`). Los dos services corren bajo el mismo agente y ese agente ya
-exporta `ORIGIN`.
+`gitops_substrate()` queda igual que en el egress: la carpeta es el valor de la dimensión `site`
+de la instancia. Sale de la notificación, no del entorno del agente — que es lo que permite que un
+mismo agente atienda instancias de sustratos distintos.
 
 ### 6.2 De dónde sale cada variable
 
@@ -480,13 +480,13 @@ entorno del agente; lo que es por service, del `configuration:` del workflow.**
 | Variable | De dónde | Por qué |
 |---|---|---|
 | `GITOPS_REPO_URL` | entorno del agente | Es por cluster, y puede llevar un token embebido |
-| `ORIGIN` | entorno del agente | De ahí sale la carpeta del cluster (`EKS` → `eks`, cualquier otra cosa → `openshift`) |
+| dimensión `site` | de la instancia, no del agente | Es la carpeta del sustrato, verbatim. `aws-*` resuelve la plataforma `eks`; `openshift-*`, `openshift` |
 | `GITOPS_BRANCH` | entorno del agente | Es del repo gitops, no del service: los dos services publican a la misma rama |
 | ~~`GITOPS_PATH_PREFIX`~~ | — | No se usa: el prefijo es constante del service, ver arriba |
 | `GITOPS_PUSH_RETRIES` | `configuration:` | Decisión del service |
 
 Las del agente **no se declaran en el workflow**, ni en `configuration:` ni en el `output:` del
-`build context`: son ambientales y todos los steps las ven. Es como el egress trata `ORIGIN` y
+`build context`: son ambientales y todos los steps las ven. Es como el egress trata `site` y
 `GITOPS_REPO_URL`.
 
 El env del agente **le gana** al `configuration:` del workflow (confirmado por el operador). O sea

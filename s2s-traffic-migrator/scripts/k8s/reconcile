@@ -199,7 +199,7 @@ fi
 
 DECLARED_SERVICES=$(echo "$INTERCEPTIONS_JSON" | jq -r '.[].service_name')
 
-if [ "$ORIGIN" != "EKS" ]; then
+if [ "$PLATFORM" != "eks" ]; then
   # Con percent < 100 una parte del tráfico va al backend local: si no tiene endpoints, ese
   # porcentaje se pierde en silencio. En EKS no aplica: la rama local es el FQDN de un scope.
   for svc in $DECLARED_SERVICES; do
@@ -240,7 +240,7 @@ jq -n \
   --arg local_ingress_host "$LOCAL_INGRESS_HOST" \
   --arg gateway_namespace "$GATEWAY_NAMESPACE" \
   --arg cluster_label "$CLUSTER_LABEL" \
-  --arg origin "$ORIGIN" \
+  --arg platform "$PLATFORM" \
   --arg managed_label "$MANAGED_LABEL" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
   --argjson listen_port "$LISTEN_PORT" \
@@ -313,7 +313,7 @@ done
 # (extensión de Istio) y ahí la condición da BackendNotFound aunque el host resuelva perfecto
 # (Gotcha #27). Chequearla haría fallar todos los apply sanos.
 
-if [ "$ORIGIN" != "EKS" ]; then
+if [ "$PLATFORM" != "eks" ]; then
   # La route de ingreso vive en el namespace del Gateway y su backendRef SÍ es un Service real y
   # cross-namespace, así que acá ResolvedRefs sí vale — y es donde aparecería un ReferenceGrant
   # faltante o un alias que no se creó.

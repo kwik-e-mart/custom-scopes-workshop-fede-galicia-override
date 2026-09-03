@@ -1,4 +1,4 @@
-{{- if and .interceptions (eq .origin "EKS") }}
+{{- if and .interceptions (eq .platform "eks") }}
 # Sólo con origen EKS. Allá la rama NO migrada tampoco va a un Service del destino: entra por el
 # ingreso de este mismo cluster, así que también necesita originar TLS.
 apiVersion: networking.istio.io/v1

@@ -13,7 +13,8 @@ setup() {
 
   export NAMESPACE=payments
   export ROUTE_NAME=api-manager-svc-1
-  unset GITOPS_REPO_URL ORIGIN
+  export SITE=openshift-crc
+  unset GITOPS_REPO_URL
 }
 
 aplicar_configuration_del_workflow() {
@@ -24,24 +25,24 @@ aplicar_configuration_del_workflow() {
   done < <(yq -r '.configuration | to_entries[] | [.key, .value] | @tsv' "$file")
 }
 
-@test "create.yaml no declara ORIGIN en configuration: tiene que venir del entorno del agente" {
-  run yq -r '.configuration | has("ORIGIN")' "$CREATE"
+@test "create.yaml no declara SITE en configuration: sale de la dimension de la instancia" {
+  run yq -r '.configuration | has("SITE")' "$CREATE"
   [ "$output" = "false" ]
 }
 
-@test "delete.yaml no declara ORIGIN en configuration: tiene que venir del entorno del agente" {
-  run yq -r '.configuration | has("ORIGIN")' "$DELETE"
+@test "delete.yaml no declara SITE en configuration: sale de la dimension de la instancia" {
+  run yq -r '.configuration | has("SITE")' "$DELETE"
   [ "$output" = "false" ]
 }
 
-@test "create.yaml no re-declara ORIGIN en el output del build context" {
+@test "create.yaml declara SITE en el output del build context" {
   run yq -r '.steps[] | select(.name == "build context") | .output[].name' "$CREATE"
-  ! echo "$output" | grep -qx "ORIGIN"
+  echo "$output" | grep -qx "SITE"
 }
 
-@test "delete.yaml no re-declara ORIGIN en el output del build context" {
+@test "delete.yaml declara SITE en el output del build context" {
   run yq -r '.steps[] | select(.name == "build context") | .output[].name' "$DELETE"
-  ! echo "$output" | grep -qx "ORIGIN"
+  echo "$output" | grep -qx "SITE"
 }
 
 @test "create.yaml sigue declarando las variables GITOPS_* que SÍ son por service" {
@@ -65,16 +66,16 @@ aplicar_configuration_del_workflow() {
   [ "$output" = "false" ]
 }
 
-@test "un ORIGIN puesto por el agente llega al subárbol sin que la configuration: de create.yaml lo pise" {
-  export ORIGIN=EKS
+@test "el SITE del build context llega al subárbol sin que la configuration: de create.yaml lo pise" {
+  export SITE=aws-us-east-1
   aplicar_configuration_del_workflow "$CREATE"
   run gitops_subtree
-  [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
+  [ "$output" = "cross-namespace-rules/aws-us-east-1/payments/api-manager-svc-1" ]
 }
 
-@test "un ORIGIN puesto por el agente llega al subárbol sin que la configuration: de delete.yaml lo pise" {
-  export ORIGIN=EKS
+@test "el SITE del build context llega al subárbol sin que la configuration: de delete.yaml lo pise" {
+  export SITE=aws-us-east-1
   aplicar_configuration_del_workflow "$DELETE"
   run gitops_subtree
-  [ "$output" = "cross-namespace-rules/eks/payments/api-manager-svc-1" ]
+  [ "$output" = "cross-namespace-rules/aws-us-east-1/payments/api-manager-svc-1" ]
 }

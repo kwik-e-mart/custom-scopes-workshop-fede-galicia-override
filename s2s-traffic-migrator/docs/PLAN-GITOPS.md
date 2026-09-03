@@ -1,5 +1,10 @@
 # Plan — publicar los manifiestos del egress-interceptor a un repo GitOps
 
+> ⚠️ **Registro histórico.** Los snippets de abajo usan `ORIGIN`, que ya no existe: la plataforma
+> sale de la dimensión `site` de la instancia (`aws-*` → `eks`, `openshift-*` → `openshift`) y esa
+> misma dimensión nombra la carpeta del sustrato. Se conservan como estaban para no falsear el
+> registro de lo que se construyó.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Estado: implementado.** El código está en `services/s2s-traffic-migrator/scripts/k8s/gitops_lib`,
@@ -65,7 +70,7 @@
 - Test: `services/s2s-traffic-migrator/tests/gitops_publish.bats`
 
 **Interfaces:**
-- Consumes: `log` (de `logging`); `NAMESPACE` y `ORIGIN` del env.
+- Consumes: `log` (de `logging`); `NAMESPACE` y `site` del env.
 - Produces: `gitops_enabled` (0 = prendido), `gitops_repo_url` (imprime la URL), `gitops_redact` (filtro de stdin), `gitops_substrate` (`eks`|`openshift`), `gitops_subtree` (el path relativo), `gitops_sleep <segundos>`. Constantes `GITOPS_NAMESPACE_MANIFESTS` y `GITOPS_PER_SERVICE_MANIFESTS`.
 
 - [ ] **Step 1: Escribir los tests que fallan**
@@ -1047,7 +1052,7 @@ Después de la sección "Templating" de `services/s2s-traffic-migrator/README.md
 - que el `reconcile` **sigue aplicando** y que el repo es, por ahora, un registro del estado deseado que nadie consume;
 - el árbol, con el ejemplo concreto de los dos substratos, copiado de `docs/s2s-gitops-publish.md`;
 - la tabla de las seis variables (`GITOPS_REPO_URL_FILE`, `GITOPS_REPO_URL`, `GITOPS_BRANCH`, `GITOPS_PATH_PREFIX`, `GITOPS_CLUSTER_NAME`, `GITOPS_PUSH_RETRIES`), aclarando que sin URL el publisher está apagado y que con URL presente cualquier otro error es fallo duro;
-- que `GITOPS_CLUSTER_NAME` no defaultea, y por qué (`CLUSTER_LABEL` cae a `ORIGIN` y daría `openshift/OS/`);
+- que `GITOPS_CLUSTER_NAME` no defaultea, y por qué (`CLUSTER_LABEL` cae a `site` y daría `openshift/OS/`);
 - que la URL lleva el token y por eso no va en el `configuration:` de los workflows ni en sus `output:`;
 - que el path es ownership y no el namespace del objeto —`60-httproute-ingress` declara un objeto en `gateways`— y que por eso un `Kustomization` sobre el subárbol **no puede** forzar el namespace;
 - que una sola instancia por (cluster, namespace);

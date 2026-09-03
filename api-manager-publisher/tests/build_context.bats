@@ -82,7 +82,7 @@ run_build_context() {
 
 notif() {
   jq -nc --argjson a "${1:-$ATTRS}" \
-    '{notification:{type:"create", service:{id:"svc-1", attributes:$a}, parameters:{}}}'
+    '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:{site:"openshift-crc"}}, parameters:{}}}'
 }
 
 @test "resuelve el backend de cada ruta desde el dominio del scope" {
@@ -248,4 +248,43 @@ notif() {
   [ "$status" -ne 0 ]
   echo "$output" | grep -q "hay rutas sin scope"
   ! echo "$output" | grep -q "no está entre los scopes activos"
+}
+
+@test "el SITE sale de la dimension de la instancia" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "SITE=openshift-crc"
+  echo "$output" | grep -q "PLATFORM=openshift"
+}
+
+@test "un site con prefijo aws- resuelve a la plataforma eks" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$ATTRS" '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:{site:"aws-us-east-1"}}, parameters:{}}}')
+  export CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "PLATFORM=eks"
+}
+
+@test "sin la dimension site ABORTA en vez de asumir una plataforma" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$ATTRS" '{notification:{type:"create", service:{id:"svc-1", attributes:$a}, parameters:{}}}')
+  export CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "no declara la dimension"
+}
+
+@test "un site con prefijo desconocido ABORTA nombrando los que se esperan" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":"prod"}]}'
+  export NP_ACTION_CONTEXT
+  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$ATTRS" '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:{site:"gcp-europe"}}, parameters:{}}}')
+  export CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "no reconocido"
 }

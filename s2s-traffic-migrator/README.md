@@ -121,7 +121,7 @@ eks/<namespace>/                              openshift/<namespace>/
     └── 50-httproute-egress.yaml                  └── 60-httproute-ingress.yaml
 ```
 
-El segmento de substrato se **deriva** de `ORIGIN`; no se configura. Va primero para que "todo el
+El segmento de substrato es el valor de la dimensión `site` de la instancia; no se configura. Va primero para que "todo el
 estado deseado de este cluster" sea un prefijo contiguo (`eks/`): en la pata 2 eso es un solo
 `Application` de Argo o un solo `Kustomization` de Flux.
 
@@ -149,7 +149,7 @@ porque el `Gateway` se llama `s2s-egress` y es uno por namespace.
 cualquier otro error es **fallo duro**: se aborta sin haber movido tráfico.
 
 La URL lleva la credencial (`https://$GITHUB_TOKEN@host/org/repo.git`) y llega **solo por el env del
-agente**, igual que `ORIGIN` y `CLUSTER_LABEL`:
+agente**, igual que `CLUSTER_LABEL`:
 
 ```bash
 np-agent ... -command-executor-env "...,GITOPS_REPO_URL=https://$GITHUB_TOKEN@github.com/cliente/gitops.git"
@@ -238,7 +238,7 @@ Son de la instalación, no del formulario, así que las pasa quien levanta el ag
 
 | variable | qué es |
 |---|---|
-| `ORIGIN` | `EKS` o `OS`. **Decide qué manifiestos se emiten** y de qué lado queda cada rama del reparto. Default `OS`. |
+| ~~`ORIGIN`~~ | Ya no existe. La plataforma sale de la dimensión `site` de la instancia: `aws-*` → `eks`, `openshift-*` → `openshift`. Sin `site`, el `build_context` aborta. |
 | `CLUSTER_LABEL` | cómo se identifica este cluster en el header `X-S2S-Cluster` de las respuestas. |
 | `KUBECONFIG` | dedicado, no el `~/.kube/config` del usuario: los scripts invocan `kubectl` sin `--context`, así que dependen del `current-context`. Un `use-context` en otra terminal redirigiría el reconcile a otro cluster sin avisar. |
 | `PATH` | tiene que resolver `bash` **>= 4**, `kubectl`, `jq`, `gomplate` y `git`. En macOS el `/bin/bash` 3.2 rompe el `logging` con *bad substitution*. |
@@ -257,7 +257,7 @@ un cluster y ninguna es un secreto:
 | clave | qué es |
 |---|---|
 | `PEER_GATEWAY_HOST` | ingreso del sustrato **opuesto**, por donde sale todo lo que cruza. |
-| `LOCAL_INGRESS_HOST` | ingreso de **este** cluster. Con `ORIGIN=EKS` la rama que atiende EKS también entra por acá. |
+| `LOCAL_INGRESS_HOST` | ingreso de **este** cluster. Con un `site` `aws-*` la rama que atiende EKS también entra por acá. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
 | `WRISTBAND_SECRET_NAME` | Secret con la clave de firma. `{namespace}` se interpola. |

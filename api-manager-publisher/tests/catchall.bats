@@ -19,7 +19,7 @@ setup() {
 
   export NAMESPACE=payments
   export ROUTE_NAME=api-manager-svc-1
-  unset ORIGIN
+  export SITE=openshift-crc
 
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
@@ -156,7 +156,7 @@ ctx_para() {
 
 @test "el subárbol compartido cuelga de _shared, hermano del subárbol por service" {
   run gitops_shared_subtree api-manager-deny-x
-  [ "$output" = "cross-namespace-rules/openshift/payments/_shared/api-manager-deny-x" ]
+  [ "$output" = "cross-namespace-rules/openshift-crc/payments/_shared/api-manager-deny-x" ]
 }
 
 @test "el subárbol compartido es un subárbol relativo válido" {

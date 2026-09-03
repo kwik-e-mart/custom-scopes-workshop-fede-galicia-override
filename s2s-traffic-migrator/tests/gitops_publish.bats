@@ -18,18 +18,20 @@ setup() {
   export -f gitops_redact
 
   export NAMESPACE=payments
-  export ORIGIN=EKS
+  export SITE=aws-us-east-1
   export GITOPS_BRANCH=main
   export GITOPS_PATH_PREFIX=""
   export GITOPS_PUSH_RETRIES=5
   unset GITOPS_REPO_URL
 }
 
-make_render() {
-  ORIGIN="$1"
+make_render() {  # <site>
+  SITE="$1"
+  local platform
+  case "$SITE" in aws-*) platform=eks ;; *) platform=openshift ;; esac
   CTX="$BATS_TEST_TMPDIR/ctx.json"
   MDIR="$BATS_TEST_TMPDIR/manifests"
-  jq -n --arg origin "$1" --argjson interceptions "$2" '{
+  jq -n --arg platform "$platform" --argjson interceptions "$2" '{
     namespace: "payments", gateway_name: "s2s-egress", gateway_class: "istio",
     listen_port: 8080, token_duration: 300, wristband_secret: "payments-wristband-key",
     peer_ca_secret: "s2s-remote-ca", peer_gateway_host: "peer.example.io",
@@ -37,7 +39,7 @@ make_render() {
     gateway_namespace: "gateways", cluster_label: "gal-poc-eks-dev",
     authpolicy_api_version: "kuadrant.io/v1",
     managed_label: "egress-interceptor/managed",
-    origin: $origin, interceptions: $interceptions
+    platform: $platform, interceptions: $interceptions
   }' >"$CTX"
   rm -rf "$MDIR"
   mkdir -p "$MDIR"
@@ -102,19 +104,19 @@ HOOK
 
 @test "el path del subárbol es substrato/namespace" {
   run gitops_subtree
-  [ "$output" = "eks/payments" ]
+  [ "$output" = "aws-us-east-1/payments" ]
 }
 
-@test "el substrato sale de ORIGIN, no de la configuración" {
-  ORIGIN=OS
+@test "el substrato sale del site, no de la configuración" {
+  SITE=openshift-crc
   run gitops_subtree
-  [ "$output" = "openshift/payments" ]
+  [ "$output" = "openshift-crc/payments" ]
 }
 
 @test "el prefix se cuelga adelante y no duplica la barra" {
   GITOPS_PATH_PREFIX="clusters/"
   run gitops_subtree
-  [ "$output" = "clusters/eks/payments" ]
+  [ "$output" = "clusters/aws-us-east-1/payments" ]
 }
 
 @test "sin URL el publisher está apagado" {
@@ -158,7 +160,7 @@ HOOK
 
 @test "una URL con transporte ext:: se RECHAZA sin clonar" {
   export GITOPS_REPO_URL='ext::sh -c whoami'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no tiene una forma aceptada"* ]]
@@ -166,7 +168,7 @@ HOOK
 
 @test "una URL que arranca con guión se RECHAZA: seria una opción de git" {
   export GITOPS_REPO_URL='--upload-pack=whoami'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no tiene una forma aceptada"* ]]
@@ -174,7 +176,7 @@ HOOK
 
 @test "una URL que no es https se RECHAZA" {
   export GITOPS_REPO_URL='http://ghp_tok@github.com/o/r.git'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no tiene una forma aceptada"* ]]
@@ -194,7 +196,7 @@ HOOK
 
 @test "una URL con barra en la credencial se RECHAZA en vez de filtrarla" {
   export GITOPS_REPO_URL='https://x-access-token:gh_p/secreto_con_barra@github.com/o/r.git'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" != *secreto_con_barra* ]]
@@ -202,7 +204,7 @@ HOOK
 
 @test "el rechazo de una URL inválida no imprime la URL" {
   export GITOPS_REPO_URL='ssh://ghp_secreto999@github.com/o/r.git'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" != *ghp_secreto999* ]]
@@ -211,7 +213,7 @@ HOOK
 @test "un NAMESPACE con .. ABORTA antes de cualquier rm -rf" {
   armar_remoto
   export NAMESPACE='../../../etc'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"path del repo"* ]]
@@ -220,14 +222,14 @@ HOOK
 @test "un GITOPS_PATH_PREFIX absoluto ABORTA" {
   armar_remoto
   export GITOPS_PATH_PREFIX='/etc'
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"path del repo"* ]]
 }
 
 @test "los objetos de namespace quedan en el nivel del namespace" {
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/10-gateway.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/20-authpolicy.yaml" ]
@@ -236,7 +238,7 @@ HOOK
 }
 
 @test "cada regla queda en su propia hoja, con su propia route" {
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/reports/50-httproute-egress.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/checkout/50-httproute-egress.yaml" ]
@@ -245,14 +247,14 @@ HOOK
 }
 
 @test "la hoja de un servicio NO trae la route de otro" {
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   run grep -c checkout "$BATS_TEST_TMPDIR/tree/reports/50-httproute-egress.yaml"
   [ "$output" -eq 0 ]
 }
 
 @test "los objetos de namespace NO se duplican en las hojas" {
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ ! -f "$BATS_TEST_TMPDIR/tree/reports/10-gateway.yaml" ]
   [ ! -f "$BATS_TEST_TMPDIR/tree/reports/20-authpolicy.yaml" ]
@@ -260,7 +262,7 @@ HOOK
 }
 
 @test "desde OpenShift la hoja trae además la route de ingreso" {
-  make_render OS "$(dos_reglas)"
+  make_render openshift-crc "$(dos_reglas)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/reports/60-httproute-ingress.yaml" ]
   [ ! -f "$BATS_TEST_TMPDIR/tree/40-destinationrule-local-ingress.yaml" ]
@@ -269,7 +271,7 @@ HOOK
 }
 
 @test "sin ninguna regla quedan el Gateway y su AuthPolicy, y ninguna hoja" {
-  make_render EKS '[]'
+  make_render aws-us-east-1 '[]'
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/10-gateway.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/20-authpolicy.yaml" ]
@@ -277,7 +279,7 @@ HOOK
 }
 
 @test "un contexto de render ilegible ABORTA en vez de rendir cero hojas" {
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   printf 'esto no es json {{{' >"$BATS_TEST_TMPDIR/roto.json"
   run gitops_render_tree "$BATS_TEST_TMPDIR/roto.json" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ "$status" -ne 0 ]
@@ -285,7 +287,7 @@ HOOK
 
 @test "un contexto de render ilegible NO borra las hojas ya publicadas" {
   armar_remoto
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_publish "$CTX" "$MDIR"
   printf 'esto no es json {{{' >"$BATS_TEST_TMPDIR/roto.json"
   run gitops_publish "$BATS_TEST_TMPDIR/roto.json" "$MDIR"
@@ -300,16 +302,16 @@ HOOK
   # no emiten el mismo juego: EKS agrega 40-destinationrule-local-ingress a nivel namespace y
   # OpenShift agrega 60-httproute-ingress a nivel servicio. Con uno solo, media clasificación de
   # GITOPS_*_MANIFESTS queda sin ejercitar.
-  local origin aplicados publicados
-  for origin in OS EKS; do
-    make_render "$origin" "$(dos_reglas)"
+  local platform aplicados publicados
+  for platform in openshift-crc aws-us-east-1; do
+    make_render "$platform" "$(dos_reglas)"
     rm -rf "$BATS_TEST_TMPDIR/tree"
     gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
     aplicados=$(objetos "$MDIR"/*.yaml | sort)
     publicados=$(find "$BATS_TEST_TMPDIR/tree" -name '*.yaml' -print0 \
       | xargs -0 -n1 yq -r '[.kind, (.metadata.namespace // ""), .metadata.name] | join("/")' | sort)
     [ "$aplicados" = "$publicados" ] || {
-      echo "origen $origin:" >&2; diff <(echo "$aplicados") <(echo "$publicados") >&2; return 1
+      echo "site $platform:" >&2; diff <(echo "$aplicados") <(echo "$publicados") >&2; return 1
     }
   done
 }
@@ -328,18 +330,18 @@ HOOK
 
 @test "publica el subárbol completo en el branch configurado" {
   armar_remoto
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -eq 0 ]
   run remoto_ls
-  [[ "$output" == *"eks/payments/10-gateway.yaml"* ]]
-  [[ "$output" == *"eks/payments/reports/50-httproute-egress.yaml"* ]]
-  [[ "$output" == *"eks/payments/checkout/50-httproute-egress.yaml"* ]]
+  [[ "$output" == *"aws-us-east-1/payments/10-gateway.yaml"* ]]
+  [[ "$output" == *"aws-us-east-1/payments/reports/50-httproute-egress.yaml"* ]]
+  [[ "$output" == *"aws-us-east-1/payments/checkout/50-httproute-egress.yaml"* ]]
 }
 
 @test "sin URL configurada no publica y NO falla" {
   unset GITOPS_REPO_URL
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -eq 0 ]
 }
@@ -347,7 +349,7 @@ HOOK
 @test "un namespace vacío ABORTA: el subárbol quedaría sin hoja" {
   armar_remoto
   export NAMESPACE=""
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"path del repo"* ]]
@@ -355,7 +357,7 @@ HOOK
 
 @test "una URL que no se puede clonar ABORTA" {
   export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo-aca"
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no se pudo clonar"* ]]
@@ -363,7 +365,7 @@ HOOK
 
 @test "el token no aparece en la salida cuando el clone falla" {
   export GITOPS_REPO_URL="https://ghp_secreto123@127.0.0.1:1/o/r.git"
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" != *ghp_secreto123* ]]
@@ -372,7 +374,7 @@ HOOK
 
 @test "una segunda corrida sin cambios no crea commit" {
   armar_remoto
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_publish "$CTX" "$MDIR"
   local antes despues
   antes=$(remoto_commits)
@@ -384,9 +386,9 @@ HOOK
 
 @test "sacar una regla borra su hoja del repo" {
   armar_remoto
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_publish "$CTX" "$MDIR"
-  make_render EKS "$(una_regla)"
+  make_render aws-us-east-1 "$(una_regla)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -eq 0 ]
   run remoto_ls
@@ -396,12 +398,12 @@ HOOK
 
 @test "el delete borra el subárbol entero" {
   armar_remoto
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   gitops_publish "$CTX" "$MDIR"
   run gitops_publish_removal
   [ "$status" -eq 0 ]
   run remoto_ls
-  [[ "$output" != *"eks/payments"* ]]
+  [[ "$output" != *"aws-us-east-1/payments"* ]]
 }
 
 @test "el delete de algo nunca publicado es un no-op que no falla" {
@@ -413,7 +415,7 @@ HOOK
 @test "un push rechazado se reintenta y termina publicando" {
   armar_remoto
   rechazar_un_push
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -eq 0 ]
   run remoto_ls
@@ -424,7 +426,7 @@ HOOK
   armar_remoto
   export GITOPS_PUSH_RETRIES=2
   rechazar_todo_push
-  make_render EKS "$(dos_reglas)"
+  make_render aws-us-east-1 "$(dos_reglas)"
   run gitops_publish "$CTX" "$MDIR"
   [ "$status" -ne 0 ]
   [[ "$output" == *"después de 2 intentos"* ]]
@@ -436,15 +438,15 @@ HOOK
 
 @test "dos instancias en paralelo sobre el mismo repo aterrizan las DOS" {
   armar_remoto
-  make_render EKS "$(una_regla)"
+  make_render aws-us-east-1 "$(una_regla)"
   local ctx_a="$BATS_TEST_TMPDIR/ctx-a.json" mdir_a="$BATS_TEST_TMPDIR/m-a"
   cp "$CTX" "$ctx_a"
   cp -r "$MDIR" "$mdir_a"
-  make_render EKS '[{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":50}]'
+  make_render aws-us-east-1 '[{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":50}]'
   ( export NAMESPACE=payments; gitops_publish "$ctx_a" "$mdir_a" ) &
   ( export NAMESPACE=billing;  gitops_publish "$CTX" "$MDIR" ) &
   wait
   run remoto_ls
-  [[ "$output" == *"eks/payments/reports/50-httproute-egress.yaml"* ]]
-  [[ "$output" == *"eks/billing/checkout/50-httproute-egress.yaml"* ]]
+  [[ "$output" == *"aws-us-east-1/payments/reports/50-httproute-egress.yaml"* ]]
+  [[ "$output" == *"aws-us-east-1/billing/checkout/50-httproute-egress.yaml"* ]]
 }

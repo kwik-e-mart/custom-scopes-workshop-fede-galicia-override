@@ -27,6 +27,7 @@ steps:
       - { name: NAMESPACE, type: environment }
       - { name: APP_TARGET, type: environment }
       - { name: SERVICE_ID, type: environment }
+      - { name: SITE, type: environment }
       - { name: HOSTS_JSON, type: environment }
       - { name: ROUTES_JSON, type: environment }
       - { name: GATEWAY_NAME, type: environment }
