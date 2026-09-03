@@ -30,7 +30,12 @@ if [ "${#APP_LABEL_VALUE}" -gt 63 ]; then
 fi
 
 SECRET_NAME="api-manager-${LINK_ID}"
-API_KEY=$(openssl rand -hex 32) || { log error "api-manager: no se pudo generar la api key."; exit 1; }
+API_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
+  || { log error "api-manager: no se pudo generar la api key."; exit 1; }
+if [ "${#API_KEY}" -ne 64 ]; then
+  log error "api-manager: la api key generada no tiene los 64 hex esperados. No se emite una credencial mas corta de lo previsto."
+  exit 1
+fi
 
 SECRET_MANIFEST=$(jq -nc \
   --arg name "$SECRET_NAME" \

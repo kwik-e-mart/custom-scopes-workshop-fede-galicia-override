@@ -12,7 +12,7 @@ catchall_name_for_host() {
     | sed -e 's/\.$//' -e 's/[^a-z0-9]/-/g' -e 's/^-*//' \
     | cut -c1-40 \
     | sed -e 's/-*$//') || return 1
-  hash=$(printf %s "$host" | openssl dgst -sha256 | awk '{print $NF}' | cut -c1-10) || return 1
+  hash=$(printf %s "$host" | sha256sum | cut -c1-10) || return 1
   if [ -z "$hash" ]; then
     log error "api-manager: no se pudo derivar el nombre de la ruta catch-all de '$host'."
     return 1

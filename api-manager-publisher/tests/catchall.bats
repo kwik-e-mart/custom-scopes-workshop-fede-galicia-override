@@ -6,8 +6,8 @@ setup() {
     return 1
   }
   command -v gomplate >/dev/null && command -v jq >/dev/null \
-    && command -v yq >/dev/null && command -v openssl >/dev/null || {
-    echo "bats necesita gomplate, jq, yq y openssl." >&2; return 1
+    && command -v yq >/dev/null && command -v sha256sum >/dev/null || {
+    echo "bats necesita gomplate, jq, yq y sha256sum." >&2; return 1
   }
 
   source "${BATS_TEST_DIRNAME}/../logging"
