@@ -324,3 +324,8 @@ Lo que quedó allá y no hace falta para correrlo:
 
 El layer de plataforma que este service **asume que ya existe** —el `Gateway` de ingreso, su
 `AuthPolicy` de validación, la PKI y los Secrets de firma— tampoco viaja: se provisiona aparte.
+
+## Documentación de trabajo
+
+El diseño, los planes y el registro de los pivotes están en [`docs/`](./docs/README.md). Es material
+interno del desarrollo, no documentación de uso.
