@@ -240,3 +240,12 @@ notif() {
   echo "$output" | grep -q 'APP_TARGET=svc-1'
   echo "$output" | grep -q 'APP_LABEL_VALUE=payments.reports'
 }
+
+@test "una ruta con scope vacio se rechaza ANTES del split por tabs, donde el campo vacio correria al backend" {
+  ATTRS='{"hosts":["api.expuesta.com"],"routes":[{"path":"/r1","methods":["GET"],"scope":""}]}'
+  export NP_ACTION_CONTEXT="$(notif)" CONTEXT="$(ctx)"
+  run run_build_context
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "hay rutas sin scope"
+  ! echo "$output" | grep -q "no está entre los scopes activos"
+}
