@@ -28,7 +28,7 @@ variable "repository_service_spec_repo" {
 
 variable "service_path" {
   type        = string
-  default     = "egress-interceptor"
+  default     = "s2s-traffic-migrator"
   description = "Ruta del directorio del service dentro del repo."
 }
 

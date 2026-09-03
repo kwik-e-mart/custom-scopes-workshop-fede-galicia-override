@@ -183,10 +183,10 @@ git commit -m "docs(api-manager): confirmar la resolucion de labels del Secret e
 Deja el service enrutando acciones aunque todavía no hagan nada. Entregable testeable: el agente toma una acción `create` y llega al workflow sin romper.
 
 **Files:**
-- Create: `api-manager/logging`
-- Create: `api-manager/entrypoint/entrypoint`
-- Create: `api-manager/entrypoint/service`
-- Create: `api-manager/workflows/istio/create.yaml`
+- Create: `api-manager-publisher/logging`
+- Create: `api-manager-publisher/entrypoint/entrypoint`
+- Create: `api-manager-publisher/entrypoint/service`
+- Create: `api-manager-publisher/workflows/istio/create.yaml`
 
 **Interfaces:**
 - Produce: la función `log <level> <message>`, que consumen todos los scripts. Los niveles son `debug` < `info` < `warn` < `error`, filtrados por `LOG_LEVEL` (default `info`); `error` va a stderr.
@@ -204,15 +204,15 @@ mkdir -p api-manager/{entrypoint,workflows/istio,scripts/k8s,manifests/expose,sp
 - [ ] **Step 2: Copiar `logging` verbatim**
 
 ```bash
-cp egress-interceptor/logging api-manager/logging
-chmod +x api-manager/logging
+cp s2s-traffic-migrator/logging api-manager-publisher/logging
+chmod +x api-manager-publisher/logging
 ```
 
 No editarlo. Viene de `scopes/k8s/logging` de la plataforma; si allá cambia, se re-copia.
 
 - [ ] **Step 3: Escribir `entrypoint/entrypoint`**
 
-Copiar de `egress-interceptor/entrypoint/entrypoint` **quitando todos los comentarios**. Contenido:
+Copiar de `s2s-traffic-migrator/entrypoint/entrypoint` **quitando todos los comentarios**. Contenido:
 
 ```bash
 #!/bin/bash
@@ -301,14 +301,14 @@ steps:
 - [ ] **Step 6: Permisos y verificación de sintaxis**
 
 ```bash
-chmod +x api-manager/entrypoint/entrypoint api-manager/entrypoint/service
-bash -n api-manager/entrypoint/entrypoint && bash -n api-manager/entrypoint/service && echo "sintaxis OK"
+chmod +x api-manager-publisher/entrypoint/entrypoint api-manager-publisher/entrypoint/service
+bash -n api-manager-publisher/entrypoint/entrypoint && bash -n api-manager-publisher/entrypoint/service && echo "sintaxis OK"
 ```
 
 - [ ] **Step 7: Verificar que no quedaron comentarios**
 
 ```bash
-grep -n '^\s*#' api-manager/entrypoint/entrypoint api-manager/entrypoint/service | grep -v '^\S*:1:#!/bin/bash'
+grep -n '^\s*#' api-manager-publisher/entrypoint/entrypoint api-manager-publisher/entrypoint/service | grep -v '^\S*:1:#!/bin/bash'
 ```
 
 Esperado: sin salida. El único `#` admitido es el shebang.
@@ -327,8 +327,8 @@ git commit -m "feat(api-manager): esqueleto del service y router de acciones"
 Entregable testeable: los dos JSON son válidos y renderizan con gomplate, y el formulario se ve en la UI.
 
 **Files:**
-- Create: `api-manager/specs/service-spec.json.tpl`
-- Create: `api-manager/specs/links/connect.json.tpl`
+- Create: `api-manager-publisher/specs/service-spec.json.tpl`
+- Create: `api-manager-publisher/specs/links/connect.json.tpl`
 
 **Interfaces:**
 - Produce: los nombres de atributos `hosts` (array de string) y `routes` (array de objetos con `path`, `methods`, `scope`), que consume `build_context` (Task 3).
@@ -515,7 +515,7 @@ Esperado: el markdown con `## Api Manager` y `### FAQ`. Si sale vacío, el `\n` 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api-manager/specs/
+git add api-manager-publisher/specs/
 git commit -m "feat(api-manager): service spec con FAQ y link spec que exporta la api key"
 ```
 
@@ -526,8 +526,8 @@ git commit -m "feat(api-manager): service spec con FAQ y link spec que exporta l
 Entregable testeable: dado un `NP_ACTION_CONTEXT`, produce el JSON de contexto con los backends resueltos, o falla ruidosamente.
 
 **Files:**
-- Create: `api-manager/scripts/k8s/build_context`
-- Test: `api-manager/tests/build_context.bats`
+- Create: `api-manager-publisher/scripts/k8s/build_context`
+- Test: `api-manager-publisher/tests/build_context.bats`
 
 **Interfaces:**
 - Consume: `log` (Task 1); los atributos `hosts` y `routes` (Task 2).
@@ -535,7 +535,7 @@ Entregable testeable: dado un `NP_ACTION_CONTEXT`, produce el JSON de contexto c
 
 - [ ] **Step 1: Escribir el test que falla — resolución del dominio del scope**
 
-`tests/build_context.bats`. Copiar el `setup()` y el mock de `np` de `egress-interceptor/tests/build_context.bats` (incluido el guard de bash >= 4 y el log de invocaciones), y agregar:
+`tests/build_context.bats`. Copiar el `setup()` y el mock de `np` de `s2s-traffic-migrator/tests/build_context.bats` (incluido el guard de bash >= 4 y el log de invocaciones), y agregar:
 
 ```bash
 @test "resuelve el backend de cada ruta desde el dominio del scope" {
@@ -718,7 +718,7 @@ Esperado: sin salida.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add api-manager/scripts/k8s/build_context api-manager/tests/build_context.bats
+git add api-manager-publisher/scripts/k8s/build_context api-manager-publisher/tests/build_context.bats
 git commit -m "feat(api-manager): build_context con resolucion de scopes y guardas"
 ```
 
@@ -729,10 +729,10 @@ git commit -m "feat(api-manager): build_context con resolucion de scopes y guard
 Entregable testeable: dado un contexto, se renderizan un `HTTPRoute` y una `AuthPolicy` válidos.
 
 **Files:**
-- Create: `api-manager/manifests/expose/10-httproute.yaml.tpl`
-- Create: `api-manager/manifests/expose/20-authpolicy.yaml.tpl`
-- Create: `api-manager/scripts/k8s/manifests_lib`
-- Test: `api-manager/tests/render.bats`
+- Create: `api-manager-publisher/manifests/expose/10-httproute.yaml.tpl`
+- Create: `api-manager-publisher/manifests/expose/20-authpolicy.yaml.tpl`
+- Create: `api-manager-publisher/scripts/k8s/manifests_lib`
+- Test: `api-manager-publisher/tests/render.bats`
 
 **Interfaces:**
 - Consume: `HOSTS_JSON`, `ROUTES_JSON`, `NAMESPACE`, `APP_TARGET`, `GATEWAY_NAME`, `GATEWAY_NAMESPACE`, `API_KEY_HEADER` (Task 3).
@@ -740,7 +740,7 @@ Entregable testeable: dado un contexto, se renderizan un `HTTPRoute` y una `Auth
 
 - [ ] **Step 1: Escribir `manifests_lib`**
 
-Copiar `egress-interceptor/scripts/k8s/manifests_lib` **quitando todos los comentarios** y cambiando dos cosas: el default de `MANIFESTS_DIR` apunta a `../../manifests/expose`, y los mensajes de error dicen `api-manager` en vez de `egress-interceptor`.
+Copiar `s2s-traffic-migrator/scripts/k8s/manifests_lib` **quitando todos los comentarios** y cambiando dos cosas: el default de `MANIFESTS_DIR` apunta a `../../manifests/expose`, y los mensajes de error dicen `api-manager` en vez de `egress-interceptor`.
 
 Conservar sin tocar, porque cada uno tapa un fallo real:
 - `[ -e "$tpl" ] || break` — un glob sin matches se expande a sí mismo.
@@ -957,7 +957,7 @@ Esperado: 9 passing.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add api-manager/manifests/ api-manager/scripts/k8s/manifests_lib api-manager/tests/render.bats
+git add api-manager-publisher/manifests/ api-manager-publisher/scripts/k8s/manifests_lib api-manager-publisher/tests/render.bats
 git commit -m "feat(api-manager): manifiestos de httproute y authpolicy con render por template"
 ```
 
@@ -968,11 +968,11 @@ git commit -m "feat(api-manager): manifiestos de httproute y authpolicy con rend
 Entregable testeable: aplica los manifiestos y espera a que la ruta quede `Accepted`; borra todo en el delete; **aborta ante cualquier fallo**.
 
 **Files:**
-- Create: `api-manager/scripts/k8s/reconcile`
-- Create: `api-manager/scripts/k8s/write_service_outputs`
-- Create: `api-manager/workflows/istio/update.yaml`, `api-manager/workflows/istio/delete.yaml`
-- Modify: `api-manager/workflows/istio/create.yaml`
-- Test: `api-manager/tests/fail_fast.bats`
+- Create: `api-manager-publisher/scripts/k8s/reconcile`
+- Create: `api-manager-publisher/scripts/k8s/write_service_outputs`
+- Create: `api-manager-publisher/workflows/istio/update.yaml`, `api-manager-publisher/workflows/istio/delete.yaml`
+- Modify: `api-manager-publisher/workflows/istio/create.yaml`
+- Test: `api-manager-publisher/tests/fail_fast.bats`
 
 **Interfaces:**
 - Consume: `render_manifests`, `apply_manifests` (Task 4); todas las variables de Task 3.
@@ -1161,7 +1161,7 @@ Esperado: todo passing (build_context + render + fail_fast).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add api-manager/scripts/k8s/reconcile api-manager/scripts/k8s/write_service_outputs api-manager/workflows/ api-manager/tests/fail_fast.bats
+git add api-manager-publisher/scripts/k8s/reconcile api-manager-publisher/scripts/k8s/write_service_outputs api-manager-publisher/workflows/ api-manager-publisher/tests/fail_fast.bats
 git commit -m "feat(api-manager): reconcile apply y delete con abort ante cualquier fallo"
 ```
 
@@ -1172,9 +1172,9 @@ git commit -m "feat(api-manager): reconcile apply y delete con abort ante cualqu
 Entregable testeable: el `create` falla si otra aplicación ya declaró el mismo par host+path; **no** falla si comparten host con paths distintos.
 
 **Files:**
-- Create: `api-manager/scripts/k8s/check_collisions`
-- Modify: `api-manager/workflows/istio/create.yaml`, `api-manager/workflows/istio/update.yaml`
-- Test: `api-manager/tests/collisions.bats`
+- Create: `api-manager-publisher/scripts/k8s/check_collisions`
+- Modify: `api-manager-publisher/workflows/istio/create.yaml`, `api-manager-publisher/workflows/istio/update.yaml`
+- Test: `api-manager-publisher/tests/collisions.bats`
 
 **Interfaces:**
 - Consume: `HOSTS_JSON`, `ROUTES_JSON`, `NAMESPACE`, `APP_TARGET` (Task 3); `log` (Task 1).
@@ -1282,7 +1282,7 @@ En `create.yaml` y `update.yaml`, entre `build context` y `reconcile apply`:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add api-manager/scripts/k8s/check_collisions api-manager/tests/collisions.bats api-manager/workflows/
+git add api-manager-publisher/scripts/k8s/check_collisions api-manager-publisher/tests/collisions.bats api-manager-publisher/workflows/
 git commit -m "feat(api-manager): rechazar dominios y paths ya declarados por otra aplicacion"
 ```
 
@@ -1293,11 +1293,11 @@ git commit -m "feat(api-manager): rechazar dominios y paths ya declarados por ot
 Entregable testeable: el link crea un Secret con los labels correctos y devuelve la key en los results; el unlink lo borra.
 
 **Files:**
-- Create: `api-manager/entrypoint/link`
-- Create: `api-manager/scripts/k8s/mint_key`
-- Create: `api-manager/scripts/k8s/revoke_key`
-- Create: `api-manager/workflows/istio/link.yaml`, `api-manager/workflows/istio/unlink.yaml`
-- Test: `api-manager/tests/keys.bats`
+- Create: `api-manager-publisher/entrypoint/link`
+- Create: `api-manager-publisher/scripts/k8s/mint_key`
+- Create: `api-manager-publisher/scripts/k8s/revoke_key`
+- Create: `api-manager-publisher/workflows/istio/link.yaml`, `api-manager-publisher/workflows/istio/unlink.yaml`
+- Test: `api-manager-publisher/tests/keys.bats`
 
 **Interfaces:**
 - Consume: `APP_TARGET`, `KEYS_NAMESPACE` (Task 3); el atributo `api_key` del link spec (Task 2).
@@ -1448,7 +1448,7 @@ Esperado: todo passing.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add api-manager/entrypoint/link api-manager/scripts/k8s/mint_key api-manager/scripts/k8s/revoke_key api-manager/workflows/ api-manager/tests/keys.bats
+git add api-manager-publisher/entrypoint/link api-manager-publisher/scripts/k8s/mint_key api-manager-publisher/scripts/k8s/revoke_key api-manager-publisher/workflows/ api-manager-publisher/tests/keys.bats
 git commit -m "feat(api-manager): emision y revocacion de api keys por link"
 ```
 
@@ -1459,7 +1459,7 @@ git commit -m "feat(api-manager): emision y revocacion de api keys por link"
 Entregable testeable: el template renderiza un `Role`/`RoleBinding` que cubre lo que el service hace, y **nada más**.
 
 **Files:**
-- Create: `api-manager/manifests/rbac.yaml.tpl`
+- Create: `api-manager-publisher/manifests/rbac.yaml.tpl`
 
 **Interfaces:**
 - Consume: `NAMESPACE`, `GATEWAY_NAMESPACE`, `KEYS_NAMESPACE`, `AGENT_SA`, `AGENT_NAMESPACE` (env vars al renderizar).
@@ -1514,7 +1514,7 @@ Esperado: `create`, `update`, `patch`, `delete`. **Sin `get` ni `list`.**
 - [ ] **Step 4: Commit**
 
 ```bash
-git add api-manager/manifests/rbac.yaml.tpl
+git add api-manager-publisher/manifests/rbac.yaml.tpl
 git commit -m "feat(api-manager): rbac sin lectura de secrets en kuadrant-system"
 ```
 
@@ -1525,8 +1525,8 @@ git commit -m "feat(api-manager): rbac sin lectura de secrets en kuadrant-system
 Entregable testeable: `tofu validate` pasa y un `apply` real registra el service con el slug `api-manager`.
 
 **Files:**
-- Create: `api-manager/specs/install/{main,variables,outputs,providers,versions}.tf`, `terraform.tfvars.example`
-- Create: `api-manager/specs/prerequisites/{main,variables,providers,versions}.tf`, `terraform.tfvars.example`
+- Create: `api-manager-publisher/specs/install/{main,variables,outputs,providers,versions}.tf`, `terraform.tfvars.example`
+- Create: `api-manager-publisher/specs/prerequisites/{main,variables,providers,versions}.tf`, `terraform.tfvars.example`
 
 **Interfaces:**
 - Produce: el output `service_specification_slug` (= `api-manager`), que consume el channel.
@@ -1534,9 +1534,9 @@ Entregable testeable: `tofu validate` pasa y un `apply` real registra el service
 - [ ] **Step 1: Copiar la estructura del egress-interceptor**
 
 ```bash
-cp -r egress-interceptor/specs/install api-manager/specs/install
-cp -r egress-interceptor/specs/prerequisites api-manager/specs/prerequisites
-rm -rf api-manager/specs/install/.terraform* api-manager/specs/prerequisites/.terraform*
+cp -r s2s-traffic-migrator/specs/install api-manager-publisher/specs/install
+cp -r s2s-traffic-migrator/specs/prerequisites api-manager-publisher/specs/prerequisites
+rm -rf api-manager-publisher/specs/install/.terraform* api-manager-publisher/specs/prerequisites/.terraform*
 ```
 
 - [ ] **Step 2: Ajustar `install/main.tf`**
@@ -1566,7 +1566,7 @@ module "service_definition" {
 - [ ] **Step 3: Verificar que no quedaron secretos ni state**
 
 ```bash
-cd api-manager/specs/install
+cd api-manager-publisher/specs/install
 ls -la | grep -E 'tfvars$|tfstate' && echo "REVISAR" || echo "limpio"
 grep -rn "nullplatform_api_key\|np_api_key" terraform.tfvars.example
 ```
@@ -1576,7 +1576,7 @@ En `terraform.tfvars.example` sólo puede haber placeholders. **Nunca** commitea
 - [ ] **Step 4: Validar**
 
 ```bash
-cd api-manager/specs/install && tofu init -backend=false && tofu validate
+cd api-manager-publisher/specs/install && tofu init -backend=false && tofu validate
 cd ../prerequisites && tofu init -backend=false && tofu validate
 ```
 
@@ -1586,7 +1586,7 @@ Esperado: `Success!` en los dos.
 
 ```bash
 cd ~/nullplatform/galicia/custom-scopes-workshop-fede-galicia-override
-git add api-manager/specs/
+git add api-manager-publisher/specs/
 git commit -m "feat(api-manager): terraform de instalacion y prerequisitos"
 ```
 
@@ -1595,12 +1595,12 @@ git commit -m "feat(api-manager): terraform de instalacion y prerequisitos"
 ### Task 10: README y PR
 
 **Files:**
-- Create: `api-manager/README.md`
+- Create: `api-manager-publisher/README.md`
 - Modify: `README.md` (raíz), si lista los services del repo
 
 - [ ] **Step 1: Escribir el README**
 
-Seguir la estructura de `egress-interceptor/README.md`: qué hace, qué ve el dev, cómo lo consume otra app, instalación (prerequisites → install), y procedencia. Sin detalles de implementación que el dev no necesite.
+Seguir la estructura de `s2s-traffic-migrator/README.md`: qué hace, qué ve el dev, cómo lo consume otra app, instalación (prerequisites → install), y procedencia. Sin detalles de implementación que el dev no necesite.
 
 - [ ] **Step 2: Verificar que el repo quedó limpio**
 

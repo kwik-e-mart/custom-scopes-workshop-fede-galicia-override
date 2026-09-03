@@ -285,7 +285,7 @@ tofu -chdir="$SVC/specs/install" show install.tfplan 2>&1 | grep cmdline
 
 ```
 # →
-"cmdline"     = "/root/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override/api-manager/entrypoint/entrypoint"
+"cmdline"     = "/root/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override/api-manager-publisher/entrypoint/entrypoint"
 ```
 
 `base_clone_path` no se pasa en `install/main.tf` (queda en su default del módulo,

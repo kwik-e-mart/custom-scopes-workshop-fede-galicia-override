@@ -28,7 +28,7 @@ variable "repository_service_spec_repo" {
 
 variable "service_path" {
   type        = string
-  default     = "api-manager"
+  default     = "api-manager-publisher"
   description = "Ruta del directorio del service dentro del repo."
 }
 

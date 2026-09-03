@@ -220,11 +220,11 @@ afectar el egreso además del ingreso; se acepta.
 | Archivo | Cambio |
 |---|---|
 | `services/egress-interceptor/openresty/nginx.conf.tpl` | se elimina |
-| `services/egress-interceptor/scripts/k8s/lib_render.sh` | se elimina `render_server_blocks` / `render_nginx_conf`; se agrega el render de `Gateway` + `HTTPRoute` + `AuthPolicy` |
-| `services/egress-interceptor/scripts/k8s/reconcile` | aplica manifests declarativos en vez de ConfigMap + Deployment |
-| `services/egress-interceptor/manifests/egress-gateway.yaml.tpl` | se reemplaza por los manifests de Gateway API |
-| `services/egress-interceptor/tests/render.bats` | reescribir: hoy assertea sobre el `nginx.conf` |
-| `services/egress-interceptor/specs/service-spec.json.tpl` | revisar si los atributos siguen alcanzando (probablemente sí) |
+| `services/s2s-traffic-migrator/scripts/k8s/lib_render.sh` | se elimina `render_server_blocks` / `render_nginx_conf`; se agrega el render de `Gateway` + `HTTPRoute` + `AuthPolicy` |
+| `services/s2s-traffic-migrator/scripts/k8s/reconcile` | aplica manifests declarativos en vez de ConfigMap + Deployment |
+| `services/s2s-traffic-migrator/manifests/egress-gateway.yaml.tpl` | se reemplaza por los manifests de Gateway API |
+| `services/s2s-traffic-migrator/tests/render.bats` | reescribir: hoy assertea sobre el `nginx.conf` |
+| `services/s2s-traffic-migrator/specs/service-spec.json.tpl` | revisar si los atributos siguen alcanzando (probablemente sí) |
 | `accounts/galicia/demo-kuadrant-s2s/modules/kuadrant-s2s/` | la clave de firma por namespace pasa a ser un Secret de wristband en `kuadrant-system`; `pki` puede tener que emitirlas |
 | `accounts/galicia/demo-kuadrant-s2s/RUNBOOK-PRUEBAS.md` | el Paso 4 (`pod_gw`, `esperar`) apunta a `app=egress-gateway`: hay que reapuntarlo al label del Gateway |
 

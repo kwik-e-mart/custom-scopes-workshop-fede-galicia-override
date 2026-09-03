@@ -47,7 +47,7 @@ ejercitado sobre su propio par de clusters, y la implementación los confirmó d
 
 ## Fase 1 — Render de los manifests (TDD)
 
-- [x] Escribir primero los tests en `services/egress-interceptor/tests/render.bats`, **y correrlos
+- [x] Escribir primero los tests en `services/s2s-traffic-migrator/tests/render.bats`, **y correrlos
       contra el código viejo para confirmar que fallan**. Casos mínimos:
       un `HTTPRoute` por intercepción; `weight` = `percent` y su complemento; el header de ruteo
       correcto según `target_kind` (`X-NP-Scope` para `EKS`, `X-NP-SVC` para `OS`); rewrite a

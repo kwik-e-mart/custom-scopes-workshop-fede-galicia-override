@@ -301,7 +301,7 @@ namespace target:
 
 ```bash
 NAMESPACE=payments AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform \
-  gomplate -f services/egress-interceptor/manifests/rbac.yaml.tpl | kubectl apply -f -
+  gomplate -f services/s2s-traffic-migrator/manifests/rbac.yaml.tpl | kubectl apply -f -
 ```
 
 Ajustar `AGENT_SA`/`AGENT_NAMESPACE` al ServiceAccount real del agente en el cluster.

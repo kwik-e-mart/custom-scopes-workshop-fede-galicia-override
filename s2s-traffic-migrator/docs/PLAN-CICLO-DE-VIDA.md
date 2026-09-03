@@ -16,7 +16,7 @@ borremos la regla"— es en realidad infraestructura de producción.
 
 ### Qué pasa hoy si alguien la borra
 
-Verificado leyendo `services/egress-interceptor/scripts/k8s/reconcile` el 2026-08-27:
+Verificado leyendo `services/s2s-traffic-migrator/scripts/k8s/reconcile` el 2026-08-27:
 
 1. Al quitar la regla, el reconcile detecta el Service como *stale* (lo delata su annotation
    `egress-interceptor/original-selector`).
@@ -95,9 +95,9 @@ sí sobra. ¿Cómo se sabe que se llegó a ese punto? ¿Quién lo declara? Hoy n
 
 ## Archivos que toca
 
-- `services/egress-interceptor/scripts/k8s/reconcile` — `revert_service` y el bloque de stale
+- `services/s2s-traffic-migrator/scripts/k8s/reconcile` — `revert_service` y el bloque de stale
   services (opción 1).
-- `services/egress-interceptor/specs/service-spec.json.tpl` — el markdown ya lo advierte; si el
+- `services/s2s-traffic-migrator/specs/service-spec.json.tpl` — el markdown ya lo advierte; si el
   estado 100 pasa a ser terminal, cambia también el schema.
 - `accounts/galicia/demo-kuadrant-s2s/RUNBOOK-PRUEBAS.md` y `GUIA-DEMO-DETALLE.md` — hoy **no**
   mencionan este caso. Decidido no tocarlos hasta que haya una decisión.

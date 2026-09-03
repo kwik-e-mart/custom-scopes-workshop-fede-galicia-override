@@ -1,13 +1,12 @@
-# Copiar a terraform.tfvars y completar. Aplicar con `tofu apply`.
 np_api_key    = "REEMPLAZAR_CON_LA_API_KEY_DEL_PROVIDER"
 agent_api_key = "REEMPLAZAR_CON_LA_API_KEY_DEL_AGENTE"
 nrn           = "organization=REEMPLAZAR:account=REEMPLAZAR"
 
-# Tiene que matchear los tags con los que arranca el agente de cada cluster.
 tags_selectors = {
-  role = "egress-interceptor"
+  role = "api-manager"
 }
 
 repository_service_spec_repo = "kwik-e-mart/custom-scopes-workshop-fede-galicia-override"
-service_path                 = "egress-interceptor"
+service_path                 = "api-manager-publisher"
 extra_visible_to_nrns        = []
+manage_notification_channel  = true

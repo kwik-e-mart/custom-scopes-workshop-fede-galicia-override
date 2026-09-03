@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Estado: implementado.** El código está en `services/egress-interceptor/scripts/k8s/gitops_lib`,
+> **Estado: implementado.** El código está en `services/s2s-traffic-migrator/scripts/k8s/gitops_lib`,
 > wireado en `reconcile` y validado por `tests/gitops_publish.bats` (40 casos, incluida la carrera de
 > dos instancias pusheando al mismo repo). **Los checkboxes de abajo quedaron sin marcar durante la
 > implementación**: se dejan como estaban en vez de marcarlos en bloque, porque un `[x]` puesto sin
@@ -46,23 +46,23 @@
 
 | archivo | responsabilidad |
 |---|---|
-| `services/egress-interceptor/scripts/k8s/gitops_lib` (crear) | todo el publisher: resolución de config, path del subárbol, fan-out del render, clone/commit/push con retry |
-| `services/egress-interceptor/scripts/k8s/build_context` (modificar) | validar la config GitOps y exportar la parte no secreta |
-| `services/egress-interceptor/scripts/k8s/reconcile` (modificar) | sourcear el lib y llamarlo antes del apply y al principio del delete |
-| `services/egress-interceptor/workflows/openshift/create.yaml` (modificar) | `configuration:` y `output:` de las vars nuevas |
-| `services/egress-interceptor/workflows/openshift/delete.yaml` (modificar) | idem |
-| `services/egress-interceptor/tests/gitops_publish.bats` (crear) | la suite del publisher, con git de verdad |
-| `services/egress-interceptor/tests/build_context.bats` (modificar) | validación de la config GitOps |
-| `services/egress-interceptor/tests/fail_fast.bats` (modificar) | el orden: publisher que falla ⇒ no se aplica nada |
-| `services/egress-interceptor/README.md` (modificar) | layout, configuración y gaps de la pata 2 |
+| `services/s2s-traffic-migrator/scripts/k8s/gitops_lib` (crear) | todo el publisher: resolución de config, path del subárbol, fan-out del render, clone/commit/push con retry |
+| `services/s2s-traffic-migrator/scripts/k8s/build_context` (modificar) | validar la config GitOps y exportar la parte no secreta |
+| `services/s2s-traffic-migrator/scripts/k8s/reconcile` (modificar) | sourcear el lib y llamarlo antes del apply y al principio del delete |
+| `services/s2s-traffic-migrator/workflows/openshift/create.yaml` (modificar) | `configuration:` y `output:` de las vars nuevas |
+| `services/s2s-traffic-migrator/workflows/openshift/delete.yaml` (modificar) | idem |
+| `services/s2s-traffic-migrator/tests/gitops_publish.bats` (crear) | la suite del publisher, con git de verdad |
+| `services/s2s-traffic-migrator/tests/build_context.bats` (modificar) | validación de la config GitOps |
+| `services/s2s-traffic-migrator/tests/fail_fast.bats` (modificar) | el orden: publisher que falla ⇒ no se aplica nada |
+| `services/s2s-traffic-migrator/README.md` (modificar) | layout, configuración y gaps de la pata 2 |
 
 ---
 
 ### Task 1: Config, path del subárbol y redacción del token
 
 **Files:**
-- Create: `services/egress-interceptor/scripts/k8s/gitops_lib`
-- Test: `services/egress-interceptor/tests/gitops_publish.bats`
+- Create: `services/s2s-traffic-migrator/scripts/k8s/gitops_lib`
+- Test: `services/s2s-traffic-migrator/tests/gitops_publish.bats`
 
 **Interfaces:**
 - Consumes: `log` (de `logging`); `NAMESPACE` y `ORIGIN` del env.
@@ -70,7 +70,7 @@
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
-Crear `services/egress-interceptor/tests/gitops_publish.bats`:
+Crear `services/s2s-traffic-migrator/tests/gitops_publish.bats`:
 
 ```bash
 #!/usr/bin/env bats
@@ -166,7 +166,7 @@ Esperado: FAIL los 9, con `gitops_lib: No such file or directory` en el `setup`.
 
 - [ ] **Step 3: Escribir `gitops_lib` con la base**
 
-Crear `services/egress-interceptor/scripts/k8s/gitops_lib`:
+Crear `services/s2s-traffic-migrator/scripts/k8s/gitops_lib`:
 
 ```bash
 #!/usr/bin/env bash
@@ -229,7 +229,7 @@ Esperado: PASS 9/9.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/egress-interceptor/scripts/k8s/gitops_lib services/egress-interceptor/tests/gitops_publish.bats
+git add services/s2s-traffic-migrator/scripts/k8s/gitops_lib services/s2s-traffic-migrator/tests/gitops_publish.bats
 git commit -m "feat(egress-interceptor): base del publisher gitops (config y path)"
 ```
 
@@ -238,8 +238,8 @@ git commit -m "feat(egress-interceptor): base del publisher gitops (config y pat
 ### Task 2: Fan-out del render a hojas por servicio
 
 **Files:**
-- Modify: `services/egress-interceptor/scripts/k8s/gitops_lib`
-- Test: `services/egress-interceptor/tests/gitops_publish.bats`
+- Modify: `services/s2s-traffic-migrator/scripts/k8s/gitops_lib`
+- Test: `services/s2s-traffic-migrator/tests/gitops_publish.bats`
 
 **Interfaces:**
 - Consumes: `render_manifests <ctx> <outdir>` de `manifests_lib`; `GITOPS_NAMESPACE_MANIFESTS` y `GITOPS_PER_SERVICE_MANIFESTS` de la Task 1.
@@ -430,7 +430,7 @@ Esperado: PASS 17/17.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/egress-interceptor/scripts/k8s/gitops_lib services/egress-interceptor/tests/gitops_publish.bats
+git add services/s2s-traffic-migrator/scripts/k8s/gitops_lib services/s2s-traffic-migrator/tests/gitops_publish.bats
 git commit -m "feat(egress-interceptor): render de las hojas por servicio para gitops"
 ```
 
@@ -439,8 +439,8 @@ git commit -m "feat(egress-interceptor): render de las hojas por servicio para g
 ### Task 3: Clone, commit y push con retry
 
 **Files:**
-- Modify: `services/egress-interceptor/scripts/k8s/gitops_lib`
-- Test: `services/egress-interceptor/tests/gitops_publish.bats`
+- Modify: `services/s2s-traffic-migrator/scripts/k8s/gitops_lib`
+- Test: `services/s2s-traffic-migrator/tests/gitops_publish.bats`
 
 **Interfaces:**
 - Consumes: `gitops_subtree`, `gitops_repo_url`, `gitops_enabled`, `gitops_redact`, `gitops_render_tree`, `gitops_sleep`.
@@ -763,7 +763,7 @@ Esperado: PASS 29/29.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/egress-interceptor/scripts/k8s/gitops_lib services/egress-interceptor/tests/gitops_publish.bats
+git add services/s2s-traffic-migrator/scripts/k8s/gitops_lib services/s2s-traffic-migrator/tests/gitops_publish.bats
 git commit -m "feat(egress-interceptor): push gitops con retry resiliente a carreras"
 ```
 
@@ -772,10 +772,10 @@ git commit -m "feat(egress-interceptor): push gitops con retry resiliente a carr
 ### Task 4: Validar la configuración en `build_context`
 
 **Files:**
-- Modify: `services/egress-interceptor/scripts/k8s/build_context`
-- Modify: `services/egress-interceptor/workflows/openshift/create.yaml`
-- Modify: `services/egress-interceptor/workflows/openshift/delete.yaml`
-- Test: `services/egress-interceptor/tests/build_context.bats`
+- Modify: `services/s2s-traffic-migrator/scripts/k8s/build_context`
+- Modify: `services/s2s-traffic-migrator/workflows/openshift/create.yaml`
+- Modify: `services/s2s-traffic-migrator/workflows/openshift/delete.yaml`
+- Test: `services/s2s-traffic-migrator/tests/build_context.bats`
 
 **Interfaces:**
 - Consumes: `require_match <valor> <regex> <campo>` y el helper de test `run_bc`, los dos ya existentes.
@@ -932,7 +932,7 @@ Esperado: PASS todo, incluidos los 115 previos.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add services/egress-interceptor/scripts/k8s/build_context services/egress-interceptor/workflows services/egress-interceptor/tests/build_context.bats
+git add services/s2s-traffic-migrator/scripts/k8s/build_context services/s2s-traffic-migrator/workflows services/s2s-traffic-migrator/tests/build_context.bats
 git commit -m "feat(egress-interceptor): validar la configuracion del repo gitops"
 ```
 
@@ -941,8 +941,8 @@ git commit -m "feat(egress-interceptor): validar la configuracion del repo gitop
 ### Task 5: Enganchar el publisher en el `reconcile`
 
 **Files:**
-- Modify: `services/egress-interceptor/scripts/k8s/reconcile`
-- Test: `services/egress-interceptor/tests/fail_fast.bats`
+- Modify: `services/s2s-traffic-migrator/scripts/k8s/reconcile`
+- Test: `services/s2s-traffic-migrator/tests/fail_fast.bats`
 
 **Interfaces:**
 - Consumes: `gitops_publish` y `gitops_publish_removal` de la Task 3.
@@ -1025,7 +1025,7 @@ Esperado: PASS todo.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/egress-interceptor/scripts/k8s/reconcile services/egress-interceptor/tests/fail_fast.bats
+git add services/s2s-traffic-migrator/scripts/k8s/reconcile services/s2s-traffic-migrator/tests/fail_fast.bats
 git commit -m "feat(egress-interceptor): publicar al repo gitops antes de aplicar"
 ```
 
@@ -1034,7 +1034,7 @@ git commit -m "feat(egress-interceptor): publicar al repo gitops antes de aplica
 ### Task 6: Documentar el contrato
 
 **Files:**
-- Modify: `services/egress-interceptor/README.md`
+- Modify: `services/s2s-traffic-migrator/README.md`
 
 **Interfaces:**
 - Consumes: el layout y la config de las Tasks 1-4.
@@ -1042,7 +1042,7 @@ git commit -m "feat(egress-interceptor): publicar al repo gitops antes de aplica
 
 - [ ] **Step 1: Agregar la sección al README**
 
-Después de la sección "Templating" de `services/egress-interceptor/README.md`, agregar una sección "Publicación a un repo GitOps" que cubra:
+Después de la sección "Templating" de `services/s2s-traffic-migrator/README.md`, agregar una sección "Publicación a un repo GitOps" que cubra:
 
 - que el `reconcile` **sigue aplicando** y que el repo es, por ahora, un registro del estado deseado que nadie consume;
 - el árbol, con el ejemplo concreto de los dos substratos, copiado de `docs/s2s-gitops-publish.md`;
@@ -1058,7 +1058,7 @@ Agregar también `git` a la lista de dependencias de la sección "Tests".
 - [ ] **Step 2: Verificar el link y el archivo**
 
 ```bash
-grep -n 's2s-gitops-publish' services/egress-interceptor/README.md
+grep -n 's2s-gitops-publish' services/s2s-traffic-migrator/README.md
 ls docs/s2s-gitops-publish.md
 ```
 Esperado: el grep encuentra el link y el `ls` encuentra el archivo.
@@ -1066,7 +1066,7 @@ Esperado: el grep encuentra el link y el `ls` encuentra el archivo.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add services/egress-interceptor/README.md
+git add services/s2s-traffic-migrator/README.md
 git commit -m "docs(egress-interceptor): documentar la publicacion al repo gitops"
 ```
 

@@ -235,7 +235,7 @@ El agente no clona este repo: lo lee de un **symlink al working copy**, igual qu
 `egress-interceptor` con `galicia-banco`. Así ejecuta el código tal como está en tu disco, sin
 commitear ni esperar un clone.
 
-El channel arma el comando como `<base_clone_path>/<org>/<repo>/api-manager/entrypoint/entrypoint`.
+El channel arma el comando como `<base_clone_path>/<org>/<repo>/api-manager-publisher/entrypoint/entrypoint`.
 Con `base_clone_path = ~/.np` (el del agente host-runtime, igual que el egress), el symlink va así:
 
 ```bash
@@ -247,7 +247,7 @@ ln -sfn ~/nullplatform/galicia/custom-scopes-workshop-fede-galicia-override \
 Verificalo antes de arrancar el agente:
 
 ```bash
-ls -l ~/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override/api-manager/entrypoint/entrypoint
+ls -l ~/.np/kwik-e-mart/custom-scopes-workshop-fede-galicia-override/api-manager-publisher/entrypoint/entrypoint
 # → tiene que existir y ser ejecutable
 ```
 

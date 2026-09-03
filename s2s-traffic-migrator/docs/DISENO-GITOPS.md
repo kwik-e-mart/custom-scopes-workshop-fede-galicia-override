@@ -1,6 +1,6 @@
 # Publicar los manifiestos del egress-interceptor a un repo (pata 1 de GitOps)
 
-**Estado:** **implementado y verificado** (`services/egress-interceptor/scripts/k8s/gitops_lib`,
+**Estado:** **implementado y verificado** (`services/s2s-traffic-migrator/scripts/k8s/gitops_lib`,
 40 tests en `tests/gitops_publish.bats`) · **Plan de implementación:** [`plans/egress-interceptor-gitops-publish.md`](./PLAN-GITOPS.md)
 **Service:** [`services/egress-interceptor/`](../) · **Diseño del que se cuelga:** [`docs/s2s-egress-sin-openresty.md`](s2s-egress-sin-openresty.md)
 
@@ -348,7 +348,7 @@ service y darle al reconciler solo el plano de ruteo.
 
 ## Tests
 
-`services/egress-interceptor/tests/gitops_publish.bats`, con **git de verdad**: el remoto es un
+`services/s2s-traffic-migrator/tests/gitops_publish.bats`, con **git de verdad**: el remoto es un
 `git init --bare` en `$BATS_TEST_TMPDIR`. Sin mocks de git — un mock de git que no modela el rechazo
 por non-fast-forward pasaría en verde mientras el git real falla.
 

@@ -10,7 +10,7 @@ del service. Decidido con el usuario el 2026-08-25.
 
 ## Cómo retomar esto desde cero
 
-1. Leé este archivo entero antes de tocar nada, y después `services/egress-interceptor/README.md`.
+1. Leé este archivo entero antes de tocar nada, y después `services/s2s-traffic-migrator/README.md`.
 2. El código del service está en `services/egress-interceptor/`; la capa de plataforma en
    `accounts/galicia/demo-kuadrant-s2s/modules/kuadrant-s2s/`.
 3. El diagrama `services/egress-interceptor/arquitectura-egress.drawio` describe el diseño **viejo**:
