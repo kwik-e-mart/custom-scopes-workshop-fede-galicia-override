@@ -74,9 +74,11 @@ cp terraform.tfvars.example terraform.tfvars   # completar kube_context
 tofu init && tofu apply
 ```
 
-Este layer **no** crea el Gateway de ingreso (`s2s-ingress`, en el namespace `gateways`) contra el
-que este service cuelga sus `HTTPRoute`. Ese Gateway, su certificado y el resto del layer de
-plataforma se asumen provistos aparte, por cluster.
+Este layer **no** crea con Terraform el Gateway de ingreso (`s2s-ingress`, en el namespace
+`gateways`) contra el que este service cuelga sus `HTTPRoute`, ni la clave de firma del wristband.
+Eso va como **manifiestos explícitos** en
+[`specs/prerequisites/manifests/`](./specs/prerequisites/manifests), con los placeholders y el orden
+de aplicación en [`specs/prerequisites/README.md`](./specs/prerequisites/README.md).
 
 ### `specs/install/`
 

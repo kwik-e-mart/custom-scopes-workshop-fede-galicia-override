@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: __APP_NAMESPACE__-wristband-key
+  namespace: kuadrant-system
+stringData:
+  key.pem: |
+    __APP_NAMESPACE_SIGNING_KEY_PKCS1_PEM__

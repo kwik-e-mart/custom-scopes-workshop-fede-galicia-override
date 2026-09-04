@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: __LOCAL_JWKS_NAME__
+  namespace: kuadrant-system
+data:
+  __APP_NAMESPACE__.json: |
+    __APP_NAMESPACE_JWKS__
+  nginx.conf: |
+    server {
+      listen 8080;
+      default_type application/json;
+      location ~ "^/([a-z0-9-]+)/jwks\.json$" { alias /www/$1.json; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: __LOCAL_JWKS_NAME__
+  namespace: kuadrant-system
+  labels:
+    app: __LOCAL_JWKS_NAME__
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: __LOCAL_JWKS_NAME__
+  template:
+    metadata:
+      labels:
+        app: __LOCAL_JWKS_NAME__
+    spec:
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: cfg
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: nginx.conf
+            - name: www
+              mountPath: /www
+      volumes:
+        - name: cfg
+          configMap:
+            name: __LOCAL_JWKS_NAME__
+        - name: www
+          configMap:
+            name: __LOCAL_JWKS_NAME__
+            items:
+              - key: __APP_NAMESPACE__.json
+                path: __APP_NAMESPACE__.json
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: __LOCAL_JWKS_NAME__
+  namespace: kuadrant-system
+spec:
+  selector:
+    app: __LOCAL_JWKS_NAME__
+  ports:
+    - port: 8080
+      targetPort: 8080

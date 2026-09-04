@@ -208,9 +208,12 @@ las validadas en la PoC (Kuadrant `1.5.2`, Gateway API `v1.3.0`); el cluster des
 otras. Y `manage_gateway_api_crds` tiene que quedar en `false` en OpenShift: ahí los CRDs los
 gestiona su propio operator y reinstalarlos genera drift.
 
-**Lo que este layer NO instala**, y el service igual da por hecho: el `Gateway` de **ingreso** y su
-`AuthPolicy` de validación, la PKI, y los Secrets de firma en `kuadrant-system`. Son decisiones de
-plataforma —qué expone cada cluster, con qué certificados— que no corresponden a un ejemplo.
+**Lo que este layer NO instala** con Terraform, y el service igual da por hecho: el `Gateway` de
+**ingreso** y su `AuthPolicy` de validación, la PKI, y los Secrets de firma en `kuadrant-system`.
+Son decisiones de plataforma —qué expone cada cluster, con qué certificados— que no corresponden a
+un ejemplo, así que viajan como **manifiestos explícitos** en
+[`specs/prerequisites/manifests/`](./specs/prerequisites/manifests), con los placeholders y el orden
+de aplicación documentados en [`specs/prerequisites/README.md`](./specs/prerequisites/README.md).
 
 ### `specs/install/` — registrar el service
 
@@ -274,9 +277,13 @@ conectividad corporativa y el valor es otro. El mecanismo de identidad no se ent
 Este service **no provisiona el layer de plataforma**. Da por hecho, en cada cluster:
 
 - el `Gateway` de **ingreso** y su `AuthPolicy` de validación, en `GATEWAY_NAMESPACE`;
+- el endpoint de JWKS de este cluster y la resolución del JWKS del peer;
 - los Secrets de firma en `kuadrant-system` y la CA del peer;
 - Kuadrant y Gateway API instalados, con una `GatewayClass` utilizable;
 - el RBAC de abajo, aplicado una vez por namespace destino.
+
+Todo eso está como manifiesto listo para aplicar en
+[`specs/prerequisites/manifests/`](./specs/prerequisites/manifests).
 
 Con `GITOPS_REPO_URL` configurada, además: la **rama destino tiene que existir** en el repo —el
 publisher clona con `--branch`— y el token necesita permiso de escritura sobre ella. Si la rama está
@@ -323,7 +330,9 @@ Lo que quedó allá y no hace falta para correrlo:
   que hay que pasarle al agente, no código del service.
 
 El layer de plataforma que este service **asume que ya existe** —el `Gateway` de ingreso, su
-`AuthPolicy` de validación, la PKI y los Secrets de firma— tampoco viaja: se provisiona aparte.
+`AuthPolicy` de validación, la PKI y los Secrets de firma— no viaja como código de la PoC: viaja
+como los manifiestos de [`specs/prerequisites/manifests/`](./specs/prerequisites/manifests), para
+aplicar con los valores del cluster destino.
 
 ## Documentación de trabajo
 

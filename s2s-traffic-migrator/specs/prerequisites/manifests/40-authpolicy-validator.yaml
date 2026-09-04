@@ -1,0 +1,40 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: s2s-validator
+  namespace: gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: s2s-ingress
+  rules:
+    authentication:
+      local-__APP_NAMESPACE__:
+        jwt:
+          jwksUrl: http://__LOCAL_JWKS_NAME__.kuadrant-system.svc.cluster.local:8080/__APP_NAMESPACE__/jwks.json
+        credentials:
+          customHeader:
+            name: x-np-token
+        overrides:
+          ns:
+            value: __APP_NAMESPACE__
+      peer-__APP_NAMESPACE__:
+        jwt:
+          jwksUrl: http://__PEER_JWKS_NAME__.kuadrant-system.svc.cluster.local:8080/__APP_NAMESPACE__/jwks.json
+        credentials:
+          customHeader:
+            name: x-np-token
+        overrides:
+          ns:
+            value: __APP_NAMESPACE__
+    authorization:
+      allowed-namespaces:
+        patternMatching:
+          patterns:
+            - any:
+                - selector: auth.identity.ns
+                  operator: eq
+                  value: __APP_NAMESPACE__
+    response:
+      success: {}
