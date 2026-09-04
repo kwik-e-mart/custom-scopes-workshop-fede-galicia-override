@@ -5,7 +5,7 @@ Dos cosas distintas viven acá:
 | | qué es | alcance |
 |---|---|---|
 | `*.tf` | instala **Gateway API** y **Kuadrant** (con el CR `Kuadrant`, que levanta Authorino y el Limitador) | por cluster |
-| `manifests/` | el **layer de plataforma** que el service da por hecho y **no crea**: el Gateway de ingreso, su certificado, la `AuthPolicy` que valida el token, el endpoint de JWKS, las claves de firma, la CA del peer, la NetworkPolicy y el `ReferenceGrant` | por cluster + por namespace |
+| `manifests/` | el **layer de plataforma** que el service da por hecho y **no crea**: el Gateway de ingreso, su certificado, la `AuthPolicy` que valida el token, el endpoint de JWKS, las claves de firma, la CA del peer y la NetworkPolicy | por cluster + por namespace |
 
 Sin el CR `Kuadrant` las `AuthPolicy` quedan **aceptadas y nunca enforceadas**: los objetos se ven
 en verde y el tráfico pasa sin validar. Sin lo de `manifests/` el service reconcilia, aplica sus
@@ -29,7 +29,6 @@ obliga a cambiarlo también allá.
 | `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system` | por namespace emisor | siempre |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |
-| `80-referencegrant.yaml` | `ReferenceGrant` | por namespace | sólo con origen OpenShift, que es donde el service cuelga un `HTTPRoute` de ingreso apuntando a un `Service` de otro namespace |
 
 ## Placeholders
 
@@ -94,11 +93,6 @@ kubectl get gatewayclass istio -o jsonpath='{.status.conditions[?(@.type=="Accep
 kubectl -n istio-system get deploy istiod
 ```
 
-En **OpenShift** hay dos cosas más, que no son de este layer pero rompen el mismo camino: los CRDs
-de Gateway API los gestiona su propio operator (por eso `manage_gateway_api_crds` va en `false`), y
-cada namespace inyectado necesita su `NetworkAttachmentDefinition istio-cni` más el `anyuid` para el
-UID 1337 del sidecar.
-
 ## Aplicar
 
 Los tres archivos que llevan material criptográfico (`10-`, `50-`, `60-`) tienen el PEM como
@@ -146,7 +140,6 @@ kubectl -n kuadrant-system create secret generic "$NS-wristband-key" \
 kubectl -n "$NS" create secret generic s2s-remote-ca --from-file=ca.crt=peer-ca.crt
 
 sed "s/__APP_NAMESPACE__/$NS/g" manifests/70-networkpolicy.yaml | kubectl apply -f -
-sed "s/__APP_NAMESPACE__/$NS/g" manifests/80-referencegrant.yaml | kubectl apply -f -
 ```
 
 El JWKS entra por `sed` con delimitador `|` y no `/`: es base64url, que usa `-` y `_` pero nunca `/`.
