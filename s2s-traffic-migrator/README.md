@@ -94,8 +94,8 @@ Los manifests son templates de **gomplate**, renderizados contra un contexto JSO
   Los cuatro condicionales renderean vacío cuando su condición no se cumple. `kubectl apply -f`
   sobre un archivo vacío falla, así que el loop los descarta — y gomplate directamente no crea el
   archivo cuando la salida es vacía.
-- `manifests/rbac.yaml.tpl` — usa `{{ getenv "VAR" }}` porque se renderiza a mano, fuera del
-  workflow.
+- `rbac/np-agent-rbac.yaml.tpl` (en la raíz del repo) — usa `{{ getenv "VAR" }}` porque se
+  renderiza a mano, fuera del workflow.
 
 Los valores que vienen de los attributes de la instancia se tipan (`conv.ToInt`) o se escapan
 (`quote`) en el template: es lo que impide que un valor con saltos de línea inyecte claves en un
@@ -302,14 +302,37 @@ sin probar nada.
 ## RBAC
 
 El agente np necesita permisos sobre `services` y sobre los objetos de Gateway API, Kuadrant e
-Istio del namespace target. **No necesita leer Secrets**: la clave de firma la referencia la
-`AuthPolicy` por nombre y vive en otro namespace. El operador del cluster aplica una vez por
-namespace target:
+Istio del namespace de cada app. **No necesita leer Secrets**: la clave de firma la referencia la
+`AuthPolicy` por nombre y vive en otro namespace.
+
+El RBAC es uno solo para los dos services del entregable: éste y el `api-manager-publisher` corren
+en el mismo pod y comparten ServiceAccount, así que cubre la unión de lo que hacen los dos. El
+operador del cluster lo aplica **una vez por cluster**:
 
 ```bash
-NAMESPACE=payments AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform \
-  gomplate -f services/s2s-traffic-migrator/manifests/rbac.yaml.tpl | kubectl apply -f -
+KEYS_NAMESPACE=kuadrant-system \
+AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools \
+  gomplate -f rbac/np-agent-rbac.yaml.tpl | kubectl apply -f -
 ```
+
+Los permisos sobre los objetos de red van en un `ClusterRole`, no en un `Role` por namespace: el
+namespace de cada app sale del provider `container-orchestration` de la instancia, así que no se
+conoce al instalar y crece a medida que se onboardean aplicaciones. `AGENT_NAMESPACE` es dónde vive
+el ServiceAccount del agente, que es otra cosa: el pod corre en `nullplatform-tools` y actúa sobre
+los namespaces de las apps.
+
+Lo único namespaced es el `Role` de `KEYS_NAMESPACE`, con `secrets: [create, delete]` y sin `get` ni
+`list`. Queda acotado a propósito: en ese namespace también vive la clave de firma del wristband.
+
+Si el cluster-wide no pasa la aprobación de seguridad, el template trae comentada una alternativa
+con una lista explícita de namespaces (`TARGET_NAMESPACES`): mismo `ClusterRole`, pero bindeado con
+un `RoleBinding` por namespace en vez de un `ClusterRoleBinding`. Las instrucciones para activarla
+están en el propio archivo. Ojo con dos cosas: la lista tiene que incluir `gateways`, y onboardear
+una app nueva pasa a requerir un `RoleBinding` más.
+
+Con el apply delegado a un reconciler de GitOps va `rbac/np-agent-rbac-gitops.yaml.tpl` en su lugar:
+sólo lectura, salvo el Secret de la api key del `api-manager-publisher`, que se emite por link y no
+puede publicarse en un repo.
 
 Ajustar `AGENT_SA`/`AGENT_NAMESPACE` al ServiceAccount real del agente en el cluster.
 

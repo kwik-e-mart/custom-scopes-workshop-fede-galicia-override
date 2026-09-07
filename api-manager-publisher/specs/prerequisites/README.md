@@ -153,16 +153,32 @@ Con más de un namespace, `30-` y `40-` **no se aplican una vez por namespace**:
 entrada al `ConfigMap` y a los `items` del volumen, y una regla `local-<ns>` a la `AuthPolicy`.
 Aplicar el archivo tal cual con otro `$NS` reemplaza el anterior y deja al primero sin JWKS ni regla.
 
-El RBAC del agente es un template del propio service y se rendea aparte, una vez por namespace
-target:
+El RBAC del agente se rendea aparte, **una vez por cluster**. Como el `api-manager-publisher` y el
+`s2s-traffic-migrator` corren en el mismo pod y comparten ServiceAccount, el RBAC es uno solo y
+combinado, en `rbac/` de la raiz del repo:
 
 ```bash
-NAMESPACE=payments KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform \
-  gomplate -f ../../manifests/rbac.yaml.tpl | kubectl apply -f -
+KEYS_NAMESPACE=kuadrant-system \
+AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools \
+  gomplate -f ../../../rbac/np-agent-rbac.yaml.tpl | kubectl apply -f -
 ```
 
-El `ClusterRole` de lectura de `httproutes` que trae ese template no es opcional: es lo que usa la
-detección de colisiones `(dominio, path)` entre aplicaciones de distintos namespaces.
+No lleva `NAMESPACE`: el namespace de cada app sale del provider de la instancia y no se conoce al
+instalar, asi que los permisos sobre los objetos de red van en un `ClusterRole`. Eso ademas es lo que
+hace posible la deteccion de colisiones `(dominio, path)`, que hace `kubectl get httproutes -A` entre
+aplicaciones de distintos namespaces — y por eso la lectura cluster-wide sobrevive tambien en la
+variante `rbac/np-agent-rbac-gitops.yaml.tpl`: el estado que consulta es el del cluster, no el del
+repo.
+
+Lo unico namespaced es el `Role` de `KEYS_NAMESPACE`: ahi tambien vive la clave de firma del
+wristband, asi que `secrets: [create, delete]` se deja acotado a ese namespace a proposito.
+
+Si el cluster-wide no pasa la aprobación de seguridad, el template trae comentada una alternativa
+con una lista explícita de namespaces (`TARGET_NAMESPACES`): mismo `ClusterRole`, pero bindeado con
+un `RoleBinding` por namespace en vez de un `ClusterRoleBinding`. Las instrucciones para activarla
+están en el propio archivo. Ojo con dos cosas: la lista tiene que incluir `gateways`, y onboardear
+una app nueva pasa a requerir un `RoleBinding` más.
+
 
 ## Verificar
 

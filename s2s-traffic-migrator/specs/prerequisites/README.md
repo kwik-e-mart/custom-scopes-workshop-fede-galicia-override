@@ -150,13 +150,30 @@ sumarle una entrada al `ConfigMap` y a los `items` del volumen, y un par de regl
 anterior y deja al primero sin JWKS ni regla. Lo mismo con el `value` de `allowed-namespaces`: es la
 lista de quién puede entrar, no una plantilla por namespace.
 
-El RBAC del agente es un template del propio service y se rendea aparte, una vez por namespace
-target:
+El RBAC del agente se rendea aparte, **una vez por cluster**. Como el `s2s-traffic-migrator` y el
+`api-manager-publisher` corren en el mismo pod y comparten ServiceAccount, el RBAC es uno solo y
+combinado, en `rbac/` de la raiz del repo:
 
 ```bash
-NAMESPACE=payments GATEWAY_NAMESPACE=gateways AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform \
-  gomplate -f ../../manifests/rbac.yaml.tpl | kubectl apply -f -
+KEYS_NAMESPACE=kuadrant-system \
+AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools \
+  gomplate -f ../../../rbac/np-agent-rbac.yaml.tpl | kubectl apply -f -
 ```
+
+No lleva `NAMESPACE`: el namespace de cada app sale del provider de la instancia y no se conoce al
+instalar, asi que los permisos sobre los objetos de red van en un `ClusterRole`. Lo unico namespaced
+es el `Role` de `KEYS_NAMESPACE`, que es un namespace fijo del cluster.
+
+Si el cluster-wide no pasa la aprobación de seguridad, el template trae comentada una alternativa
+con una lista explícita de namespaces (`TARGET_NAMESPACES`): mismo `ClusterRole`, pero bindeado con
+un `RoleBinding` por namespace en vez de un `ClusterRoleBinding`. Las instrucciones para activarla
+están en el propio archivo. Ojo con dos cosas: la lista tiene que incluir `gateways`, y onboardear
+una app nueva pasa a requerir un `RoleBinding` más.
+
+Con el apply delegado a un reconciler de GitOps va `rbac/np-agent-rbac-gitops.yaml.tpl` en su lugar:
+solo lectura, salvo el Secret de la api key en `KEYS_NAMESPACE`, que se emite por link y no puede
+publicarse en un repo.
+
 
 ## Verificar
 

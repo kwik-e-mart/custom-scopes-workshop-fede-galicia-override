@@ -56,10 +56,9 @@ api-manager/
 │   ├── revoke_key                         # unlink (Task 7)
 │   └── write_service_outputs              # resultados de la acción (Task 5)
 ├── manifests/
-│   ├── expose/
-│   │   ├── 10-httproute.yaml.tpl          (Task 4)
-│   │   └── 20-authpolicy.yaml.tpl         (Task 4)
-│   └── rbac.yaml.tpl                      (Task 9)
+│   └── expose/
+│       ├── 10-httproute.yaml.tpl          (Task 4)
+│       └── 20-authpolicy.yaml.tpl         (Task 4)
 ├── specs/
 │   ├── service-spec.json.tpl              (Task 2)
 │   ├── links/connect.json.tpl             (Task 2)
@@ -1459,22 +1458,28 @@ git commit -m "feat(api-manager): emision y revocacion de api keys por link"
 Entregable testeable: el template renderiza un `Role`/`RoleBinding` que cubre lo que el service hace, y **nada más**.
 
 **Files:**
-- Create: `api-manager-publisher/manifests/rbac.yaml.tpl`
+- Create: `rbac/np-agent-rbac.yaml.tpl`
+- Create: `rbac/np-agent-rbac-gitops.yaml.tpl`
 
 **Interfaces:**
 - Consume: `NAMESPACE`, `GATEWAY_NAMESPACE`, `KEYS_NAMESPACE`, `AGENT_SA`, `AGENT_NAMESPACE` (env vars al renderizar).
 
 - [ ] **Step 1: Escribir el template**
 
-Tres pares `Role`/`RoleBinding`: uno en el namespace de la app, uno en el del Gateway (sólo lectura), y uno en `kuadrant-system`.
+El RBAC vive en la raíz del repo y no bajo el service: el `api-manager-publisher` y el
+`s2s-traffic-migrator` corren en el mismo pod y comparten ServiceAccount, así que es uno solo con la
+unión de lo que hacen los dos.
+
+Tres pares `Role`/`RoleBinding` —uno en el namespace de la app, uno en el del Gateway, uno en
+`kuadrant-system`— más un `ClusterRole` de lectura.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: api-manager, namespace: {{ getenv "NAMESPACE" }} }
+metadata: { name: np-agent, namespace: {{ getenv "NAMESPACE" }} }
 rules:
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["httproutes"]
+    resources: ["gateways", "httproutes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]
@@ -1482,40 +1487,43 @@ rules:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: api-manager-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
+metadata: { name: np-agent-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "update", "patch", "delete"]
+    verbs: ["create", "delete"]
 ```
 
-**El `Role` de `kuadrant-system` no lleva `get` ni `list`.** En ese namespace también vive la clave de firma del wristband del `egress-interceptor`: el agente tiene que poder crear y borrar las suyas, no leer las ajenas. `create` no admite `resourceNames` en RBAC, pero negar `get`/`list` sí es efectivo.
+**El `Role` de `kuadrant-system` no lleva `get` ni `list`.** En ese namespace también vive la clave de firma del wristband del `s2s-traffic-migrator`: el agente tiene que poder crear y borrar las suyas, no leer las ajenas. `create` no admite `resourceNames` en RBAC, pero negar `get`/`list` sí es efectivo.
 
 El `check_collisions` hace `kubectl get httproutes -A`, así que además hace falta un `ClusterRole` de sólo lectura sobre `httproutes`. Declararlo en el mismo archivo.
+
+La variante `-gitops` es el mismo archivo sin ninguna escritura sobre objetos de red: con el apply
+delegado a un reconciler, lo único que sobrevive es el `Secret` de la api key, que se emite por link
+y se devuelve en el resultado de la acción.
 
 - [ ] **Step 2: Verificar que renderiza**
 
 ```bash
-cd api-manager
 NAMESPACE=payments GATEWAY_NAMESPACE=gateways KEYS_NAMESPACE=kuadrant-system \
 AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform \
-  gomplate -f manifests/rbac.yaml.tpl | kubectl apply --dry-run=client -f - \
+  gomplate -f rbac/np-agent-rbac.yaml.tpl | kubectl apply --dry-run=client -f - \
   && echo "rbac OK"
 ```
 
 - [ ] **Step 3: Verificar que el Role de keys no puede leer**
 
 ```bash
-gomplate -f manifests/rbac.yaml.tpl | yq 'select(.metadata.name == "api-manager-keys") | .rules[0].verbs'
+gomplate -f rbac/np-agent-rbac.yaml.tpl | yq 'select(.metadata.name == "np-agent-keys") | .rules[0].verbs'
 ```
 
-Esperado: `create`, `update`, `patch`, `delete`. **Sin `get` ni `list`.**
+Esperado: `create`, `delete`. **Sin `get` ni `list`.**
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add api-manager-publisher/manifests/rbac.yaml.tpl
-git commit -m "feat(api-manager): rbac sin lectura de secrets en kuadrant-system"
+git add rbac/
+git commit -m "feat(rbac): rbac combinado del agente sin lectura de secrets en kuadrant-system"
 ```
 
 ---

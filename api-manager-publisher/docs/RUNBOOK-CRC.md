@@ -435,22 +435,24 @@ kubectl --context crc-admin -n payments create serviceaccount api-manager-agent
 ```
 
 ```bash
-export NAMESPACE=payments
 export KEYS_NAMESPACE=kuadrant-system
 export AGENT_SA=api-manager-agent
 export AGENT_NAMESPACE=payments
-gomplate -f "$SVC/manifests/rbac.yaml.tpl" -o /tmp/rbac.rendered.yaml
+gomplate -f "$SVC/../rbac/np-agent-rbac.yaml.tpl" -o /tmp/rbac.rendered.yaml
 kubectl --context crc-admin apply -f /tmp/rbac.rendered.yaml
 ```
 
+El RBAC es uno solo para los dos services: `api-manager-publisher` y `s2s-traffic-migrator` corren en
+el mismo pod y comparten ServiceAccount, así que cubre la unión de lo que hacen los dos. Los objetos
+de red van en un `ClusterRole` porque el namespace de la app no se conoce al instalar; el único
+`Role` namespaced es el de las api keys en `KEYS_NAMESPACE`.
+
 ```
 # →
-role.rbac.authorization.k8s.io/api-manager created
-rolebinding.rbac.authorization.k8s.io/api-manager created
-role.rbac.authorization.k8s.io/api-manager-keys created
-rolebinding.rbac.authorization.k8s.io/api-manager-keys created
-clusterrole.rbac.authorization.k8s.io/api-manager-httproutes-read created
-clusterrolebinding.rbac.authorization.k8s.io/api-manager-httproutes-read created
+clusterrole.rbac.authorization.k8s.io/np-agent created
+clusterrolebinding.rbac.authorization.k8s.io/np-agent created
+role.rbac.authorization.k8s.io/np-agent-keys created
+rolebinding.rbac.authorization.k8s.io/np-agent-keys created
 ```
 
 Confirmar los límites, ANTES de usarlos, con `auth can-i`:

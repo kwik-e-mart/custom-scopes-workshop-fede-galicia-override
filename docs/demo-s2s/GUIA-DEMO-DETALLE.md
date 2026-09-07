@@ -317,8 +317,9 @@ instancia dispara el `delete`, que restaura el selector del Service desde la ann
 5. **`authorized_namespaces` desde una fuente de verdad** (gobierno / CMDB) en vez de una lista en HCL.
 6. **Descubrimiento de destinos alcanzables**: hoy el dev declara `service_name` + `scope` a mano en
    la regla; en producción esos destinos tienen que derivarse del inventario de servicios.
-7. **RBAC del agente**: el chart trae `clusterWide: true` con `*/*/*`. El service ya incluye el Role
-   mínimo (`manifests/rbac.yaml.tpl`) pero **nadie lo renderiza**; cablearlo permite bajar el chart.
+7. **RBAC del agente**: el chart trae `clusterWide: true` con `*/*/*`. El entregable ya incluye el
+   Role mínimo (`rbac/np-agent-rbac.yaml.tpl`) pero **nadie lo renderiza**; cablearlo permite bajar
+   el chart.
 8. **Rate limit por identidad**, no un smoke global.
 9. **Key management**: rotación de las claves de firma y de la CA, hoy en el state de Terraform.
 

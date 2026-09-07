@@ -616,10 +616,9 @@ api-manager/
 │   ├── gitops_lib               # copia del egress-interceptor (§6.1)
 │   └── write_service_outputs
 ├── manifests/
-│   ├── expose/
-│   │   ├── 10-httproute.yaml.tpl
-│   │   └── 20-authpolicy.yaml.tpl
-│   └── rbac.yaml.tpl
+│   └── expose/
+│       ├── 10-httproute.yaml.tpl
+│       └── 20-authpolicy.yaml.tpl
 ├── specs/
 │   ├── service-spec.json.tpl
 │   ├── links/connect.json.tpl
