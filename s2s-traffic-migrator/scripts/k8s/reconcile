@@ -72,24 +72,40 @@ revert_service() {
 # En OpenShift el Service ya existe y se le roba el selector. En EKS no hay nada que robar: la app
 # alcanza a su destino por el FQDN de un scope, así que el Service lo crea el interceptor.
 create_gateway_service() {  # <svc>
-  kubectl -n "$NAMESPACE" apply -f - <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${1}
-  namespace: ${NAMESPACE}
-  labels:
-    ${MANAGED_LABEL}: "true"
-    ${ROLE_LABEL}: gateway-service
-    nullplatform: "true"
-spec:
-  selector:
-    gateway.networking.k8s.io/gateway-name: ${GATEWAY_NAME}
-  ports:
-    - name: http
-      port: ${LISTEN_PORT}
-      targetPort: ${LISTEN_PORT}
-EOF
+  local dir rc=0
+  dir=$(mktemp -d) || return 1
+  if filter_render_context "$RENDER_CONTEXT" "$1" "$dir/render-context.json" \
+     && render_manifests_from "$SERVICES_MANIFESTS_DIR" "$dir/render-context.json" "$dir" >/dev/null; then
+    kubectl apply -f "$dir/90-service-capture.yaml" || rc=1
+  else
+    rc=1
+  fi
+  rm -rf "$dir"
+  return "$rc"
+}
+
+original_specs() {
+  local svc json specs='{}'
+  for svc in $DECLARED_SERVICES; do
+    json=$(kubectl -n "$NAMESPACE" get svc "$svc" -o json --ignore-not-found) || return 1
+    [ -n "$json" ] || continue
+    specs=$(printf %s "$json" | jq -c --argjson acc "$specs" --arg s "$svc" --arg a "$ORIGINAL_SELECTOR_ANNOTATION" '
+      $acc + { ($s): {
+        selector: (((.metadata.annotations // {})[$a] // "") as $anot
+                   | if $anot == "" then (.spec.selector // {})
+                     else ($anot | fromjson) as $guardado
+                       | if ($guardado | type) == "object" then $guardado
+                         else error("la annotation \($a) del Service \($s) no guarda un objeto JSON") end
+                     end),
+        ports: [ .spec.ports[]? | {name, port, targetPort, protocol, appProtocol}
+                 | with_entries(select(.value != null)) ]
+      } }') || {
+      log error "egress-interceptor: no se pudo leer el spec del Service '$svc' de $NAMESPACE."
+      log error "  Si tiene la annotation $ORIGINAL_SELECTOR_ANNOTATION, revisá que su valor sea JSON válido: de ahí sale el selector original."
+      return 1
+    }
+  done
+  printf %s "$specs"
 }
 
 # `kubectl wait --for=condition=X` NO sirve para un HTTPRoute: sus condiciones viven en
@@ -213,19 +229,30 @@ if [ "$PLATFORM" != "eks" ]; then
       exit 1
     fi
   done
+fi
 
-  # El alias hereda puertos y appProtocol del Service real, y queda marcado como propio para que
-  # el delete sepa que puede borrarlo.
-  for svc in $DECLARED_SERVICES; do
-    kubectl -n "$NAMESPACE" get svc "${svc}-local" >/dev/null 2>&1 && continue
-    kubectl -n "$NAMESPACE" get svc "$svc" -o json \
-      | jq --arg n "${svc}-local" --arg managed "$MANAGED_LABEL" --arg role "$ROLE_LABEL" \
-          '.metadata = {name:$n, namespace:.metadata.namespace,
-                        labels:{($managed):"true", ($role):"local-alias", "nullplatform":"true"}}
-           | del(.spec.clusterIP,.spec.clusterIPs,.status,.metadata.resourceVersion,.metadata.uid)' \
-      | kubectl apply -f - \
-      || die "no se pudo crear el alias ${svc}-local; sin él el ingreso se queda sin backend."
-  done
+ORIGINAL_SPECS=$(original_specs) \
+  || die "no se pudo leer el estado de los Services de $NAMESPACE. No se publica ni se aplica nada: de ahí salen el alias y el Service que captura."
+INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" \
+  | jq -c --argjson specs "$ORIGINAL_SPECS" 'map(. + { original: ($specs[.service_name] // { selector: {}, ports: [] }) })') \
+  || die "no se pudo incorporar el estado de los Services al contexto de render."
+
+if [ "$PLATFORM" != "eks" ]; then
+  INEXISTENTES=$(printf %s "$INTERCEPTIONS_JSON" \
+    | jq -r --argjson specs "$ORIGINAL_SPECS" '.[] | select($specs[.service_name] == null) | .service_name') \
+    || die "no se pudo verificar qué Services declarados existen en $NAMESPACE."
+  if [ -n "$INEXISTENTES" ]; then
+    log error "egress-interceptor: estos Services declarados no existen en $NAMESPACE: $(printf %s "$INEXISTENTES" | tr '\n' ' ')"
+    log error "  El alias <svc>-local se calca del Service real: sin él el ingreso se queda sin backend."
+    exit 1
+  fi
+  SIN_PUERTOS=$(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | select((.original.ports | length) == 0) | .service_name') \
+    || die "no se pudo verificar los puertos de los Services declarados de $NAMESPACE."
+  if [ -n "$SIN_PUERTOS" ]; then
+    log error "egress-interceptor: estos Services de $NAMESPACE existen pero no declaran ningún puerto: $(printf %s "$SIN_PUERTOS" | tr '\n' ' ')"
+    log error "  El alias <svc>-local hereda sus puertos: sin ellos la route de ingreso no tiene a dónde entregar."
+    exit 1
+  fi
 fi
 
 RENDER_CONTEXT="$NP_OUTPUT_DIR/render-context.json"
@@ -242,6 +269,8 @@ jq -n \
   --arg cluster_label "$CLUSTER_LABEL" \
   --arg platform "$PLATFORM" \
   --arg managed_label "$MANAGED_LABEL" \
+  --arg role_label "$ROLE_LABEL" \
+  --arg original_selector_annotation "$ORIGINAL_SELECTOR_ANNOTATION" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
@@ -264,8 +293,17 @@ if [ "${#MANIFESTS[@]}" -eq 0 ]; then
   log error "egress-interceptor: el render no produjo ningún manifiesto con contenido."
   exit 1
 fi
+SERVICES_DIR="$NP_OUTPUT_DIR/services"
+mkdir -p "$SERVICES_DIR"
+rm -f "$SERVICES_DIR"/*.yaml
+render_manifests_from "$SERVICES_MANIFESTS_DIR" "$RENDER_CONTEXT" "$SERVICES_DIR" >/dev/null \
+  || die "falló el render de los Services del interceptor. No se aplicó nada."
 gitops_publish "$RENDER_CONTEXT" "$MANIFEST_DIR" \
   || die "falló la publicación de los manifiestos al repo gitops. NO se aplicó nada."
+if [ -f "$SERVICES_DIR/70-service-local.yaml" ]; then
+  apply_manifests "$SERVICES_DIR/70-service-local.yaml" \
+    || die "no se pudieron crear los alias <svc>-local; sin ellos el ingreso se queda sin backend."
+fi
 apply_manifests "${MANIFESTS[@]}" \
   || die "falló el apply de los manifiestos. El tráfico NO se desvió."
 

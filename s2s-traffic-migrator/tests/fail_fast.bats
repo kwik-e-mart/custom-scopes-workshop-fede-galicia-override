@@ -31,12 +31,38 @@ if [ -n "${FALLA_GET_SVC:-}" ] && [[ "$*" == *"get svc"*"-o json"* ]]; then
   echo "error: Unable to connect to the server: dial tcp: i/o timeout" >&2
   exit 1
 fi
+if [ -n "${SVC_INEXISTENTE:-}" ] && [[ "$*" == *"get svc reports -o json --ignore-not-found"* ]]; then
+  exit 0
+fi
+if [ -n "${SVC_SIN_PUERTOS:-}" ] && [[ "$*" == *"get svc reports -o json --ignore-not-found"* ]]; then
+  echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[]}}'
+  exit 0
+fi
+if [ -n "${ANOTACION_NO_ES_OBJETO:-}" ] && [[ "$*" == *"get svc reports -o json --ignore-not-found"* ]]; then
+  echo '{"metadata":{"name":"reports","namespace":"payments","annotations":{"egress-interceptor/original-selector":"[\"app\",\"reports\"]"}},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080}]}}'
+  exit 0
+fi
+if [[ " $* " == *" apply "* ]]; then
+  ARCHIVO=""
+  ANTERIOR=""
+  for ARG in "$@"; do
+    if [ "$ANTERIOR" = "-f" ]; then ARCHIVO="$ARG"; fi
+    ANTERIOR="$ARG"
+  done
+  if [ -n "$ARCHIVO" ] && [ "$ARCHIVO" != "-" ] && [ ! -f "$ARCHIVO" ]; then
+    echo "error: the path \"$ARCHIVO\" does not exist" >&2
+    exit 1
+  fi
+fi
 case "$*" in
   *"patch svc"*)
     # Refleja el nuevo selector, igual que el API server.
     sed 's/.*"value"://; s/}]$//' <<<"$*" >"$FAKE_SELECTOR" ;;
+  *"get svc reports-local"*) exit 1 ;;                     # el alias todavía no existe
   *"get svc reports -o jsonpath={.spec.selector}"*) cat "$FAKE_SELECTOR" ;;
   *"get svc reports -o jsonpath"*"annotations"*)    : ;;   # todavía sin anotar
+  *"get svc reports -o json"*)
+    echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080,"targetPort":8080,"protocol":"TCP"}]}}' ;;
   *"get svc -o json"*)   echo '{"items":[]}' ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
@@ -62,6 +88,27 @@ correr() {
   bash -c '
     source "'"$SVC_DIR"'/logging"
     # ESTE `if !` es lo que desactiva errexit en el script sourceado, igual que el runner del CLI.
+    if ! source "'"$SVC_DIR"'/scripts/k8s/reconcile"; then exit 1; fi
+  '
+}
+
+# Igual que `correr`, pero desde OpenShift: es la única rama que crea el alias `<svc>-local`.
+# percent=100 para no entrar en el chequeo de endpoints del destino local, que es otro camino.
+correr_openshift() {  # [interceptions-json]
+  local reglas="$1"
+  if [ -z "$reglas" ]; then
+    reglas='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":100}]'
+  fi
+  ARGS=apply \
+  NAMESPACE=payments SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
+  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
+  WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
+  PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
+  GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
+  INTERCEPTIONS_JSON="$reglas" \
+  bash -c '
+    source "'"$SVC_DIR"'/logging"
     if ! source "'"$SVC_DIR"'/scripts/k8s/reconcile"; then exit 1; fi
   '
 }
@@ -120,7 +167,66 @@ correr_delete() {
   run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"repo gitops"* ]]
-  run grep -c ' apply ' "$KUBECTL_CALLS"
+  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "en OpenShift, si la publicacion gitops falla, tampoco se crea el alias" {
+  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo"
+  run correr_openshift
+  [ "$status" -ne 0 ]
+  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "en OpenShift el alias es el PRIMER objeto que toca el cluster" {
+  run correr_openshift
+  [ "$status" -eq 0 ]
+  run grep -oE '[^ /]+\.yaml' "$KUBECTL_CALLS"
+  [ "${lines[0]}" = "70-service-local.yaml" ]
+}
+
+@test "en OpenShift sin ninguna regla el reconcile termina bien y no aplica ningún alias" {
+  run correr_openshift '[]'
+  [ "$status" -eq 0 ]
+  run grep -c '70-service-local' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "si no se puede leer el Service original, ABORTA sin publicar ni aplicar" {
+  export FALLA_GET_SVC=1
+  run correr_openshift
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"estado de los Services"* ]]
+  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "en OpenShift un Service declarado que no existe ABORTA antes de tocar nada" {
+  export SVC_INEXISTENTE=1
+  run correr_openshift
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no existen"* ]]
+  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "un Service que existe pero no declara puertos NO se reporta como inexistente" {
+  export SVC_SIN_PUERTOS=1
+  run correr_openshift
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no declaran ningún puerto"* ]]
+  [[ "$output" != *"no existen"* ]]
+  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "una annotation de selector que no es un objeto JSON ABORTA nombrando el Service" {
+  export ANOTACION_NO_ES_OBJETO=1
+  run correr_openshift
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"reports"* ]]
+  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 

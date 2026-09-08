@@ -38,20 +38,29 @@ make_render() {  # <site>
     local_ingress_host: "s2s-ingress-istio.gateways.svc.cluster.local",
     gateway_namespace: "gateways", cluster_label: "gal-poc-eks-dev",
     authpolicy_api_version: "kuadrant.io/v1",
-    managed_label: "egress-interceptor/managed",
+    managed_label: "egress-interceptor/managed", role_label: "egress-interceptor/role",
+    original_selector_annotation: "egress-interceptor/original-selector",
     platform: $platform, interceptions: $interceptions
   }' >"$CTX"
   rm -rf "$MDIR"
   mkdir -p "$MDIR"
   render_manifests "$CTX" "$MDIR" >/dev/null
+  SDIR="$BATS_TEST_TMPDIR/services"
+  rm -rf "$SDIR"
+  mkdir -p "$SDIR"
+  render_manifests_from "$SERVICES_MANIFESTS_DIR" "$CTX" "$SDIR" >/dev/null
+}
+
+original() {  # <service>
+  printf '%s' '{"selector":{"app":"'"$1"'"},"ports":[{"name":"http","port":8080,"targetPort":8080}]}'
 }
 
 dos_reglas() {
-  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50},{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":100}]'
+  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50,"original":'"$(original reports)"'},{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":100,"original":'"$(original checkout)"'}]'
 }
 
 una_regla() {
-  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50}]'
+  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50,"original":'"$(original reports)"'}]'
 }
 
 objetos() { yq -r '[.kind, (.metadata.namespace // ""), .metadata.name] | join("/")' "$@"; }
@@ -270,6 +279,30 @@ HOOK
   [ "$output" = "HTTPRoute/gateways/s2s-ingress-reports" ]
 }
 
+@test "desde OpenShift la hoja trae el alias y el Service que captura" {
+  make_render openshift-crc "$(dos_reglas)"
+  gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
+  run objetos "$BATS_TEST_TMPDIR/tree/reports/70-service-local.yaml"
+  [ "$output" = "Service/payments/reports-local" ]
+  run objetos "$BATS_TEST_TMPDIR/tree/reports/90-service-capture.yaml"
+  [ "$output" = "Service/payments/reports" ]
+}
+
+@test "el Service que captura se publica con el selector del Gateway y el original en la annotation" {
+  make_render openshift-crc "$(una_regla)"
+  gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
+  local captura="$BATS_TEST_TMPDIR/tree/reports/90-service-capture.yaml"
+  [ "$(yq -r '.spec.selector["gateway.networking.k8s.io/gateway-name"]' "$captura")" = "s2s-egress" ]
+  [ "$(yq -r '.metadata.annotations["egress-interceptor/original-selector"]' "$captura")" = '{"app":"reports"}' ]
+}
+
+@test "desde EKS la hoja trae el Service que captura pero NO el alias" {
+  make_render aws-us-east-1 "$(dos_reglas)"
+  gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
+  [ ! -f "$BATS_TEST_TMPDIR/tree/reports/70-service-local.yaml" ]
+  [ -f "$BATS_TEST_TMPDIR/tree/reports/90-service-capture.yaml" ]
+}
+
 @test "sin ninguna regla quedan el Gateway y su AuthPolicy, y ninguna hoja" {
   make_render aws-us-east-1 '[]'
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
@@ -297,21 +330,28 @@ HOOK
   [[ "$output" == *"payments/checkout/50-httproute-egress.yaml"* ]]
 }
 
-@test "los objetos publicados son los MISMOS que los aplicados, desde los dos orígenes" {
+@test "lo publicado es lo aplicado MÁS el Service que captura, desde los dos orígenes" {
   # Es el test que impide que el fan-out se desincronice del apply. Va por los dos orígenes porque
   # no emiten el mismo juego: EKS agrega 40-destinationrule-local-ingress a nivel namespace y
-  # OpenShift agrega 60-httproute-ingress a nivel servicio. Con uno solo, media clasificación de
-  # GITOPS_*_MANIFESTS queda sin ejercitar.
-  local platform aplicados publicados
+  # OpenShift agrega 60-httproute-ingress y el alias 70-service-local a nivel servicio. Con uno
+  # solo, media clasificación de GITOPS_*_MANIFESTS queda sin ejercitar.
+  #
+  # El Service que captura es el ÚNICO objeto que se publica y no se aplica en el lote: su swap va
+  # después de los waits y sobre un Service ajeno, así que lo sigue haciendo el patch del reconcile.
+  local platform aplicados esperados publicados
   for platform in openshift-crc aws-us-east-1; do
     make_render "$platform" "$(dos_reglas)"
     rm -rf "$BATS_TEST_TMPDIR/tree"
     gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
-    aplicados=$(objetos "$MDIR"/*.yaml | sort)
+    aplicados=$(objetos "$MDIR"/*.yaml)
+    if [ -f "$SDIR/70-service-local.yaml" ]; then
+      aplicados=$(printf '%s\n%s' "$aplicados" "$(objetos "$SDIR/70-service-local.yaml")")
+    fi
+    esperados=$(printf '%s\n%s' "$aplicados" "$(objetos "$SDIR/90-service-capture.yaml")" | sort)
     publicados=$(find "$BATS_TEST_TMPDIR/tree" -name '*.yaml' -print0 \
       | xargs -0 -n1 yq -r '[.kind, (.metadata.namespace // ""), .metadata.name] | join("/")' | sort)
-    [ "$aplicados" = "$publicados" ] || {
-      echo "site $platform:" >&2; diff <(echo "$aplicados") <(echo "$publicados") >&2; return 1
+    [ "$esperados" = "$publicados" ] || {
+      echo "site $platform:" >&2; diff <(echo "$esperados") <(echo "$publicados") >&2; return 1
     }
   done
 }
@@ -319,7 +359,8 @@ HOOK
 @test "la clasificación de manifiestos cubre TODOS los templates" {
   local tpl base clasificados
   clasificados=$(printf '%s\n' $GITOPS_NAMESPACE_MANIFESTS $GITOPS_PER_SERVICE_MANIFESTS)
-  for tpl in "${BATS_TEST_DIRNAME}/../manifests/egress"/*.yaml.tpl; do
+  for tpl in "${BATS_TEST_DIRNAME}/../manifests/egress"/*.yaml.tpl \
+             "${BATS_TEST_DIRNAME}/../manifests/services"/*.yaml.tpl; do
     base=$(basename "$tpl" .tpl)
     printf '%s\n' "$clasificados" | grep -qx "$base" || {
       echo "template sin clasificar en gitops_lib: $base" >&2
@@ -442,7 +483,7 @@ HOOK
   local ctx_a="$BATS_TEST_TMPDIR/ctx-a.json" mdir_a="$BATS_TEST_TMPDIR/m-a"
   cp "$CTX" "$ctx_a"
   cp -r "$MDIR" "$mdir_a"
-  make_render aws-us-east-1 '[{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":50}]'
+  make_render aws-us-east-1 '[{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":50,"original":'"$(original checkout)"'}]'
   ( export NAMESPACE=payments; gitops_publish "$ctx_a" "$mdir_a" ) &
   ( export NAMESPACE=billing;  gitops_publish "$CTX" "$MDIR" ) &
   wait

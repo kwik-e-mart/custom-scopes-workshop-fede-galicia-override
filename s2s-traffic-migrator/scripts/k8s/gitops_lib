@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 GITOPS_NAMESPACE_MANIFESTS="10-gateway.yaml 20-authpolicy.yaml 30-destinationrule-peer.yaml 40-destinationrule-local-ingress.yaml"
-GITOPS_PER_SERVICE_MANIFESTS="50-httproute-egress.yaml 60-httproute-ingress.yaml"
+GITOPS_PER_SERVICE_MANIFESTS="50-httproute-egress.yaml 60-httproute-ingress.yaml 70-service-local.yaml 90-service-capture.yaml"
 
 : "${GITOPS_COMMITTER_NAME:=nullplatform egress-interceptor}"
 : "${GITOPS_COMMITTER_EMAIL:=egress-interceptor@nullplatform.io}"
@@ -68,16 +68,16 @@ gitops_render_one() {
   local ctx="$1" svc="$2" out="$3" ctx_dir one
   ctx_dir=$(mktemp -d) || return 1
   one="$ctx_dir/render-context.json"
-  if ! jq --arg s "$svc" '.interceptions = [.interceptions[] | select(.service_name == $s)]' "$ctx" >"$one"; then
+  if ! filter_render_context "$ctx" "$svc" "$one"; then
     rm -rf "$ctx_dir"
-    log error "egress-interceptor gitops: no se pudo filtrar el contexto de render para '$svc'."
     return 1
   fi
   if ! mkdir -p "$out"; then
     rm -rf "$ctx_dir"
     return 1
   fi
-  if ! render_manifests "$one" "$out" >/dev/null; then
+  if ! render_manifests "$one" "$out" >/dev/null \
+     || ! render_manifests_from "$SERVICES_MANIFESTS_DIR" "$one" "$out" >/dev/null; then
     rm -rf "$ctx_dir"
     log error "egress-interceptor gitops: falló el render de la hoja de '$svc'."
     return 1

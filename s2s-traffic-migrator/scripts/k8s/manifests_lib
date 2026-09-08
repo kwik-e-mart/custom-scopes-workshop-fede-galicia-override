@@ -14,6 +14,7 @@
 
 MANIFESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/egress}"
+: "${SERVICES_MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/services}"
 
 # render_manifests <contexto.json> <outdir>
 # Renderiza cada template al outdir y escribe en stdout, en orden de aplicación, la ruta de los
@@ -72,6 +73,24 @@ render_manifests() {
   # Explícito: la última iteración del loop puede terminar en un `continue` cuyo test dio falso, y
   # la función devolvería ese estado.
   return 0
+}
+fi
+
+if ! type -t render_manifests_from >/dev/null 2>&1; then
+render_manifests_from() {
+  local MANIFESTS_DIR="$1"
+  shift
+  render_manifests "$@"
+}
+fi
+
+if ! type -t filter_render_context >/dev/null 2>&1; then
+filter_render_context() {
+  local ctx="$1" svc="$2" dest="$3"
+  if ! jq --arg s "$svc" '.interceptions = [.interceptions[] | select(.service_name == $s)]' "$ctx" >"$dest"; then
+    log error "egress-interceptor: no se pudo filtrar el contexto de render para '$svc'."
+    return 1
+  fi
 }
 fi
 

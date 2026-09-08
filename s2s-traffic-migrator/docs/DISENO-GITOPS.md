@@ -1,7 +1,7 @@
 # Publicar los manifiestos del egress-interceptor a un repo (pata 1 de GitOps)
 
 **Estado:** **implementado y verificado** (`services/s2s-traffic-migrator/scripts/k8s/gitops_lib`,
-40 tests en `tests/gitops_publish.bats`) · **Plan de implementación:** [`plans/egress-interceptor-gitops-publish.md`](./PLAN-GITOPS.md)
+43 tests en `tests/gitops_publish.bats` y 12 en `tests/render_services.bats`) · **Plan de implementación:** [`plans/egress-interceptor-gitops-publish.md`](./PLAN-GITOPS.md)
 **Service:** [`services/egress-interceptor/`](../) · **Diseño del que se cuelga:** [`docs/s2s-egress-sin-openresty.md`](s2s-egress-sin-openresty.md)
 
 ## El objetivo, y lo que explícitamente no es
@@ -19,8 +19,7 @@ En la pata 1 el repo es un **registro del estado deseado**, no un disparador. Na
 todavía. Lo que se está fijando acá y lo que hay que hacer bien es el **contrato de layout**, porque
 es la superficie de la que va a depender el reconciler de la pata 2.
 
-**No es parte de esto:** que el cliente reconcilie, que dejemos de aplicar, ni cerrar el gap de los
-objetos imperativos (ver "Lo que el repo no describe").
+**No es parte de esto:** que el cliente reconcilie ni que dejemos de aplicar.
 
 ## Layout del repo
 
@@ -38,9 +37,11 @@ eks/payments/
 ├── 30-destinationrule-peer.yaml
 ├── 40-destinationrule-local-ingress.yaml
 ├── reports/
-│   └── 50-httproute-egress.yaml
+│   ├── 50-httproute-egress.yaml
+│   └── 90-service-capture.yaml
 └── checkout/
-    └── 50-httproute-egress.yaml
+    ├── 50-httproute-egress.yaml
+    └── 90-service-capture.yaml
 
 openshift/payments/
 ├── 10-gateway.yaml
@@ -48,8 +49,24 @@ openshift/payments/
 ├── 30-destinationrule-peer.yaml
 └── reports/
     ├── 50-httproute-egress.yaml
-    └── 60-httproute-ingress.yaml
+    ├── 60-httproute-ingress.yaml
+    ├── 70-service-local.yaml
+    └── 90-service-capture.yaml
 ```
+
+Los dos `Service` de la hoja son el destino del tráfico, no ruteo:
+
+- **`90-service-capture.yaml`** es el `Service` que se lleva el tráfico que la app manda al nombre
+  del destino. En OpenShift ese `Service` ya existe y se le reemplaza el selector por el del
+  Gateway, con el selector previo guardado en la annotation `egress-interceptor/original-selector`
+  —que el manifiesto publica—; en EKS no hay nada que robar, así que lo crea el interceptor y lleva
+  sus labels. Es el único objeto del subárbol que el `reconcile` **no** aplica (ver más abajo).
+- **`70-service-local.yaml`** es el alias `<svc>-local`, sólo en OpenShift: hereda el selector y los
+  puertos originales y es a donde entrega la route de ingreso, porque el `Service` original quedó
+  apuntando al Gateway de egreso.
+
+Los dos salen del mismo dato —el `spec` del `Service` original, leído del cluster antes de rendear—
+y por eso son per-servicio y no de namespace.
 
 El segmento de substrato **es** el valor de la dimensión `site` de la instancia (`aws-us-east-1`,
 `openshift-crc`), verbatim. No es configurable ni sale del entorno del agente: viaja en la
@@ -96,7 +113,7 @@ alimente. Nada del algoritmo de push ni del fan-out del render depende de la can
 
 ### Por qué hay dos niveles y no uno
 
-Los seis manifiestos no tienen la misma cardinalidad. Solo dos hacen `range .interceptions`:
+Los ocho manifiestos no tienen la misma cardinalidad. Solo cuatro hacen `range .interceptions`:
 
 | archivo | cardinalidad | nivel |
 |---|---|---|
@@ -106,6 +123,8 @@ Los seis manifiestos no tienen la misma cardinalidad. Solo dos hacen `range .int
 | `40-destinationrule-local-ingress.yaml` | 1 por namespace (solo plataforma `eks`) | namespace |
 | `50-httproute-egress.yaml` | 1 por regla | servicio |
 | `60-httproute-ingress.yaml` | 1 por regla (solo plataforma `openshift`) | servicio |
+| `70-service-local.yaml` | 1 por regla (solo plataforma `openshift`) | servicio |
+| `90-service-capture.yaml` | 1 por regla | servicio |
 
 Los cuatro de namespace van sueltos en el nivel del namespace, sin carpeta de servicio. Duplicarlos
 en cada hoja daría N `Gateway` homónimos peleándose por el mismo objeto.
@@ -182,10 +201,23 @@ El punto de inserción es dentro del `reconcile`, entre `render_manifests` y `ap
 —y no como step separado del workflow— porque es el único lugar donde la garantía es verificable: el
 contexto de render ya existe y todavía no se aplicó nada.
 
-Precisión necesaria: **"antes de tocar el cluster" no es literal.** El `reconcile` ya escribe en el
-cluster antes del render — chequea endpoints y crea el alias `<svc>-local`. Lo que sí se garantiza es
-publicar antes del `apply_manifests` y antes del swap de selector, o sea antes de cualquier cambio
-que **mueva tráfico**. La creación del alias es idempotente y neutral para el tráfico.
+**"Antes de tocar el cluster" es literal.** Todo lo que el `reconcile` hace antes de publicar es
+lectura: el chequeo de endpoints y el snapshot del `Service` original del que salen los dos
+manifiestos de `Service`. El orden de la rama `apply` es:
+
+```
+1. chequeo de endpoints (percent < 100)      ← sólo lectura
+2. snapshot del Service original             ← sólo lectura
+3. render: plano de ruteo + plano de Services
+4. gitops_publish
+5. apply de 70-service-local.yaml            ← primer write del cluster
+6. apply_manifests (plano de ruteo)
+7. waits: Programmed / Enforced / Accepted
+8. swap del selector
+```
+
+El alias se aplica desde el manifiesto rendeado, y no se clona del `Service` real en runtime como
+antes: el repo y el cluster salen del mismo archivo.
 
 En el `delete`, la publicación del borrado va al principio de la rama, antes del `revert_service`.
 
@@ -335,17 +367,22 @@ monitoreo de procesos a nivel host, esto conviene cerrarlo antes de producción.
 Esto no bloquea la pata 1, pero hay que tenerlo escrito antes de que alguien asuma que el subárbol es
 el estado deseado completo:
 
-- **El swap de selector no es un manifiesto.** La intercepción es un `kubectl patch` sobre el
-  `Service` original, con el selector previo guardado en una annotation. Un reconciler GitOps no
-  puede hacer eso: el `Service` no es nuestro, y el dato para revertir se calcula en el momento.
-- **El alias `<svc>-local` se clona del `Service` real** en runtime (hereda puertos y
-  `appProtocol`), así que tampoco sale de un template.
-- **Los `wait` de condiciones tampoco.** El orden "data plane arriba → recién ahí desviar el
-  tráfico" lo garantiza el `reconcile`, no el repo.
+- **El swap de selector se declara pero no se aplica desde el manifiesto.** `90-service-capture.yaml`
+  describe el `Service` hijackeado —selector del Gateway, selector previo en la annotation—, pero el
+  `reconcile` lo sigue produciendo con un `kubectl patch`. Son dos razones distintas y las dos
+  siguen valiendo para la pata 2: el swap tiene que ser **posterior** a los waits del data plane, y
+  el objeto **no es nuestro**, así que un `apply` con nuestro manifiesto le pisaría los campos que
+  el manifiesto no nombra. Un reconciler que aplique esa hoja tal cual hace las dos cosas mal.
+- **El snapshot se lee del cluster.** El selector y los puertos que llevan los dos `Service` salen
+  del `Service` original vivo (o de la annotation, en la segunda corrida): el repo registra el
+  resultado, pero no es la fuente.
+- **Los `wait` de condiciones no son un manifiesto.** El orden "data plane arriba → recién ahí
+  desviar el tráfico" lo garantiza el `reconcile`, no el repo.
 
-O sea: el subárbol describe el **plano de ruteo** completo, y el swap de tráfico sigue siendo
-imperativo. La pata 2 va a tener que decidir qué hace con eso — probablemente dejar el swap en el
-service y darle al reconciler solo el plano de ruteo.
+O sea: el subárbol describe el estado deseado completo —plano de ruteo y destino—, y lo único que
+sigue siendo imperativo es **cuándo** se hace el swap. La pata 2 va a tener que decidir si el
+reconciler aplica `90-service-capture.yaml` o si ese archivo queda como registro y el swap se
+mantiene en el service.
 
 ## Tests
 
@@ -360,7 +397,9 @@ Casos:
 - **Exhaustividad** de la clasificación de templates por nivel.
 - **Layout:** los cuatro de namespace en el nivel del namespace, `50-`/`60-` en la hoja del servicio,
   substrato derivado de `site`, prefix aplicado.
-- **Equivalencia:** los objetos publicados son los mismos que los aplicados.
+- **Equivalencia:** los objetos publicados son los aplicados más `90-service-capture.yaml`, que es
+  el único que se declara sin aplicarse en el lote.
+- **Orden:** con la publicación fallando, el cluster no recibe ni un `apply` — tampoco el del alias.
 - **Prune:** sacar una regla borra su hoja; el `delete` borra el subárbol.
 - **No-op:** sin cambios no se crea commit.
 - **Apagado** sin URL; **fallo duro** con URL inválida, con esquema no soportado y con un subárbol que escaparía del clon.
