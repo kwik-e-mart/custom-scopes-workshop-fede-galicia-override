@@ -33,6 +33,13 @@ spec:
               name: X-NP-SVC
               value: {{ $svc | quote }}
       filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - x-np-token
+              - x-np-origin
+              - x-np-svc
+              - x-np-scope
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

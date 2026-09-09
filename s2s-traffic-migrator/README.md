@@ -83,7 +83,7 @@ Los manifests son templates de **gomplate**, renderizados contra un contexto JSO
   | `30-destinationrule-peer.yaml.tpl` | TLS hacia el ingreso del sustrato opuesto | si hay reglas |
   | `40-destinationrule-local-ingress.yaml.tpl` | TLS hacia el ingreso de este cluster | si hay reglas **y** `origin=EKS` |
   | `50-httproute-egress.yaml.tpl` | `HTTPRoute` de salida, una por regla | una por regla |
-  | `60-httproute-ingress.yaml.tpl` | `HTTPRoute` de entrada, en el ns del Gateway | una por regla, sólo `origin=OS` |
+  | `60-httproute-ingress.yaml.tpl` | `HTTPRoute` de entrada, en el ns del Gateway; saca los headers s2s antes de entregar | una por regla, sólo `origin=OS` |
 
   El orden de aplicación sale del glob, que es alfabético. El prefijo numérico lo vuelve
   explícito —el `Gateway` primero, después lo que lo referencia— en vez de dejarlo librado a cómo

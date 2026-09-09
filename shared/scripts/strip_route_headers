@@ -1,0 +1,59 @@
+#!/bin/bash
+set -euo pipefail
+
+if ! type -t strip_route_headers >/dev/null 2>&1; then
+strip_route_headers() {
+  local description="$1"
+  local headers="$2"
+
+  local route_file route_name rule_count header_count header_list patched=0
+
+  STRIP_ROUTE_HEADERS_LIST=$(echo "$headers" | yq -o=json -I=0 '[.[] | downcase]')
+  export STRIP_ROUTE_HEADERS_LIST
+
+  header_count=$(echo "$STRIP_ROUTE_HEADERS_LIST" | yq 'length')
+  header_list=$(echo "$STRIP_ROUTE_HEADERS_LIST" | yq -o=csv -I=0 '.')
+
+  if [ "$header_count" -eq 0 ]; then
+    echo "❌ Cannot strip '$description': the header list is empty" >&2
+    echo "💡 Possible causes:" >&2
+    echo "   - The values.yaml of the override does not declare the list" >&2
+    echo "   - The workflow does not expose it as an environment variable" >&2
+    echo "🔧 How to fix:" >&2
+    echo "   - Declare the headers in the values.yaml of the override" >&2
+    exit 1
+  fi
+
+  for route_file in "$OUTPUT_DIR"/ingress-*.yaml; do
+    [ -f "$route_file" ] || continue
+
+    route_name=$(yq eval '.metadata.name // "<unnamed>"' "$route_file")
+    rule_count=$(yq eval '.spec.rules | length' "$route_file")
+
+    echo "📝 Stripping $description from $route_file | route: $route_name | rules: $rule_count | headers: $header_count"
+
+    yq eval -i '
+      .spec.rules[] |= (
+        (.filters // []) as $f
+        | ($f | map(select(.type == "RequestHeaderModifier")) | .[0].requestHeaderModifier // {}) as $rhm
+        | .filters = (
+            ($f | map(select(.type != "RequestHeaderModifier")))
+            + [{
+                "type": "RequestHeaderModifier",
+                "requestHeaderModifier": ($rhm * {"remove": ((($rhm.remove // []) + (strenv(STRIP_ROUTE_HEADERS_LIST) | from_json)) | unique | map(. style=""))})
+              }]
+          )
+      )
+    ' "$route_file"
+
+    patched=$((patched + 1))
+    echo "✅ Stripped $description from $route_name ($header_list)"
+  done
+
+  unset STRIP_ROUTE_HEADERS_LIST
+
+  if [ "$patched" -eq 0 ]; then
+    echo "ℹ️ No ingress-*.yaml found in $OUTPUT_DIR — nothing to strip for '$description'"
+  fi
+}
+fi
