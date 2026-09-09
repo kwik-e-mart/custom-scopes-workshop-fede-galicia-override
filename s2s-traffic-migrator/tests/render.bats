@@ -457,10 +457,25 @@ rule() {  # <percent> [service]
 @test "la route de ingreso sella la respuesta con el cluster que atendió" {
   run render openshift "$(rule 100)"
   local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
-  local set; set=$(echo "$r" | yq -o=json '.spec.rules[0].filters[0].responseHeaderModifier.set')
+  local set; set=$(echo "$r" | yq -o=json '[.spec.rules[0].filters[] | select(.type == "ResponseHeaderModifier")][0].responseHeaderModifier.set')
   [ "$(echo "$set" | jq -r '.[] | select(.name=="X-Egress-Route") | .value')" = "inbound" ]
   [ "$(echo "$set" | jq -r '.[] | select(.name=="X-S2S-Cluster") | .value')" = "crc-openshift" ]
   [ "$(echo "$set" | jq -r '.[] | select(.name=="X-Egress-Target") | .value')" = "reports-local.payments.svc.cluster.local" ]
+}
+
+@test "la route de ingreso saca los headers s2s antes de entregar a la app" {
+  run render openshift "$(rule 100)"
+  local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
+  local remove; remove=$(echo "$r" | yq -o=json -I=0 '[.spec.rules[0].filters[] | select(.type == "RequestHeaderModifier")][0].requestHeaderModifier.remove')
+  for h in x-np-token x-np-origin x-np-svc x-np-scope; do
+    [ "$(echo "$remove" | jq --arg h "$h" 'index($h) != null')" = "true" ]
+  done
+}
+
+@test "la route de ingreso declara un solo RequestHeaderModifier" {
+  run render openshift "$(rule 100)"
+  local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
+  [ "$(echo "$r" | yq '[.spec.rules[0].filters[] | select(.type == "RequestHeaderModifier")] | length')" = "1" ]
 }
 
 @test "desde EKS NO se emite route de ingreso: la del scope ya cuelga del Gateway" {

@@ -382,6 +382,27 @@ la frontera, y hay que sostenerla a propósito**. Es la misma limitación que el
   caería también el tráfico de la otra rama, que no lo usa. ⚠️ Cuál de las dos ramas es ésa depende
   del origen: desde el 2026-08-27 `percent` es siempre el porcentaje que atiende **EKS**, así que con
   origen OpenShift la rama local se apaga en `percent=100` y con origen EKS, en `percent=0`.
+- **Los headers no se sacaban antes de entregar a la app, y eso no era una decisión.** Hasta el
+  2026-09-09 `x-np-token`, `X-NP-Origin` y `X-NP-SVC`/`X-NP-Scope` llegaban al destino. El motivo por
+  el que se corrigió fue de tamaño —aplicaciones Tomcat cerca del `maxHttpHeaderSize`, y un JWT RS256
+  son ~400-800 bytes— pero lo que arregla de fondo es que el destino recibía una credencial viva y
+  podía replayearla contra cualquier servicio que confiara en el namespace emisor.
+
+  El strip **no lo puede hacer el validador**: `AuthPolicy` y `AuthConfig` sólo saben *agregar*
+  headers (`response.success` tiene `headers` y `filters`/`dynamicMetadata`, y nada de remoción). El
+  contrato de `ext_authz` es aditivo: Authorino lee el token para validarlo, no lo posee. Es lo que
+  en Kong hace `hide_credentials` y en Kuadrant no existe.
+
+  Tampoco sirve un `EnvoyFilter` a nivel Gateway: el flujo del `api-manager-publisher` atraviesa
+  `s2s-ingress` **dos veces** —acuña el token en la pasada 1 y lo valida en la pasada 2, porque su
+  `backendRef` apunta al Service del propio Gateway— así que un `request_headers_to_remove` en su
+  route config lo borraría antes de la pasada 2 y daría 401.
+
+  Queda entonces en el último hop, que es distinto según el camino: hacia EKS y para api-manager es
+  el `HTTPRoute` del scope, parcheado por el paso `strip_s2s_headers` del override del repo; hacia
+  OpenShift es `60-httproute-ingress.yaml.tpl`, que lo lleva en el template. ⚠️ Gateway API admite un
+  solo `RequestHeaderModifier` por rule (`RequestHeaderModifier filter cannot be repeated`, lo
+  enforcea el CRD), así que el parche mergea dentro del filtro existente en vez de agregar otro.
 
 ### 10.5 Dos bugs propios que el cambio destapó
 

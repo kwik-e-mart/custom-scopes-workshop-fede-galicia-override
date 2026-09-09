@@ -3,6 +3,12 @@ configuration:
   IMAGE_PULL_SECRETS:
     ENABLED: false
   APPLICATION_USER: 1001
+  S2S_STRIP_HEADERS:
+    - x-np-token
+    - x-np-origin
+    - x-np-svc
+    - x-np-scope
+    - x-api-key
   CABANCO_MOUNTS:
     - name: cakeystore
       secretName: secret-cabanco-keystore

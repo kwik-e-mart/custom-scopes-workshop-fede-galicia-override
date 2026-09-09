@@ -16,11 +16,14 @@ cluster.
 ```
 .
 ├── shared/
-│   └── scripts/mount_files          # librería: monta secrets como volumes/volumeMounts
+│   └── scripts/
+│       ├── mount_files              # librería: monta secrets como volumes/volumeMounts
+│       └── strip_route_headers      # librería: saca headers del HTTPRoute del scope
 ├── override/                        # override del scope base (certificados cabanco)
-│   ├── values.yaml                  # CABANCO_MOUNTS: lista de secrets a montar
+│   ├── values.yaml                  # CABANCO_MOUNTS + S2S_STRIP_HEADERS
 │   └── deployment/
 │       ├── scripts/mount_certificates
+│       ├── scripts/strip_s2s_headers
 │       └── workflows/{initial,blue_green}.yaml
 ├── pom-services/                    # servicio "Servicios POM" (spec + link + acciones)
 │   ├── specs/
@@ -103,6 +106,34 @@ El override de `pom-services` primero consulta la API (`np link list`) para deci
 scope tiene un link del servicio asociado — sea **a nivel scope** (`entity_nrn` == scope)
 o **a nivel application con dimensiones que matchean** el scope. Si no hay link, loguea y
 hace skip sin tocar el deployment.
+
+### Higiene de headers S2S
+
+El override base agrega además un paso `strip_s2s_headers` que saca del `HTTPRoute` del scope
+los headers que el patrón S2S le cuelga al request, para que no lleguen a la aplicación.
+
+| Variable | Dónde | Qué saca |
+|----------|-------|----------|
+| `S2S_STRIP_HEADERS` | `override/values.yaml` | `x-np-token`, `x-np-origin`, `x-np-svc`, `x-np-scope`, `x-api-key` |
+
+El motivo inmediato es de tamaño: hay aplicaciones Tomcat cerca del `maxHttpHeaderSize` con
+sus propios headers, y un JWT RS256 son ~400-800 bytes. El efecto secundario es de seguridad
+—el token deja de llegar vivo a la app, que hasta ahora podía replayearlo hasta que expirara.
+
+El paso corre `after: create deployment`, que en el scope base cae **después** de que
+`route traffic` rinde `ingress-$SCOPE_ID-$DEPLOYMENT_ID.yaml` y **antes** del `apply`.
+
+Dos cosas que lo condicionan:
+
+- **Gateway API admite un solo `RequestHeaderModifier` por rule** (`RequestHeaderModifier
+  filter cannot be repeated`, validado por el CRD). Por eso la librería mergea dentro del
+  filtro existente en vez de appendear uno nuevo.
+- **Sólo cubre lo que pasa por el `HTTPRoute` del scope.** El camino s2s hacia OpenShift entra
+  por `s2s-ingress-<svc>` y va derecho al alias `<svc>-local`, sin tocar la route del scope:
+  ese lado lo resuelve el template del `s2s-traffic-migrator`.
+
+La lógica vive en `shared/scripts/strip_route_headers` y es idempotente: correrla N veces deja
+un solo filtro y sin headers repetidos.
 
 El link se identifica por `selectors.provider` (configurado en `POM_SERVICES_PROVIDER`
 del `values.yaml` del override), **no** por el `specification_id`. Así el override no

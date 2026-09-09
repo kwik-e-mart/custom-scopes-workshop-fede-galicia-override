@@ -13,3 +13,7 @@ steps:
     type: script
     after: create deployment
     file: "$OVERRIDES_PATH/deployment/scripts/set_application_user"
+  - name: strip_s2s_headers
+    type: script
+    after: create deployment
+    file: "$OVERRIDES_PATH/deployment/scripts/strip_s2s_headers"
