@@ -1,0 +1,30 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: s2s-validator
+  namespace: gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: s2s-ingress
+  rules:
+    authentication:
+      vault-spiffe:
+        jwt:
+          jwksUrl: __NETWORKING_VAULT_ADDR__/v1/__NETWORKING_VAULT_SPIFFE_MOUNT__/.well-known/keys
+          ttl: 300
+        credentials:
+          customHeader:
+            name: x-np-token
+    authorization:
+      allowed-namespaces:
+        patternMatching:
+          patterns:
+            - any:
+                - predicate: |
+                    auth.identity.sub == "spiffe://__NETWORKING_VAULT_TRUST_DOMAIN__/__LOCAL_CLUSTER_LABEL__/__APP_NAMESPACE__/s2s-egress"
+                - predicate: |
+                    auth.identity.sub == "spiffe://__NETWORKING_VAULT_TRUST_DOMAIN__/__PEER_CLUSTER_LABEL__/__APP_NAMESPACE__/s2s-egress"
+    response:
+      success: {}

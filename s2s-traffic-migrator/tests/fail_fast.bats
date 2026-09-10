@@ -83,6 +83,11 @@ correr() {
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
+  NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
+  NETWORKING_VAULT_NAMESPACE=admin/spiffe \
+  NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
+  NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
   INTERCEPTIONS_JSON='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":50}]' \
   bash -c '
@@ -105,6 +110,11 @@ correr_openshift() {  # [interceptions-json]
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
+  NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
+  NETWORKING_VAULT_NAMESPACE=admin/spiffe \
+  NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
+  NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
   INTERCEPTIONS_JSON="$reglas" \
   bash -c '
@@ -121,6 +131,11 @@ correr_delete() {
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
+  NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
+  NETWORKING_VAULT_NAMESPACE=admin/spiffe \
+  NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
+  NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   INTERCEPTIONS_JSON='[]' \
   bash -c '
     source "'"$SVC_DIR"'/logging"

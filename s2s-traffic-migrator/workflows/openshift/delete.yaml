@@ -1,6 +1,11 @@
 provider_categories:
   - container-orchestration
 configuration:
+  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: spiffe
+  NETWORKING_VAULT_ADDR: ""
+  NETWORKING_VAULT_NAMESPACE: ""
+  NETWORKING_VAULT_SPIFFE_MOUNT: spiffe
+  NETWORKING_VAULT_TOKEN_SECRET: s2s-vault-token
   WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
   PEER_CA_SECRET: s2s-remote-ca
   PEER_GATEWAY_HOST: s2s-remote-gateway.tailscale.svc.cluster.local
@@ -31,6 +36,11 @@ steps:
       - { name: INTERCEPTIONS_JSON, type: environment }
       - { name: SERVICE_ID, type: environment }
       - { name: WRISTBAND_SECRET, type: environment }
+      - { name: SIGNING_STRATEGY, type: environment }
+      - { name: NETWORKING_VAULT_ADDR, type: environment }
+      - { name: NETWORKING_VAULT_NAMESPACE, type: environment }
+      - { name: NETWORKING_VAULT_SPIFFE_MOUNT, type: environment }
+      - { name: NETWORKING_VAULT_TOKEN_SECRET, type: environment }
       - { name: PEER_CA_SECRET, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }

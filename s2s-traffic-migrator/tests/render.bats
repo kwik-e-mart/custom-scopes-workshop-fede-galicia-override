@@ -37,7 +37,7 @@ render() {
   # mirando el stream completo, así que lo que se asserta es lo que se termina aplicando.
   local out="$BATS_TEST_TMPDIR/out"
   rm -rf "$out"
-  render_manifests "$BATS_TEST_TMPDIR/ctx.json" "$out" >"$BATS_TEST_TMPDIR/list.txt" || return 1
+  render_all_manifests "$BATS_TEST_TMPDIR/ctx.json" "$out" cluster-keys >"$BATS_TEST_TMPDIR/list.txt" || return 1
   # El `---` va ENTRE archivos y no antes del primero: un separador al inicio agrega un documento
   # `null` al stream que después tienen que esquivar todas las aserciones.
   local f first=1
@@ -58,7 +58,7 @@ rendered_files() {
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
   local out="$BATS_TEST_TMPDIR/out2"
   rm -rf "$out"
-  render_manifests "$BATS_TEST_TMPDIR/ctx2.json" "$out" | xargs -n1 basename
+  render_all_manifests "$BATS_TEST_TMPDIR/ctx2.json" "$out" cluster-keys | xargs -n1 basename
 }
 
 # doc <render> <kind>: el documento de ese kind, sin comentarios. Se borran a propósito: varios
