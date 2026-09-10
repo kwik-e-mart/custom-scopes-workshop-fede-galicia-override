@@ -272,6 +272,11 @@ jq -n \
   --arg role_label "$ROLE_LABEL" \
   --arg original_selector_annotation "$ORIGINAL_SELECTOR_ANNOTATION" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
+  --arg signing_strategy "$SIGNING_STRATEGY" \
+  --arg vault_addr "$NETWORKING_VAULT_ADDR" \
+  --arg vault_namespace "$NETWORKING_VAULT_NAMESPACE" \
+  --arg vault_spiffe_mount "$NETWORKING_VAULT_SPIFFE_MOUNT" \
+  --arg vault_token_secret "$NETWORKING_VAULT_TOKEN_SECRET" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
@@ -286,8 +291,8 @@ rm -f "$MANIFEST_DIR"/*.yaml
 MANIFEST_LIST="$NP_OUTPUT_DIR/manifest-list.txt"
 # La redirección no enmascara el estado de salida (a diferencia de `local x=$(...)`), así que un
 # render fallido aborta acá y no sigue hasta un apply de nada.
-render_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" > "$MANIFEST_LIST" \
-  || die "falló el render de los manifiestos. No se aplicó nada."
+render_all_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" "$SIGNING_STRATEGY" > "$MANIFEST_LIST" \
+  || die "falló el render de los manifiestos (estrategia de firma '$SIGNING_STRATEGY'). No se aplicó nada."
 mapfile -t MANIFESTS < "$MANIFEST_LIST"
 if [ "${#MANIFESTS[@]}" -eq 0 ]; then
   log error "egress-interceptor: el render no produjo ningún manifiesto con contenido."
@@ -332,7 +337,12 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$GATEWAY_
   log error "la AuthPolicy $GATEWAY_NAME no llegó a Enforced=True. El tráfico NO se desvió."
   log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$GATEWAY_NAME" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
-  log error "  Causa típica: el Secret de firma no existe en kuadrant-system, o no está en PKCS#1."
+  if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
+    log error "  Causa típica: el Secret $NETWORKING_VAULT_TOKEN_SECRET no existe en kuadrant-system o está vacío."
+    log error "  Lo puebla el CronJob de login a Vault (specs/prerequisites/manifests/55-vault-login-cronjob.yaml)."
+  else
+    log error "  Causa típica: el Secret de firma no existe en kuadrant-system, o no está en PKCS#1."
+  fi
   exit 1
 fi
 

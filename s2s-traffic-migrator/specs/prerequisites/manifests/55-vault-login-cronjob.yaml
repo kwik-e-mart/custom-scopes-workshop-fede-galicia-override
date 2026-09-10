@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: __NETWORKING_VAULT_TOKEN_SECRET__
+  namespace: kuadrant-system
+type: Opaque
+stringData:
+  client_token: ""
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: __NETWORKING_VAULT_TOKEN_SECRET__-writer
+  namespace: kuadrant-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["__NETWORKING_VAULT_TOKEN_SECRET__"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: __NETWORKING_VAULT_TOKEN_SECRET__-writer
+  namespace: kuadrant-system
+subjects:
+  - kind: ServiceAccount
+    name: authorino-authorino
+    namespace: kuadrant-system
+roleRef:
+  kind: Role
+  name: __NETWORKING_VAULT_TOKEN_SECRET__-writer
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s2s-vault-login
+  namespace: kuadrant-system
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          serviceAccountName: authorino-authorino
+          restartPolicy: OnFailure
+          containers:
+            - name: vault-login
+              image: __VAULT_LOGIN_IMAGE__
+              env:
+                - name: VAULT_ADDR
+                  value: __NETWORKING_VAULT_ADDR__
+                - name: VAULT_NAMESPACE
+                  value: __NETWORKING_VAULT_NAMESPACE__
+                - name: VAULT_AUTH_MOUNT
+                  value: __NETWORKING_VAULT_AUTH_MOUNT__
+                - name: VAULT_AUTH_ROLE
+                  value: __NETWORKING_VAULT_AUTH_ROLE__
+                - name: TOKEN_SECRET
+                  value: __NETWORKING_VAULT_TOKEN_SECRET__
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  BODY=$(mktemp)
+                  trap 'rm -f "$BODY"' EXIT
+                  jq -nc --rawfile jwt /var/run/secrets/kubernetes.io/serviceaccount/token \
+                        --arg role "$VAULT_AUTH_ROLE" \
+                        '{role: $role, jwt: ($jwt | rtrimstr("\n"))}' >"$BODY"
+                  RESP=$(curl -sS --fail-with-body -X POST \
+                    "${VAULT_ADDR}/v1/${VAULT_AUTH_MOUNT}/login" \
+                    -H "X-Vault-Namespace: ${VAULT_NAMESPACE}" \
+                    --data-binary @"$BODY") || {
+                      echo "login a Vault falló: $RESP" >&2
+                      exit 1
+                    }
+                  CLIENT_TOKEN=$(printf %s "$RESP" | jq -r '.auth.client_token // empty')
+                  if [ -z "$CLIENT_TOKEN" ]; then
+                    echo "la respuesta de Vault no trae auth.client_token: $RESP" >&2
+                    exit 1
+                  fi
+                  kubectl -n kuadrant-system patch secret "$TOKEN_SECRET" \
+                    --type=merge \
+                    -p "$(jq -nc --arg t "$CLIENT_TOKEN" '{stringData:{client_token:$t}}')"

@@ -21,6 +21,8 @@ setup() {
 
   # Configuración del workflow, no del form: la dirección del ingreso del sustrato opuesto.
   export PEER_GATEWAY_HOST=kuadrant.peer.example.io
+  export NETWORKING_VAULT_ADDR=https://vault.example.io:8200
+  export NETWORKING_VAULT_SPIFFE_MOUNT=spiffe
 
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   export NP_MOCK_MODE=ok

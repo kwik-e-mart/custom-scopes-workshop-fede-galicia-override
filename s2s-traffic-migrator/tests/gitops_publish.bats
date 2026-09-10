@@ -44,7 +44,7 @@ make_render() {  # <site>
   }' >"$CTX"
   rm -rf "$MDIR"
   mkdir -p "$MDIR"
-  render_manifests "$CTX" "$MDIR" >/dev/null
+  render_all_manifests "$CTX" "$MDIR" cluster-keys >/dev/null
   SDIR="$BATS_TEST_TMPDIR/services"
   rm -rf "$SDIR"
   mkdir -p "$SDIR"

@@ -36,6 +36,35 @@ GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
 # aceptaría tráfico del otro sustrato sin validar el token.
 INGRESS_AUTHPOLICY="${INGRESS_AUTHPOLICY:-s2s-validator}"
 
+SIGNING_STRATEGY="${S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY-spiffe}"
+case "$SIGNING_STRATEGY" in
+  cluster-keys|spiffe) ;;
+  *)
+    log error "egress-interceptor: S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY='${SIGNING_STRATEGY}' no es una estrategia de firma válida."
+    log error "  Valores: spiffe (default, JWT-SVID minteado por Vault) | cluster-keys (wristband firmado con una clave del cluster)"
+    exit 1 ;;
+esac
+
+NETWORKING_VAULT_ADDR="${NETWORKING_VAULT_ADDR:-}"
+NETWORKING_VAULT_NAMESPACE="${NETWORKING_VAULT_NAMESPACE:-}"
+NETWORKING_VAULT_SPIFFE_MOUNT="${NETWORKING_VAULT_SPIFFE_MOUNT:-}"
+NETWORKING_VAULT_TOKEN_SECRET="${NETWORKING_VAULT_TOKEN_SECRET:-s2s-vault-token}"
+
+warn_inert() {
+  local name="$1" value="$2" default="$3"
+  [ -n "$value" ] || return 0
+  [ "$value" != "$default" ] || return 0
+  log warn "egress-interceptor: ${name} está declarada pero la estrategia de firma es '${SIGNING_STRATEGY}': ese valor NO tiene efecto."
+}
+
+if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
+  warn_inert TOKEN_DURATION "${TOKEN_DURATION:-}" 300
+  warn_inert WRISTBAND_SECRET_NAME "${WRISTBAND_SECRET_NAME:-}" '{namespace}-wristband-key'
+else
+  warn_inert NETWORKING_VAULT_ADDR "$NETWORKING_VAULT_ADDR" ""
+  warn_inert NETWORKING_VAULT_NAMESPACE "$NETWORKING_VAULT_NAMESPACE" ""
+  warn_inert NETWORKING_VAULT_SPIFFE_MOUNT "$NETWORKING_VAULT_SPIFFE_MOUNT" ""
+fi
 
 # La plataforma sale de la dimension 'site' de la instancia, no del entorno del agente: un agente
 # puede atender instancias de sustratos distintos.
@@ -165,6 +194,24 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
     log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
     exit 1
   fi
+  if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
+    if [ -z "$NETWORKING_VAULT_ADDR" ]; then
+      log error "egress-interceptor: falta NETWORKING_VAULT_ADDR en la configuración del workflow."
+      log error "  Con la estrategia 'spiffe' el token lo mintea Vault: sin su dirección no hay quién firme."
+      exit 1
+    fi
+    if [ -z "$NETWORKING_VAULT_SPIFFE_MOUNT" ]; then
+      log error "egress-interceptor: falta NETWORKING_VAULT_SPIFFE_MOUNT en la configuración del workflow."
+      log error "  Es el path donde está montado el secrets engine 'spiffe' que emite los JWT-SVID."
+      exit 1
+    fi
+    require_match "$NETWORKING_VAULT_ADDR" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "NETWORKING_VAULT_ADDR"
+    require_match "$NETWORKING_VAULT_SPIFFE_MOUNT" '^[a-zA-Z0-9]([a-zA-Z0-9._/-]{0,62})?$' "NETWORKING_VAULT_SPIFFE_MOUNT"
+    require_match "$NETWORKING_VAULT_TOKEN_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "NETWORKING_VAULT_TOKEN_SECRET"
+    if [ -n "$NETWORKING_VAULT_NAMESPACE" ]; then
+      require_match "$NETWORKING_VAULT_NAMESPACE" '^[a-zA-Z0-9]([a-zA-Z0-9._/-]{0,62})?$' "NETWORKING_VAULT_NAMESPACE"
+    fi
+  fi
   require_match "$GATEWAY_NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "gateway_namespace"
   require_match "$INGRESS_AUTHPOLICY" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "ingress_authpolicy"
   require_match "$CLUSTER_LABEL" '^[a-zA-Z0-9_.-]{1,63}$' "cluster_label"
@@ -207,7 +254,9 @@ fi
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY
-log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM key=$WRISTBAND_SECRET"
+export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
+export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_TOKEN_SECRET
+log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \
   | while IFS= read -r RULE_LINE; do log info "$RULE_LINE"; done
 # Dato de salida que parsean los tests, no una traza: va con echo para que no lo filtre LOG_LEVEL.

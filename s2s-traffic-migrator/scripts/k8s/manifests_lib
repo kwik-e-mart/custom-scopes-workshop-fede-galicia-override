@@ -15,6 +15,7 @@
 MANIFESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/egress}"
 : "${SERVICES_MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/services}"
+: "${SIGNING_MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/signing}"
 
 # render_manifests <contexto.json> <outdir>
 # Renderiza cada template al outdir y escribe en stdout, en orden de aplicación, la ruta de los
@@ -81,6 +82,15 @@ render_manifests_from() {
   local MANIFESTS_DIR="$1"
   shift
   render_manifests "$@"
+}
+fi
+
+if ! type -t render_all_manifests >/dev/null 2>&1; then
+render_all_manifests() {
+  local ctx="$1" outdir="$2" strategy="$3" shared signing
+  shared=$(render_manifests "$ctx" "$outdir") || return 1
+  signing=$(render_manifests_from "$SIGNING_MANIFESTS_DIR/$strategy" "$ctx" "$outdir") || return 1
+  printf '%s\n%s\n' "$shared" "$signing" | grep -v '^$' | LC_ALL=C sort -u
 }
 fi
 
