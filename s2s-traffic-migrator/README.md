@@ -82,9 +82,10 @@ del ingreso.
 | qué firma | un JWT-SVID | un wristband |
 | dónde vive el material de firma | dentro de Vault, no sale nunca | `Secret <ns>-wristband-key` en `kuadrant-system` |
 | qué hay en el cluster | el `client_token` de Vault, TTL 1 h, rotado cada 30 min, acotado a mintear un solo role | la clave privada RSA, sin rotación |
-| de dónde sale la identidad del namespace | el claim `sub` firmado: `spiffe://<trust-domain>/<cluster-label>/<namespace>/s2s-egress` | qué JWKS validó la firma (una clave y un JWKS por namespace) |
+| granularidad de la identidad | **una sola para toda la plataforma** (un role, un `sub`) | **una por namespace** (clave y JWKS propios, claim `ns`) |
+| el destino puede autorizar por namespace | no | sí |
 | qué tiene que existir en el cluster | el CronJob de login y el validador de `spiffe` | el endpoint de JWKS, el `ExternalName` al JWKS del peer y la clave por namespace |
-| qué tiene que existir afuera | un mount `spiffe` en Vault y un role por namespace | nada |
+| qué tiene que existir afuera | un mount `spiffe` en Vault y **un** role | nada |
 
 **El default es `spiffe`.** Una instancia que reconcilie sin declarar la variable cambia de
 mecanismo en esa corrida. El validador del ingreso es del layer de plataforma y no lo crea el
@@ -101,21 +102,37 @@ tienen que estar en la misma. Y con `spiffe`, `TOKEN_DURATION` y `WRISTBAND_SECR
 tener efecto — el TTL pasa a ser config del role de Vault. `build_context` avisa por log si vienen
 declaradas con un valor distinto del default, en vez de aceptarlas en silencio.
 
-### Aislamiento por namespace
+### Aislamiento: las dos estrategias NO son equivalentes
 
-Con `cluster-keys` hay una clave y un JWKS por namespace, y el validador sobreescribe el claim `ns`
-según cuál JWKS verificó la firma. Con `spiffe` los dos clusters mintean del mismo emisor y hay un
-solo JWKS, así que la identidad viaja adentro del `sub` y Vault necesita **un role por namespace**:
+**`spiffe` no distingue namespaces.** Es la diferencia más importante entre las dos y hay que
+tenerla presente antes de prender el default.
+
+Con `cluster-keys` hay una clave y un JWKS **por namespace**, y el validador de destino sobreescribe
+el claim `ns` según cuál JWKS verificó la firma: la clave que valida *es* la identidad, y la authz
+(`auth.identity.ns == <ns>`) puede decir "este namespace sí, este no".
+
+Con `spiffe` hay **un solo role en Vault para toda la plataforma**:
 
 ```
-spiffe/role/<cluster-label>-<namespace>
-  template: {"sub": "spiffe://<trust-domain>/<cluster-label>/<namespace>/s2s-egress"}
+spiffe/role/<NETWORKING_VAULT_SPIFFE_ROLE>
+  template: {"sub": "spiffe://<trust-domain>/s2s-egress"}
 ```
 
-La policy del role de `auth/jwt` se acota a `spiffe/role/<cluster-label>-*/mintjwt`: un cluster
-comprometido no puede mintear identidades del otro.
+Todos los namespaces de los dos clusters mintean de ese role, así que todos los tokens salen con el
+**mismo `sub`, el mismo `iss` y la misma `aud`**. El validador de destino no tiene con qué
+distinguir de qué namespace vino un request: lo único que puede afirmar es "esto lo firmó nuestro
+Vault para nuestra plataforma". En la práctica, cualquier workload que alcance el Gateway de egreso
+de su namespace puede hablar con cualquier destino habilitado.
 
-En las dos estrategias, quien pueda crear una `AuthPolicy` en cualquier namespace del cluster
+Lo que sigue acotando el tráfico con `spiffe` es la capa de red y de ruteo —la `NetworkPolicy` del
+namespace, y que las `HTTPRoute` de egreso sólo existen para los servicios declarados en cada
+instancia— no el token.
+
+Si hace falta volver a distinguir por namespace, hay que ir a un role de Vault por namespace, con el
+namespace dentro del `sub`, y un predicado por namespace en el validador. No es un cambio de este
+service: es config de Vault más el `45-`.
+
+En las dos estrategias, además, quien pueda crear una `AuthPolicy` en cualquier namespace del cluster
 alcanza todos los `Secret` de `kuadrant-system` — porque ahí es donde Kuadrant crea el `AuthConfig`
 y donde Authorino resuelve `signingKeyRefs` y `sharedSecretRef`. Es la misma superficie que ya
 existe hoy, pero con `spiffe` el `Secret` alcanzable es uno para toda la plataforma en vez de uno
@@ -327,6 +344,7 @@ un cluster y ninguna es un secreto:
 | `NETWORKING_VAULT_ADDR` | sólo con `spiffe`, **obligatoria**: `https://host[:puerto]` del Vault que mintea. Sin default. |
 | `NETWORKING_VAULT_NAMESPACE` | sólo con `spiffe`, opcional: el namespace de Vault Enterprise/HCP. Vacío no emite el header `X-Vault-Namespace`. |
 | `NETWORKING_VAULT_SPIFFE_MOUNT` | sólo con `spiffe`: path del mount del secrets engine. Default `spiffe`. |
+| `NETWORKING_VAULT_SPIFFE_ROLE` | sólo con `spiffe`: el role que mintea, uno para toda la plataforma. Default `s2s-egress`. |
 | `NETWORKING_VAULT_TOKEN_SECRET` | sólo con `spiffe`: Secret de `kuadrant-system` con el `client_token`, lo puebla el CronJob. Default `s2s-vault-token`. |
 | `WRISTBAND_SECRET_NAME` | sólo con `cluster-keys`: Secret con la clave de firma. `{namespace}` se interpola. |
 | `PEER_CA_SECRET` | CA con la que se valida el cert del peer. |

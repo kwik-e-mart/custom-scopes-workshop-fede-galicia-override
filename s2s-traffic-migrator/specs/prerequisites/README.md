@@ -52,11 +52,11 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__NETWORKING_VAULT_ADDR__` | `https://host[:puerto]` del Vault que mintea (sólo `spiffe`) | el HCP Vault de noprod, puerto `8200` |
 | `__NETWORKING_VAULT_NAMESPACE__` | namespace de Vault Enterprise/HCP (sólo `spiffe`) | `admin/spiffe` |
 | `__NETWORKING_VAULT_SPIFFE_MOUNT__` | path del mount del secrets engine `spiffe` | `spiffe` |
-| `__NETWORKING_VAULT_TRUST_DOMAIN__` | trust domain SPIFFE, la autoridad del `sub` | `s2s.bancogalicia.com.ar` |
+| `__NETWORKING_VAULT_SPIFFE_SUB__` | el `sub` completo que emite el role, tal cual sale en el token | `spiffe://s2s.bancogalicia.com.ar/s2s-egress` |
+| `__NETWORKING_VAULT_ISSUER__` | el `iss` del token, o sea el `jwt_issuer_url` de `spiffe/config` | `https://vault-noprod.example.cloud:8200` |
 | `__NETWORKING_VAULT_AUTH_MOUNT__` | mount del método de login del cluster | `auth/jwt` en EKS, `auth/jwt-ocp` en OpenShift |
 | `__NETWORKING_VAULT_AUTH_ROLE__` | role de ese mount, bindeado a la SA de Authorino | `s2s-authorino-egress` |
 | `__NETWORKING_VAULT_TOKEN_SECRET__` | Secret de `kuadrant-system` donde el CronJob deja el `client_token` | `s2s-vault-token` |
-| `__LOCAL_CLUSTER_LABEL__` / `__PEER_CLUSTER_LABEL__` | el `CLUSTER_LABEL` de **este** cluster y del **opuesto**, tal como aparecen en el `sub` | `aws-us-east-1` / `openshift-crc` |
 | `__VAULT_LOGIN_IMAGE__` | imagen del CronJob de login. Necesita `curl`, `jq` y `kubectl` | una imagen interna pineada por digest |
 
 `__LOCAL_JWKS_NAME__` y `__PEER_JWKS_NAME__` **tienen que ser distintos**: cada cluster resuelve el
@@ -71,10 +71,11 @@ misma entre sí: el que emite y el que valida no pueden diferir.
 
 | | `spiffe` (default) | `cluster-keys` |
 |---|---|---|
-| por cluster | `55-` | `30-`, `35-` |
-| por namespace emisor | `45-` (una vez por cluster, con un par de predicados por namespace) | `40-`, `50-` |
+| por cluster | `45-`, `55-` | `30-`, `35-` |
+| por namespace emisor | nada | `40-`, `50-` |
 | material de firma que hay que generar | ninguno | una clave RSA por namespace |
-| config fuera del cluster | mount `spiffe` en Vault + un role por namespace | ninguna |
+| config fuera del cluster | mount `spiffe` en Vault + **un** role | ninguna |
+| el destino autoriza por namespace | no | sí |
 
 `40-` y `45-` crean el **mismo objeto** (`AuthPolicy s2s-validator` en `gateways`), que es el que el
 service espera ver `Enforced`. Se aplica uno o el otro. Aplicar el segundo encima del primero
@@ -89,7 +90,20 @@ un 401 en el ingreso del peer.
 No lo hace ninguno de estos archivos ni el service: el service no tiene credenciales de Vault. Lo
 provisiona quien administre el mount.
 
-Por cluster:
+**Un solo role para toda la plataforma**, compartido por los dos clusters y por todos los
+namespaces:
+
+```
+spiffe/role/s2s-egress
+  template: {"sub": "spiffe://<trust-domain>/s2s-egress"}
+  ttl:      el TTL del JWT-SVID
+```
+
+El nombre del role es configurable desde el service con `NETWORKING_VAULT_SPIFFE_ROLE` (default
+`s2s-egress`). Si acá se usa otro nombre, hay que declararlo también en el `configuration:` del
+workflow.
+
+Y por cluster, el método de login de Authorino:
 
 ```
 sys/auth/<mount>                    # auth/jwt en EKS, auth/jwt-ocp en OpenShift
@@ -101,25 +115,24 @@ auth/<mount>/role/s2s-authorino-egress
   token_policies: s2s-spiffe-mint-only
 
 policy s2s-spiffe-mint-only
-  path "spiffe/role/<cluster-label>-*/mintjwt" { capabilities = ["update"] }
-```
-
-El `*` de la policy es a propósito: acota un cluster comprometido a los namespaces de **ese**
-cluster, y evita un token por namespace.
-
-Por namespace emisor:
-
-```
-spiffe/role/<cluster-label>-<namespace>
-  template: {"sub": "spiffe://<trust-domain>/<cluster-label>/<namespace>/s2s-egress"}
-  ttl:      el TTL del JWT-SVID
+  path "spiffe/role/s2s-egress/mintjwt" { capabilities = ["update"] }
 ```
 
 El `template` tiene que ser un objeto JSON completo (`{"sub": "..."}`), no el fragmento
 `"sub": "..."`. Y `spiffe/config` necesita el `jwt_issuer_url` con los **tres** componentes —host,
-puerto y el path completo del mount— o el `jwks_uri` que publica el discovery no resuelve.
+puerto y el path completo del mount— o el `jwks_uri` que publica el discovery no resuelve. Ese
+`jwt_issuer_url` es el valor que va en `__NETWORKING_VAULT_ISSUER__` del `45-`.
 
 **El secrets engine `spiffe` es exclusivo de Vault Enterprise.** No está en la edición community.
+
+**Con un solo role no hay identidad por namespace.** Todos los tokens salen con el mismo `sub`, así
+que el `45-` no puede autorizar por namespace como sí hace el `40-`. Ver *Aislamiento* en el README
+del service.
+
+**Con OpenShift, ojo con las pubkeys estáticas.** `auth/jwt-ocp` valida el SA token de Authorino
+contra claves sacadas una vez de `/openid/v1/jwks` del cluster. El día que OpenShift rote sus claves
+de firma de ServiceAccount, el login a Vault deja de funcionar y con él todo el egreso del cluster.
+Hay que re-extraerlas en esa ventana; no hay nada que lo detecte solo.
 
 ### Dos cosas que rompen en silencio con `spiffe`
 
@@ -251,16 +264,14 @@ kubectl -n kuadrant-system rollout status deployment authorino
 sed -e "s/__APP_NAMESPACE__/payments/g" \
     -e "s|__NETWORKING_VAULT_ADDR__|https://vault-noprod.example.cloud:8200|g" \
     -e "s|__NETWORKING_VAULT_SPIFFE_MOUNT__|spiffe|g" \
-    -e "s/__NETWORKING_VAULT_TRUST_DOMAIN__/s2s.bancogalicia.com.ar/g" \
-    -e "s/__LOCAL_CLUSTER_LABEL__/aws-us-east-1/g" \
-    -e "s/__PEER_CLUSTER_LABEL__/openshift-crc/g" \
+    -e "s|__NETWORKING_VAULT_ISSUER__|https://vault-noprod.example.cloud:8200|g" \
+    -e "s|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://s2s.bancogalicia.com.ar/s2s-egress|g" \
     manifests/45-authpolicy-validator-spiffe.yaml | kubectl apply -f -
 ```
 
-`55-` no lleva `__APP_NAMESPACE__`: es uno por cluster, no uno por namespace. El `45-` sí, y con más
-de un namespace emisor **no se aplica una vez por namespace**: hay que sumarle un par de predicados
-`sub` (el local y el del peer) al `any` de `allowed-namespaces`. Aplicar el archivo tal cual con otro
-`$NS` reemplaza el anterior y deja al primero sin regla.
+Ninguno de los dos lleva `__APP_NAMESPACE__`: con un role único, el `45-` y el `55-` son **uno por
+cluster** y no cambian al sumar un namespace emisor. Es la diferencia operativa más grande con
+`cluster-keys`, donde el `30-` y el `40-` hay que editarlos por cada namespace nuevo.
 
 ### Con `cluster-keys`
 
