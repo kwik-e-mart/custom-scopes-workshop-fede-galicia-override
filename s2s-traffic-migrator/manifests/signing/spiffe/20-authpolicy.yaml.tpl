@@ -1,6 +1,5 @@
 {{- $gw := .gateway_name -}}
 {{- $ns := .namespace -}}
-{{- $role := printf "%s-%s" .cluster_label .namespace -}}
 apiVersion: {{ .authpolicy_api_version | quote }}
 kind: AuthPolicy
 metadata:
@@ -21,7 +20,7 @@ spec:
     metadata:
       "vault_mint":
         http:
-          url: {{ printf "%s/v1/%s/role/%s/mintjwt" .vault_addr .vault_spiffe_mount $role | quote }}
+          url: {{ printf "%s/v1/%s/role/%s/mintjwt" .vault_addr .vault_spiffe_mount .vault_spiffe_role | quote }}
           method: POST
 {{- if .vault_namespace }}
           headers:
@@ -38,7 +37,7 @@ spec:
             expression: '{{ printf "%q" (dict "audience" .peer_gateway_host | data.ToJSON) }}'
         cache:
           key:
-            expression: '{{ printf "%q" $role }}'
+            expression: '{{ printf "%q" .vault_spiffe_role }}'
           ttl: 250
     authorization:
       "vault_mint_check":

@@ -61,7 +61,8 @@ render_ctx() {
     managed_label:"egress-interceptor/managed",
     signing_strategy:$strategy,
     vault_addr:"https://vault.example.io:8200", vault_namespace:"admin/spiffe",
-    vault_spiffe_mount:"spiffe", vault_token_secret:"s2s-vault-token",
+    vault_spiffe_mount:"spiffe", vault_spiffe_role:"s2s-egress",
+    vault_token_secret:"s2s-vault-token",
     platform:"openshift",
     interceptions:[{service_name:"reports", scope:"dev", scope_fqdn:"reports-dev.example.io",
                     percent:50, original:{selector:{app:"reports"},ports:[{port:8080,targetPort:8080}]}}]
@@ -171,21 +172,59 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
   [[ "$output" != *"TOKEN_DURATION"* ]]
 }
 
-@test "spiffe rinde una AuthPolicy que mintea contra el role del namespace" {
+@test "spiffe rinde una AuthPolicy que mintea contra el role configurado" {
   run render spiffe
   [ "$status" -eq 0 ]
   local ap; ap=$(doc "$output" AuthPolicy)
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.url')" = \
-    "https://vault.example.io:8200/v1/spiffe/role/crc-openshift-payments/mintjwt" ]
+    "https://vault.example.io:8200/v1/spiffe/role/s2s-egress/mintjwt" ]
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.method')" = "POST" ]
 }
 
-@test "el cache del mint tiene una key POR NAMESPACE, no una constante compartida" {
+@test "el cache del mint se llavea por el role, que es el que define la identidad" {
   run render spiffe
   [ "$status" -eq 0 ]
   local ap; ap=$(doc "$output" AuthPolicy)
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.cache.key.expression')" = \
-    '"crc-openshift-payments"' ]
+    '"s2s-egress"' ]
+}
+
+@test "el role de spiffe es configurable y viaja a la URL y a la key del cache" {
+  render_ctx spiffe
+  jq '.vault_spiffe_role = "otro-role"' "$BATS_TEST_TMPDIR/render-ctx.json" \
+    >"$BATS_TEST_TMPDIR/otro-role.json"
+  local out="$BATS_TEST_TMPDIR/out7"
+  rm -rf "$out"
+  run bash -c "
+    source '${BATS_TEST_DIRNAME}/../logging'
+    source '${BATS_TEST_DIRNAME}/../scripts/k8s/manifests_lib'
+    render_all_manifests '$BATS_TEST_TMPDIR/otro-role.json' '$out' spiffe >/dev/null
+    yq '.spec.rules.metadata.vault_mint.http.url + \" \" + .spec.rules.metadata.vault_mint.cache.key.expression' '$out/20-authpolicy.yaml'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/role/otro-role/mintjwt"* ]]
+  [[ "$output" == *'"otro-role"'* ]]
+}
+
+@test "el role NO lleva el namespace ni el cluster: es uno solo para toda la plataforma" {
+  run render spiffe
+  [ "$status" -eq 0 ]
+  local ap; ap=$(doc "$output" AuthPolicy)
+  [[ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.url')" != *"payments"* ]]
+  [[ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.url')" != *"crc-openshift"* ]]
+}
+
+@test "por defecto el role es s2s-egress" {
+  run_bc
+  [ "$status" -eq 0 ]
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" NETWORKING_VAULT_SPIFFE_ROLE=otro run bash "$BC"
+  [ "$status" -eq 0 ]
+}
+
+@test "un role con caracteres inválidos aborta" {
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+    NETWORKING_VAULT_SPIFFE_ROLE='role/../otro' run bash "$BC"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"NETWORKING_VAULT_SPIFFE_ROLE"* ]]
 }
 
 @test "el TTL del cache queda por debajo del TTL del JWT-SVID" {
@@ -310,9 +349,9 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
   [ "$(printf %s "$output" | python3 -c 'import json,sys; print(len(json.loads(json.loads(sys.stdin.read()))))')" -eq 1 ]
 }
 
-@test "un cluster_label con comillas NO rompe la key del cache" {
+@test "un vault_spiffe_role con comillas NO rompe la key del cache" {
   render_ctx spiffe
-  jq '.cluster_label = "evil\" + auth.identity.sub + \""' \
+  jq '.vault_spiffe_role = "evil\" + auth.identity.sub + \""' \
     "$BATS_TEST_TMPDIR/render-ctx.json" >"$BATS_TEST_TMPDIR/malicioso2.json"
   local out="$BATS_TEST_TMPDIR/out6"
   rm -rf "$out"

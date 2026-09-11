@@ -276,6 +276,7 @@ jq -n \
   --arg vault_addr "$NETWORKING_VAULT_ADDR" \
   --arg vault_namespace "$NETWORKING_VAULT_NAMESPACE" \
   --arg vault_spiffe_mount "$NETWORKING_VAULT_SPIFFE_MOUNT" \
+  --arg vault_spiffe_role "$NETWORKING_VAULT_SPIFFE_ROLE" \
   --arg vault_token_secret "$NETWORKING_VAULT_TOKEN_SECRET" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \

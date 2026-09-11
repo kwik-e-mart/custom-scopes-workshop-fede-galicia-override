@@ -18,13 +18,12 @@ spec:
           customHeader:
             name: x-np-token
     authorization:
-      allowed-namespaces:
+      emisor-habilitado:
         patternMatching:
           patterns:
-            - any:
-                - predicate: |
-                    auth.identity.sub == "spiffe://__NETWORKING_VAULT_TRUST_DOMAIN__/__LOCAL_CLUSTER_LABEL__/__APP_NAMESPACE__/s2s-egress"
-                - predicate: |
-                    auth.identity.sub == "spiffe://__NETWORKING_VAULT_TRUST_DOMAIN__/__PEER_CLUSTER_LABEL__/__APP_NAMESPACE__/s2s-egress"
+            - predicate: |
+                auth.identity.iss == "__NETWORKING_VAULT_ISSUER__"
+            - predicate: |
+                auth.identity.sub == "__NETWORKING_VAULT_SPIFFE_SUB__"
     response:
       success: {}

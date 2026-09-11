@@ -87,6 +87,7 @@ correr() {
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
+  NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
   NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
   INTERCEPTIONS_JSON='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":50}]' \
@@ -114,6 +115,7 @@ correr_openshift() {  # [interceptions-json]
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
+  NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
   NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
   INTERCEPTIONS_JSON="$reglas" \
@@ -135,6 +137,7 @@ correr_delete() {
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
+  NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
   NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   INTERCEPTIONS_JSON='[]' \
   bash -c '
