@@ -12,7 +12,7 @@ spec:
     authentication:
       vault-spiffe:
         jwt:
-          jwksUrl: __NETWORKING_VAULT_ADDR__/v1/__NETWORKING_VAULT_SPIFFE_MOUNT__/.well-known/keys
+          jwksUrl: __NETWORKING_VAULT_ADDR__/v1/__NETWORKING_VAULT_NAMESPACE__/__NETWORKING_VAULT_SPIFFE_MOUNT__/.well-known/keys
           ttl: 300
         credentials:
           customHeader:

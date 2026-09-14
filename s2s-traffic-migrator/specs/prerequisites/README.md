@@ -50,7 +50,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__APP_NAMESPACE_SIGNING_KEY_PKCS1_PEM__` | la privada RSA 2048 en PKCS#1 | ver abajo |
 | `__PEER_CA_PEM__` | CA con la que se valida el cert del ingreso del peer | la CA propia del PoC |
 | `__NETWORKING_VAULT_ADDR__` | `https://host[:puerto]` del Vault que mintea (sólo `spiffe`) | el HCP Vault de noprod, puerto `8200` |
-| `__NETWORKING_VAULT_NAMESPACE__` | namespace de Vault Enterprise/HCP (sólo `spiffe`) | `admin/spiffe` |
+| `__NETWORKING_VAULT_NAMESPACE__` | namespace de Vault Enterprise/HCP (sólo `spiffe`). En el `55-` va como header `X-Vault-Namespace`; en el `jwksUrl` del `45-` va en el **path**, porque `jwt.jwksUrl` de Authorino es un `GET` sin headers custom | `admin/spiffe` |
 | `__NETWORKING_VAULT_SPIFFE_MOUNT__` | path del mount del secrets engine `spiffe` | `spiffe` |
 | `__NETWORKING_VAULT_SPIFFE_SUB__` | el `sub` completo que emite el role, tal cual sale en el token | `spiffe://s2s.bancogalicia.com.ar/s2s-egress` |
 | `__NETWORKING_VAULT_ISSUER__` | el `iss` del token, o sea el `jwt_issuer_url` de `spiffe/config` | `https://vault-noprod.example.cloud:8200` |
@@ -263,6 +263,7 @@ kubectl -n kuadrant-system rollout status deployment authorino
 
 sed -e "s/__APP_NAMESPACE__/payments/g" \
     -e "s|__NETWORKING_VAULT_ADDR__|https://vault-noprod.example.cloud:8200|g" \
+    -e "s|__NETWORKING_VAULT_NAMESPACE__|admin/spiffe|g" \
     -e "s|__NETWORKING_VAULT_SPIFFE_MOUNT__|spiffe|g" \
     -e "s|__NETWORKING_VAULT_ISSUER__|https://vault-noprod.example.cloud:8200|g" \
     -e "s|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://s2s.bancogalicia.com.ar/s2s-egress|g" \
