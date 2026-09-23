@@ -12,7 +12,7 @@ rules:
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "httproutes"]
+    resources: ["gateways", "httproutes", "referencegrants"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]

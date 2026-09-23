@@ -24,15 +24,19 @@ setup() {
   FQDN=gal-poc-reports-dev-cvbdn.galicia-poc.nullapps.io
 }
 
-# render <platform> <interceptions-json>
+# render <platform> <interceptions-json> [extra-context-json]
 render() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" '{
+  local extra='{}'
+  if [ -n "${3-}" ]; then extra="$3"; fi
+  jq -n --arg platform "$1" --argjson interceptions "$2" --argjson extra "$extra" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" '{
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
+    local_ingress_sni:$li, local_ingress_insecure_skip_verify:false,
+    local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
-    platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
+    platform:$platform, interceptions:$interceptions } * $extra' > "$BATS_TEST_TMPDIR/ctx.json"
   # Como en producción: se rendea el directorio entero y se concatena. Las aserciones siguen
   # mirando el stream completo, así que lo que se asserta es lo que se termina aplicando.
   local out="$BATS_TEST_TMPDIR/out"
@@ -197,8 +201,9 @@ rule() {  # <percent> [service]
   # Desde EKS la rama servida por EKS es `percent`: con 30, son 30 los que se quedan acá.
   run render eks "$(rule 30)"
   local r; r=$(named "$output" HTTPRoute s2s-egress-reports)
-  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].kind')" = "Hostname" ]
-  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].name')" = "$LOCAL_IN" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].kind')" = "Service" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].name')" = "s2s-ingress-istio" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].namespace')" = "$GW_NS" ]
   [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].port')" -eq 443 ]
   [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[1].weight')" -eq 30 ]
   [[ "$r" != *"reports-local"* ]]
@@ -555,4 +560,65 @@ rule() {  # <percent> [service]
   [[ "$output" == *"98-con-contenido.yaml"* ]]
   [[ "$output" != *"99-en-blanco"* ]]
   [ ! -f "$BATS_TEST_TMPDIR/o/99-en-blanco.yaml" ]
+}
+
+@test "la rama local referencia el Service del ingreso, no un Hostname" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" HTTPRoute s2s-egress-reports)
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].kind')" = "Service" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].group')" = "" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "s2s-ingress-istio" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].namespace')" = "$GW_NS" ]
+}
+
+@test "el ReferenceGrant habilita ese backendRef cross-namespace" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local g; g=$(echo "$output" | yq -N 'select(.kind == "ReferenceGrant")')
+  [ -n "$g" ]
+  [ "$(echo "$g" | yq '.metadata.namespace')" = "$GW_NS" ]
+  [ "$(echo "$g" | yq '.spec.from[0].kind')" = "HTTPRoute" ]
+  [ "$(echo "$g" | yq '.spec.from[0].namespace')" = "payments" ]
+  [ "$(echo "$g" | yq '.spec.to[0].kind')" = "Service" ]
+  [ "$(echo "$g" | yq '.spec.to[0].name')" = "s2s-ingress-istio" ]
+}
+
+@test "sin intercepciones no se emite el ReferenceGrant" {
+  run render eks '[]'
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "ReferenceGrant")')" ]
+}
+
+@test "con origen OpenShift no hay grant ni backendRef al ingreso local" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "ReferenceGrant")')" ]
+  local r; r=$(named "$output" HTTPRoute s2s-egress-reports)
+  [ -z "$(echo "$r" | yq -N '.spec.rules[0].backendRefs[] | select(.kind == "Service" and .namespace != null)')" ]
+}
+
+@test "el DestinationRule del ingreso local valida contra la CA por default" {
+  run render eks "$(rule 30)"
+  [ "$status" -eq 0 ]
+  local d; d=$(named "$output" DestinationRule s2s-egress-local-ingress)
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.insecureSkipVerify // "ausente"')" = "ausente" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
+}
+
+@test "con insecure_skip_verify el DestinationRule deja de referenciar la CA" {
+  run render eks "$(rule 30)" '{"local_ingress_insecure_skip_verify":true}'
+  [ "$status" -eq 0 ]
+  local d; d=$(named "$output" DestinationRule s2s-egress-local-ingress)
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "true" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.credentialName // "ausente"')" = "ausente" ]
+}
+
+@test "el sni del ingreso local es configurable sin tocar el host del backend" {
+  run render eks "$(rule 30)" '{"local_ingress_sni":"scope.apps.example.com"}'
+  [ "$status" -eq 0 ]
+  local d; d=$(named "$output" DestinationRule s2s-egress-local-ingress)
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "scope.apps.example.com" ]
+  [ "$(echo "$d" | yq '.spec.host')" = "$LOCAL_IN" ]
 }

@@ -153,6 +153,7 @@ Los manifests son templates de **gomplate**, renderizados contra un contexto JSO
   | `10-gateway.yaml.tpl` | `Gateway` de egreso | siempre |
   | `30-destinationrule-peer.yaml.tpl` | TLS hacia el ingreso del sustrato opuesto | si hay reglas |
   | `40-destinationrule-local-ingress.yaml.tpl` | TLS hacia el ingreso de este cluster | si hay reglas **y** `origin=EKS` |
+  | `45-referencegrant-local-ingress.yaml.tpl` | `ReferenceGrant` en el ns del ingreso, que habilita el `backendRef` cross-namespace de `50-` | si hay reglas **y** `origin=EKS` |
   | `50-httproute-egress.yaml.tpl` | `HTTPRoute` de salida, una por regla | una por regla |
   | `60-httproute-ingress.yaml.tpl` | `HTTPRoute` de entrada, en el ns del Gateway; saca los headers s2s antes de entregar | una por regla, sólo `origin=OS` |
 
@@ -341,6 +342,8 @@ un cluster y ninguna es un secreto:
 |---|---|
 | `PEER_GATEWAY_HOST` | ingreso del sustrato **opuesto**, por donde sale todo lo que cruza. |
 | `LOCAL_INGRESS_HOST` | ingreso de **este** cluster. Con un `site` `aws-*` la rama que atiende EKS también entra por acá. |
+| `LOCAL_INGRESS_SNI` | SNI con el que se origina el TLS hacia ese ingreso. Default: el propio `LOCAL_INGRESS_HOST`. Se separa porque el cert del ingreso puede no cubrir el nombre interno del Service. |
+| `LOCAL_INGRESS_INSECURE_SKIP_VERIFY` | `true` o `false` (default). En `true` el egreso cifra pero **deja de autenticar al ingreso**: se usa cuando el cert de plataforma no lo firma la CA de `PEER_CA_SECRET`. Cualquier otro valor aborta. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
 | `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `spiffe` (default) o `cluster-keys`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |

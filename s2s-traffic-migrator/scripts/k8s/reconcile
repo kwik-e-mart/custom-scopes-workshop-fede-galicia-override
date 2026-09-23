@@ -207,6 +207,10 @@ if [ "$ACTION" = "delete" ]; then
   kubectl -n "$GATEWAY_NAMESPACE" delete httproute.gateway.networking.k8s.io \
     -l "${MANAGED_LABEL}=true" --ignore-not-found \
     || die "falló el borrado de la route de ingreso en $GATEWAY_NAMESPACE."
+  # El ReferenceGrant vive en el namespace del ingreso, igual que la route de OpenShift.
+  kubectl -n "$LOCAL_INGRESS_SERVICE_NAMESPACE" delete referencegrant.gateway.networking.k8s.io \
+    -l "${MANAGED_LABEL}=true" --ignore-not-found \
+    || die "falló el borrado del ReferenceGrant en $LOCAL_INGRESS_SERVICE_NAMESPACE."
   log info "reconcile delete OK en ns $NAMESPACE"
   # `return` y no `exit`: el workflow sourcea los steps, así que un exit mata la corrida entera y
   # se saltea los steps siguientes. exit queda sólo para los errores.
@@ -265,6 +269,10 @@ jq -n \
   --arg peer_ca_secret "$PEER_CA_SECRET" \
   --arg peer_gateway_host "$PEER_GATEWAY_HOST" \
   --arg local_ingress_host "$LOCAL_INGRESS_HOST" \
+  --arg local_ingress_sni "$LOCAL_INGRESS_SNI" \
+  --arg local_ingress_service "$LOCAL_INGRESS_SERVICE" \
+  --arg local_ingress_service_namespace "$LOCAL_INGRESS_SERVICE_NAMESPACE" \
+  --argjson local_ingress_insecure_skip_verify "$LOCAL_INGRESS_INSECURE_SKIP_VERIFY" \
   --arg gateway_namespace "$GATEWAY_NAMESPACE" \
   --arg cluster_label "$CLUSTER_LABEL" \
   --arg platform "$PLATFORM" \
