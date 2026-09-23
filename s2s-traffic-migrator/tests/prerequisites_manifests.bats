@@ -16,7 +16,24 @@ sustituir() {  # <archivo>
       -e 's|__NETWORKING_VAULT_SPIFFE_MOUNT__|spiffe|g' \
       -e 's|__NETWORKING_VAULT_ISSUER__|https://vault.example.io:8200|g' \
       -e 's|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://td.example/s2s-egress|g' \
+      -e 's|__S2S_INGRESS_AUDIENCE__|kuadrant.peer.example.io|g' \
       "$1"
+}
+
+aud_predicate() {
+  sustituir "$VALIDATOR" |
+    yq '.spec.rules.authorization.emisor-habilitado.patternMatching.patterns[] | select(.predicate | test("aud")) | .predicate'
+}
+
+@test "el validador exige la audiencia: Authorino no la chequea solo" {
+  local p; p=$(aud_predicate)
+  [[ "$p" == *'"kuadrant.peer.example.io" in'* ]]
+}
+
+@test "el chequeo de aud acepta string o lista y no rompe si falta el claim" {
+  local p; p=$(aud_predicate)
+  [[ "$p" == *"has(auth.identity.aud) &&"* ]]
+  [[ "$p" == *"type(auth.identity.aud) == string ? [auth.identity.aud] : auth.identity.aud"* ]]
 }
 
 @test "el jwksUrl lleva el namespace de Vault en el path" {

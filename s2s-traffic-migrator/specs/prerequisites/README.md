@@ -52,8 +52,9 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__NETWORKING_VAULT_ADDR__` | `https://host[:puerto]` del Vault que mintea (sólo `spiffe`) | el HCP Vault de noprod, puerto `8200` |
 | `__NETWORKING_VAULT_NAMESPACE__` | namespace de Vault Enterprise/HCP (sólo `spiffe`). En el `55-` va como header `X-Vault-Namespace`; en el `jwksUrl` del `45-` va en el **path**, porque `jwt.jwksUrl` de Authorino es un `GET` sin headers custom | `admin/spiffe` |
 | `__NETWORKING_VAULT_SPIFFE_MOUNT__` | path del mount del secrets engine `spiffe` | `spiffe` |
-| `__NETWORKING_VAULT_SPIFFE_SUB__` | el `sub` completo que emite el role, tal cual sale en el token | `spiffe://s2s.bancogalicia.com.ar/s2s-egress` |
+| `__NETWORKING_VAULT_SPIFFE_SUB__` | el `sub` completo que emite el role, tal cual sale en el token | `spiffe://<trust-domain>/s2s-egress` |
 | `__NETWORKING_VAULT_ISSUER__` | el `iss` del token, o sea el `jwt_issuer_url` de `spiffe/config` | `https://vault-noprod.example.cloud:8200` |
+| `__S2S_INGRESS_AUDIENCE__` | la `aud` que el `45-` exige: el `PEER_GATEWAY_HOST` del cluster **opuesto**, que es lo que su emisor pide como audiencia al mintear (sólo `spiffe`) | el host del overlay con el que el peer alcanza este ingreso |
 | `__NETWORKING_VAULT_AUTH_MOUNT__` | mount del método de login del cluster | `auth/jwt` en EKS, `auth/jwt-ocp` en OpenShift |
 | `__NETWORKING_VAULT_AUTH_ROLE__` | role de ese mount, bindeado a la SA de Authorino | `s2s-authorino-egress` |
 | `__NETWORKING_VAULT_TOKEN_SECRET__` | Secret de `kuadrant-system` donde el CronJob deja el `client_token` | `s2s-vault-token` |
