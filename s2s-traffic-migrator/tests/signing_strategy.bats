@@ -248,8 +248,25 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
   run render spiffe
   [ "$status" -eq 0 ]
   local ap; ap=$(doc "$output" AuthPolicy)
-  [[ "$(echo "$ap" | yq '.spec.rules.authorization.vault_mint_check.patternMatching.patterns[0].predicate')" \
-     == *"has(auth.metadata.vault_mint.data.token)"* ]]
+  local pred; pred=$(echo "$ap" | yq '.spec.rules.authorization.vault_mint_check.patternMatching.patterns[0].predicate')
+  [[ "$pred" == *"has(auth.metadata.vault_mint.data.token)"* ]]
+  [ -n "$(echo "$ap" | yq '.spec.rules.response.unauthorized.message.value // ""')" ]
+}
+
+@test "el guard del mint chequea cada nivel: has(a.b.c) solo no absorbe la falta de data" {
+  run render spiffe
+  [ "$status" -eq 0 ]
+  local ap pred; ap=$(doc "$output" AuthPolicy)
+  pred=$(echo "$ap" | yq '.spec.rules.authorization.vault_mint_check.patternMatching.patterns[0].predicate')
+  [[ "$pred" == *"has(auth.metadata.vault_mint) &&"* ]]
+  [[ "$pred" == *"has(auth.metadata.vault_mint.data) &&"* ]]
+}
+
+@test "spiffe manda el body del mint como JSON, que es lo único que acepta Vault" {
+  run render spiffe
+  [ "$status" -eq 0 ]
+  local ap; ap=$(doc "$output" AuthPolicy)
+  [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.contentType')" = "application/json" ]
 }
 
 @test "spiffe lee el token de Vault de un Secret, no de un literal" {
