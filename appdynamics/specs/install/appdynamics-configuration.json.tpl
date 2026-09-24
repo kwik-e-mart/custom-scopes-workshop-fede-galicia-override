@@ -2,7 +2,7 @@
   "name": "App Dynamics",
   "slug": "app-dynamics",
   "description": "Configures AppDynamics APM agent environment variables, shared across runtimes plus optional per-language overrides",
-  "category": "metrics",
+  "category": "scope-configurations",
   "icon": "logos:appdynamics-icon",
   "visible_to": [
     "{{ env.Getenv "NRN" }}"

@@ -1,5 +1,5 @@
 provider_categories:
-  - metrics
+  - scope-configurations
 steps:
   - name: mount_certificates
     type: script
