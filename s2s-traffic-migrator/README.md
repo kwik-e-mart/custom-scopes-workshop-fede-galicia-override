@@ -341,8 +341,6 @@ un cluster y ninguna es un secreto:
 |---|---|
 | `PEER_GATEWAY_HOST` | ingreso del sustrato **opuesto**, por donde sale todo lo que cruza. |
 | `LOCAL_INGRESS_HOST` | ingreso de **este** cluster. Con un `site` `aws-*` la rama que atiende EKS también entra por acá. |
-| `LOCAL_INGRESS_SNI` | SNI con el que se origina el TLS hacia ese ingreso. Default: el propio `LOCAL_INGRESS_HOST`. Se separa porque el cert del ingreso puede no cubrir el nombre interno del Service. |
-| `LOCAL_INGRESS_INSECURE_SKIP_VERIFY` | `true` o `false` (default). En `true` el egreso cifra pero **deja de autenticar al ingreso**: se usa cuando el cert de plataforma no lo firma la CA de `PEER_CA_SECRET`. Cualquier otro valor aborta. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
 | `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `spiffe` (default) o `cluster-keys`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |

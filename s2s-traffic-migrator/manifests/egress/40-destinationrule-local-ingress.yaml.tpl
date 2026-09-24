@@ -24,11 +24,7 @@ spec:
         idleTimeout: 300s
     tls:
       mode: SIMPLE
-{{- if .local_ingress_insecure_skip_verify }}
-      insecureSkipVerify: true
-{{- else }}
       # Misma CA que el peer: los certs de los dos clusters los firma la misma raíz de la PoC.
       credentialName: {{ .peer_ca_secret | quote }}
-{{- end }}
-      sni: {{ .local_ingress_sni | quote }}
+      sni: {{ .local_ingress_host | quote }}
 {{- end }}

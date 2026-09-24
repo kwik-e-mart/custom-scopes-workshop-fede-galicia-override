@@ -11,8 +11,6 @@ configuration:
   PEER_CA_SECRET: s2s-remote-ca
   PEER_GATEWAY_HOST: s2s-remote-gateway.tailscale.svc.cluster.local
   LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
-  LOCAL_INGRESS_SNI: ""
-  LOCAL_INGRESS_INSECURE_SKIP_VERIFY: "false"
   GATEWAY_NAMESPACE: gateways
   INGRESS_AUTHPOLICY: s2s-validator
   TOKEN_DURATION: "300"
@@ -48,8 +46,6 @@ steps:
       - { name: PEER_CA_SECRET, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
-      - { name: LOCAL_INGRESS_SNI, type: environment }
-      - { name: LOCAL_INGRESS_INSECURE_SKIP_VERIFY, type: environment }
       - { name: LOCAL_INGRESS_SERVICE, type: environment }
       - { name: LOCAL_INGRESS_SERVICE_NAMESPACE, type: environment }
       - { name: GATEWAY_NAMESPACE, type: environment }
