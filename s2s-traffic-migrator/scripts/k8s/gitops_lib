@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-GITOPS_NAMESPACE_MANIFESTS="10-gateway.yaml 20-authpolicy.yaml 30-destinationrule-peer.yaml 40-destinationrule-local-ingress.yaml 45-referencegrant-local-ingress.yaml"
+GITOPS_NAMESPACE_MANIFESTS="10-gateway.yaml 20-authpolicy.yaml 30-destinationrule-peer.yaml 40-destinationrule-local-ingress.yaml"
 GITOPS_PER_SERVICE_MANIFESTS="50-httproute-egress.yaml 60-httproute-ingress.yaml 70-service-local.yaml 90-service-capture.yaml"
 
 : "${GITOPS_COMMITTER_NAME:=nullplatform egress-interceptor}"

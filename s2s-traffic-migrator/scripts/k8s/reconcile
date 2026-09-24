@@ -207,10 +207,6 @@ if [ "$ACTION" = "delete" ]; then
   kubectl -n "$GATEWAY_NAMESPACE" delete httproute.gateway.networking.k8s.io \
     -l "${MANAGED_LABEL}=true" --ignore-not-found \
     || die "falló el borrado de la route de ingreso en $GATEWAY_NAMESPACE."
-  # El ReferenceGrant vive en el namespace del ingreso, igual que la route de OpenShift.
-  kubectl -n "$LOCAL_INGRESS_SERVICE_NAMESPACE" delete referencegrant.gateway.networking.k8s.io \
-    -l "${MANAGED_LABEL}=true" --ignore-not-found \
-    || die "falló el borrado del ReferenceGrant en $LOCAL_INGRESS_SERVICE_NAMESPACE."
   log info "reconcile delete OK en ns $NAMESPACE"
   # `return` y no `exit`: el workflow sourcea los steps, así que un exit mata la corrida entera y
   # se saltea los steps siguientes. exit queda sólo para los errores.
@@ -291,6 +287,35 @@ jq -n \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
   '$ARGS.named' > "$RENDER_CONTEXT" \
   || die "no se pudo armar el contexto de render."
+
+# El backendRef de la rama local cruza namespaces, y Gateway API lo exige autorizado desde el lado
+# del destino. El grant NO lo crea este service: lo administra el equipo del cluster. Se verifica
+# antes de rendear para que la falta aborte sin haber tocado nada, en vez de dejar la route
+# aplicada con ResolvedRefs=False, que es un modo de falla mudo.
+require_local_ingress_grant() {
+  local grants
+  grants=$(kubectl -n "$LOCAL_INGRESS_SERVICE_NAMESPACE" get referencegrant.gateway.networking.k8s.io -o json 2>/dev/null) \
+    || die "no se pudieron listar los ReferenceGrant de '$LOCAL_INGRESS_SERVICE_NAMESPACE'. Sin ese dato no se sigue: el egreso quedaría sin salida."
+  # Las dos condiciones tienen que cumplirse en el MISMO grant: from y to de objetos distintos no
+  # se combinan. Un `to` sin `name` cubre todos los Services del namespace, que es válido.
+  printf %s "$grants" | jq -e --arg ns "$NAMESPACE" --arg svc "$LOCAL_INGRESS_SERVICE" '
+    .items[]? | select(
+      ([.spec.from[]? | select((.group // "") == "gateway.networking.k8s.io" and .kind == "HTTPRoute" and .namespace == $ns)] | length > 0)
+      and
+      ([.spec.to[]? | select((.group // "") == "" and .kind == "Service" and ((.name // "") == "" or .name == $svc))] | length > 0)
+    )' >/dev/null && return 0
+
+  log error "egress-interceptor: falta el ReferenceGrant que habilita a '$NAMESPACE' a consumir el Service '$LOCAL_INGRESS_SERVICE' del namespace '$LOCAL_INGRESS_SERVICE_NAMESPACE'."
+  log error "  Este service no lo crea: lo administra el equipo del cluster. Hay que pedirle un ReferenceGrant en '$LOCAL_INGRESS_SERVICE_NAMESPACE' con:"
+  log error "    from: group gateway.networking.k8s.io, kind HTTPRoute, namespace $NAMESPACE"
+  log error "    to:   group \"\", kind Service, name $LOCAL_INGRESS_SERVICE"
+  log error "  Sin él la route de egreso queda con ResolvedRefs=False y el tráfico migrado no sale."
+  exit 1
+}
+
+if [ "$PLATFORM" = "eks" ] && [ "$(printf %s "$INTERCEPTIONS_JSON" | jq '[.[] | select((.percent // 0 | tonumber) > 0)] | length')" -gt 0 ]; then
+  require_local_ingress_grant
+fi
 
 # Se limpia antes de rendear: un manifiesto que la corrida anterior generó y ésta ya no —porque
 # se quitó una regla o cambió el origen— seguiría en el directorio y se volvería a aplicar.

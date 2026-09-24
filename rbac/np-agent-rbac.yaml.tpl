@@ -12,8 +12,13 @@ rules:
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "httproutes", "referencegrants"]
+    resources: ["gateways", "httproutes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Sólo lectura: los ReferenceGrant los administra el equipo del cluster. El service verifica que
+  # exista el que habilita su backendRef cross-namespace y aborta si falta.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["referencegrants"]
+    verbs: ["get", "list"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

@@ -153,7 +153,6 @@ Los manifests son templates de **gomplate**, renderizados contra un contexto JSO
   | `10-gateway.yaml.tpl` | `Gateway` de egreso | siempre |
   | `30-destinationrule-peer.yaml.tpl` | TLS hacia el ingreso del sustrato opuesto | si hay reglas |
   | `40-destinationrule-local-ingress.yaml.tpl` | TLS hacia el ingreso de este cluster | si hay reglas **y** `origin=EKS` |
-  | `45-referencegrant-local-ingress.yaml.tpl` | `ReferenceGrant` en el ns del ingreso, que habilita el `backendRef` cross-namespace de `50-` | si hay reglas **y** `origin=EKS` |
   | `50-httproute-egress.yaml.tpl` | `HTTPRoute` de salida, una por regla | una por regla |
   | `60-httproute-ingress.yaml.tpl` | `HTTPRoute` de entrada, en el ns del Gateway; saca los headers s2s antes de entregar | una por regla, sólo `origin=OS` |
 
@@ -367,6 +366,9 @@ conectividad corporativa y el valor es otro. El mecanismo de identidad no se ent
 Este service **no provisiona el layer de plataforma**. Da por hecho, en cada cluster:
 
 - el `Gateway` de **ingreso** y su `AuthPolicy` de validación, en `GATEWAY_NAMESPACE`;
+- un `ReferenceGrant` en el namespace del ingreso que habilite a cada namespace de aplicación a
+  consumir el `Service` del ingreso. **El service no lo crea: lo verifica y aborta si falta**, con
+  el detalle de lo que hay que pedirle al equipo que administra el cluster;
 - el endpoint de JWKS de este cluster y la resolución del JWKS del peer;
 - los Secrets de firma en `kuadrant-system` y la CA del peer;
 - Kuadrant y Gateway API instalados, con una `GatewayClass` utilizable;

@@ -20,6 +20,7 @@ setup() {
   source "${BATS_TEST_DIRNAME}/../scripts/k8s/manifests_lib"
   PEER=kuadrant.peer.example.io
   LOCAL_IN=s2s-ingress-istio.gateways.svc.cluster.local
+  LOCAL_IN_SVC=s2s-ingress-istio
   GW_NS=gateways
   FQDN=gal-poc-reports-dev-cvbdn.galicia-poc.nullapps.io
 }
@@ -57,6 +58,8 @@ rendered_files() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
+    local_ingress_sni:$li, local_ingress_insecure_skip_verify:false,
+    local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
@@ -170,7 +173,7 @@ rule() {  # <percent> [service]
     # Desde EKS: lo que va a EKS es el backendRef al ingreso local.
     run render eks "$(rule $pct)"
     r=$(named "$output" HTTPRoute s2s-egress-reports)
-    peso_eks=$(echo "$r" | yq ".spec.rules[0].backendRefs[] | select(.name == \"$LOCAL_IN\") | .weight // 0")
+    peso_eks=$(echo "$r" | yq ".spec.rules[0].backendRefs[] | select(.name == \"$LOCAL_IN_SVC\") | .weight // 0")
     [ "${peso_eks:-0}" -eq "$pct" ]
   done
 }
@@ -256,7 +259,7 @@ rule() {  # <percent> [service]
   run render eks "$(rule 100)"
   local r; r=$(named "$output" HTTPRoute s2s-egress-reports)
   [ "$(echo "$r" | yq '.spec.rules[0].backendRefs | length')" -eq 1 ]
-  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "$LOCAL_IN" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "$LOCAL_IN_SVC" ]
   [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].weight')" -eq 100 ]
 }
 
@@ -572,28 +575,15 @@ rule() {  # <percent> [service]
   [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].namespace')" = "$GW_NS" ]
 }
 
-@test "el ReferenceGrant habilita ese backendRef cross-namespace" {
+@test "el render NUNCA emite un ReferenceGrant: lo administra el equipo del cluster" {
   run render eks "$(rule 100)"
   [ "$status" -eq 0 ]
-  local g; g=$(echo "$output" | yq -N 'select(.kind == "ReferenceGrant")')
-  [ -n "$g" ]
-  [ "$(echo "$g" | yq '.metadata.namespace')" = "$GW_NS" ]
-  [ "$(echo "$g" | yq '.spec.from[0].kind')" = "HTTPRoute" ]
-  [ "$(echo "$g" | yq '.spec.from[0].namespace')" = "payments" ]
-  [ "$(echo "$g" | yq '.spec.to[0].kind')" = "Service" ]
-  [ "$(echo "$g" | yq '.spec.to[0].name')" = "s2s-ingress-istio" ]
-}
-
-@test "sin intercepciones no se emite el ReferenceGrant" {
-  run render eks '[]'
-  [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | yq -N 'select(.kind == "ReferenceGrant")')" ]
 }
 
-@test "con origen OpenShift no hay grant ni backendRef al ingreso local" {
+@test "con origen OpenShift no hay backendRef cross-namespace al ingreso local" {
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  [ -z "$(echo "$output" | yq -N 'select(.kind == "ReferenceGrant")')" ]
   local r; r=$(named "$output" HTTPRoute s2s-egress-reports)
   [ -z "$(echo "$r" | yq -N '.spec.rules[0].backendRefs[] | select(.kind == "Service" and .namespace != null)')" ]
 }
