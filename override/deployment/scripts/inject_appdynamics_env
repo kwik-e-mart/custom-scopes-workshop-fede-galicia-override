@@ -4,10 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../../shared/scripts/provider_env"
 
-CONFIG_JSON=$(echo "$CONTEXT" | jq .providers.metrics)
+CONFIG_JSON=$(echo "$CONTEXT" | jq '.providers["scope-configurations"]["app-dynamics"] // .providers["scope-configurations"]')
 
 if [ "$CONFIG_JSON" = "null" ] || [ -z "$CONFIG_JSON" ]; then
-  echo "ℹ️ No AppDynamics config found in CONTEXT.providers.metrics — skipping env injection"
+  echo "ℹ️ No AppDynamics config found in CONTEXT.providers.scope-configurations — skipping env injection"
   return 0
 fi
 
