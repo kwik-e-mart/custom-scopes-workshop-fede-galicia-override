@@ -119,7 +119,10 @@ spiffe/role/<NETWORKING_VAULT_SPIFFE_ROLE>
 ```
 
 Todos los namespaces de los dos clusters mintean de ese role, así que todos los tokens salen con el
-**mismo `sub`, el mismo `iss` y la misma `aud`**. El validador de destino no tiene con qué
+**mismo `sub` y el mismo `iss`**, y la `aud` es el `PEER_GATEWAY_HOST` del emisor: una por sentido de
+tráfico, no por namespace. El validador exige esa `aud`, lo que corta el replay de un token minteado
+para otro destino, pero sólo si cada ingreso se alcanza con un nombre distinto: si los dos clusters
+usan el mismo `PEER_GATEWAY_HOST`, la `aud` no distingue sentidos. El validador de destino no tiene con qué
 distinguir de qué namespace vino un request: lo único que puede afirmar es "esto lo firmó nuestro
 Vault para nuestra plataforma". En la práctica, cualquier workload que alcance el Gateway de egreso
 de su namespace puede hablar con cualquier destino habilitado.
@@ -361,6 +364,9 @@ conectividad corporativa y el valor es otro. El mecanismo de identidad no se ent
 Este service **no provisiona el layer de plataforma**. Da por hecho, en cada cluster:
 
 - el `Gateway` de **ingreso** y su `AuthPolicy` de validación, en `GATEWAY_NAMESPACE`;
+- un `ReferenceGrant` en el namespace del ingreso que habilite a cada namespace de aplicación a
+  consumir el `Service` del ingreso. **El service no lo crea: lo verifica y aborta si falta**, con
+  el detalle de lo que hay que pedirle al equipo que administra el cluster;
 - el endpoint de JWKS de este cluster y la resolución del JWKS del peer;
 - los Secrets de firma en `kuadrant-system` y la CA del peer;
 - Kuadrant y Gateway API instalados, con una `GatewayClass` utilizable;

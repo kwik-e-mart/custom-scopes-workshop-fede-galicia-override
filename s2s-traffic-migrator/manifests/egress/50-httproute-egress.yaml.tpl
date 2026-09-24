@@ -87,13 +87,14 @@ spec:
 {{- end }}
 {{- if lt $to_peer 100 }}
 {{- if eq $.platform "eks" }}
-        # Al Gateway de ingreso de este cluster, NO al FQDN del scope: un backendRef necesita un
-        # host del registro de Istio, y el FQDN de un scope sólo existe como `hostnames` de un
-        # HTTPRoute — eso hace que el Gateway lo ATIENDA, no que un Envoy pueda conectarse ahí.
-        # El Host reescrito arriba es lo que hace que del otro lado lo tome el route del scope.
-        - group: networking.istio.io
-          kind: Hostname
-          name: {{ $.local_ingress_host | quote }}
+        # Al Service del Gateway de ingreso de este cluster, NO al FQDN del scope: el FQDN de un
+        # scope sólo existe como `hostnames` de un HTTPRoute — eso hace que el Gateway lo ATIENDA,
+        # no que un Envoy pueda conectarse ahí. El Host reescrito arriba es lo que hace que del
+        # otro lado lo tome el route del scope. El cross-namespace lo habilita el grant de 45-.
+        - group: ""
+          kind: Service
+          name: {{ $.local_ingress_service | quote }}
+          namespace: {{ $.local_ingress_service_namespace | quote }}
           port: 443
           weight: {{ math.Sub 100 $to_peer }}
 {{- else }}

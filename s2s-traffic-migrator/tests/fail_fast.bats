@@ -18,6 +18,10 @@ setup() {
   # El mock lleva ESTADO: un patch tiene que verse en la lectura siguiente, o la verificación
   # post-swap del reconcile —que relee el selector— daría un falso negativo.
   export FAKE_SELECTOR="$BATS_TEST_TMPDIR/selector"; printf '%s' '{"app":"reports"}' >"$FAKE_SELECTOR"
+  # El ReferenceGrant lo administra el equipo del cluster: el default es que exista, y el test que
+  # prueba su ausencia lo reemplaza.
+  export FAKE_GRANTS="$BATS_TEST_TMPDIR/grants.json"
+  printf '%s' '{"items":[{"metadata":{"name":"payments-to-li","namespace":"example"},"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service","name":"li"}]}}]}' >"$FAKE_GRANTS"
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
@@ -64,6 +68,7 @@ case "$*" in
   *"get svc reports -o json"*)
     echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080,"targetPort":8080,"protocol":"TCP"}]}}' ;;
   *"get svc -o json"*)   echo '{"items":[]}' ;;
+  *"get referencegrant"*) cat "$FAKE_GRANTS" ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
   *"get httproute"*"-o json"*)
@@ -82,6 +87,7 @@ correr() {
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
+  LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
@@ -110,6 +116,7 @@ correr_openshift() {  # [interceptions-json]
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
+  LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
@@ -132,6 +139,7 @@ correr_delete() {
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
   WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
+  LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
@@ -292,4 +300,41 @@ correr_delete() {
   [ "$status" -eq 0 ]
   run grep -c ' delete ' "$KUBECTL_CALLS"
   [ "$output" -gt 0 ]
+}
+
+@test "sin el ReferenceGrant del ingreso local, el apply ABORTA sin tocar el cluster" {
+  printf '%s' '{"items":[]}' >"$FAKE_GRANTS"
+  run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"falta el ReferenceGrant"* ]]
+  [[ "$output" == *"lo administra el equipo del cluster"* ]]
+  run grep -cE ' (apply|patch) ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "un ReferenceGrant que autoriza a OTRO namespace no habilita a éste" {
+  printf '%s' '{"items":[{"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"otro"}],"to":[{"group":"","kind":"Service","name":"li"}]}}]}' >"$FAKE_GRANTS"
+  run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"falta el ReferenceGrant"* ]]
+}
+
+@test "un ReferenceGrant que autoriza a OTRO Service no habilita el ingreso local" {
+  printf '%s' '{"items":[{"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service","name":"otro-service"}]}}]}' >"$FAKE_GRANTS"
+  run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"falta el ReferenceGrant"* ]]
+}
+
+@test "un ReferenceGrant sin name en el to cubre todos los Services del namespace" {
+  printf '%s' '{"items":[{"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service"}]}}]}' >"$FAKE_GRANTS"
+  run correr
+  [ "$status" -eq 0 ]
+}
+
+@test "el from y el to tienen que estar en el MISMO grant, no repartidos en dos" {
+  printf '%s' '{"items":[{"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service","name":"otro"}]}},{"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"otro"}],"to":[{"group":"","kind":"Service","name":"li"}]}}]}' >"$FAKE_GRANTS"
+  run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"falta el ReferenceGrant"* ]]
 }
