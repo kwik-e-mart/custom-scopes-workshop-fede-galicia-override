@@ -46,6 +46,8 @@ steps:
       - { name: PEER_CA_SECRET, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
+      - { name: LOCAL_INGRESS_SERVICE, type: environment }
+      - { name: LOCAL_INGRESS_SERVICE_NAMESPACE, type: environment }
       - { name: GATEWAY_NAMESPACE, type: environment }
       - { name: INGRESS_AUTHPOLICY, type: environment }
       - { name: CLUSTER_LABEL, type: environment }

@@ -33,6 +33,8 @@ spec:
           credentials:
             customHeader:
               name: "X-Vault-Token"
+          # Sin esto Authorino manda form-urlencoded y Vault responde sin `data`, como un token vencido.
+          contentType: application/json
           body:
             expression: '{{ printf "%q" (dict "audience" .peer_gateway_host | data.ToJSON) }}'
         cache:
@@ -43,8 +45,15 @@ spec:
       "vault_mint_check":
         patternMatching:
           patterns:
-            - predicate: "has(auth.metadata.vault_mint.data.token)"
+            # `has(a.b.c)` propaga el error si falta `b`; el `&&` de CEL lo absorbe y rinde un deny limpio.
+            - predicate: >-
+                has(auth.metadata.vault_mint) &&
+                has(auth.metadata.vault_mint.data) &&
+                has(auth.metadata.vault_mint.data.token)
     response:
+      unauthorized:
+        message:
+          value: "no se pudo acuñar el token de egreso: el emisor no devolvió uno"
       success:
         headers:
           "x-np-token":

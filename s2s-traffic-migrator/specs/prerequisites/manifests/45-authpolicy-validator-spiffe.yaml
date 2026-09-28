@@ -25,5 +25,9 @@ spec:
                 auth.identity.iss == "__NETWORKING_VAULT_ISSUER__"
             - predicate: |
                 auth.identity.sub == "__NETWORKING_VAULT_SPIFFE_SUB__"
+            # Authorino no valida `aud` por su cuenta. Vault puede emitirla como string o como lista.
+            - predicate: |
+                has(auth.identity.aud) &&
+                "__S2S_INGRESS_AUDIENCE__" in (type(auth.identity.aud) == string ? [auth.identity.aud] : auth.identity.aud)
     response:
       success: {}

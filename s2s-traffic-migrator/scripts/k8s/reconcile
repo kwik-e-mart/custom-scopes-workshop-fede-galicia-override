@@ -265,6 +265,8 @@ jq -n \
   --arg peer_ca_secret "$PEER_CA_SECRET" \
   --arg peer_gateway_host "$PEER_GATEWAY_HOST" \
   --arg local_ingress_host "$LOCAL_INGRESS_HOST" \
+  --arg local_ingress_service "$LOCAL_INGRESS_SERVICE" \
+  --arg local_ingress_service_namespace "$LOCAL_INGRESS_SERVICE_NAMESPACE" \
   --arg gateway_namespace "$GATEWAY_NAMESPACE" \
   --arg cluster_label "$CLUSTER_LABEL" \
   --arg platform "$PLATFORM" \
@@ -283,6 +285,43 @@ jq -n \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
   '$ARGS.named' > "$RENDER_CONTEXT" \
   || die "no se pudo armar el contexto de render."
+
+# El backendRef de la rama local cruza namespaces, y Gateway API lo exige autorizado desde el lado
+# del destino. El grant NO lo crea este service: lo administra el equipo del cluster. Se verifica
+# antes de rendear para que la falta aborte sin haber tocado nada, en vez de dejar la route
+# aplicada con ResolvedRefs=False, que es un modo de falla mudo.
+require_local_ingress_grant() {
+  local grants listar_err
+  # No poder MIRAR y saber que FALTA son dos cosas distintas: sin permiso de lectura sobre los
+  # ReferenceGrant —que es un objeto de otro equipo— la verificación no puede afirmar nada, y
+  # bloquear el reconcile por eso dejaría al service sin poder instalarse en ese cluster.
+  listar_err="$NP_OUTPUT_DIR/referencegrant-list.err"
+  if ! grants=$(kubectl -n "$LOCAL_INGRESS_SERVICE_NAMESPACE" get referencegrant.gateway.networking.k8s.io -o json 2>"$listar_err"); then
+    log warn "egress-interceptor: no se pudieron listar los ReferenceGrant de '$LOCAL_INGRESS_SERVICE_NAMESPACE': $(tr '\n' ' ' <"$listar_err")"
+    log warn "  Se sigue SIN verificar. Si el grant no existe, la route de egreso va a quedar con ResolvedRefs=False y el tráfico migrado no va a salir."
+    log warn "  El que tiene que existir en '$LOCAL_INGRESS_SERVICE_NAMESPACE': from HTTPRoute/$NAMESPACE, to Service/$LOCAL_INGRESS_SERVICE."
+    return 0
+  fi
+  # Las dos condiciones tienen que cumplirse en el MISMO grant: from y to de objetos distintos no
+  # se combinan. Un `to` sin `name` cubre todos los Services del namespace, que es válido.
+  printf %s "$grants" | jq -e --arg ns "$NAMESPACE" --arg svc "$LOCAL_INGRESS_SERVICE" '
+    .items[]? | select(
+      ([.spec.from[]? | select((.group // "") == "gateway.networking.k8s.io" and .kind == "HTTPRoute" and .namespace == $ns)] | length > 0)
+      and
+      ([.spec.to[]? | select((.group // "") == "" and .kind == "Service" and ((.name // "") == "" or .name == $svc))] | length > 0)
+    )' >/dev/null && return 0
+
+  log error "egress-interceptor: falta el ReferenceGrant que habilita a '$NAMESPACE' a consumir el Service '$LOCAL_INGRESS_SERVICE' del namespace '$LOCAL_INGRESS_SERVICE_NAMESPACE'."
+  log error "  Este service no lo crea: lo administra el equipo del cluster. Hay que pedirle un ReferenceGrant en '$LOCAL_INGRESS_SERVICE_NAMESPACE' con:"
+  log error "    from: group gateway.networking.k8s.io, kind HTTPRoute, namespace $NAMESPACE"
+  log error "    to:   group \"\", kind Service, name $LOCAL_INGRESS_SERVICE"
+  log error "  Sin él la route de egreso queda con ResolvedRefs=False y el tráfico migrado no sale."
+  exit 1
+}
+
+if [ "$PLATFORM" = "eks" ] && [ "$(printf %s "$INTERCEPTIONS_JSON" | jq '[.[] | select((.percent // 0 | tonumber) > 0)] | length')" -gt 0 ]; then
+  require_local_ingress_grant
+fi
 
 # Se limpia antes de rendear: un manifiesto que la corrida anterior generó y ésta ya no —porque
 # se quitó una regla o cambió el origen— seguiría en el directorio y se volvería a aplicar.
