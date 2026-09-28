@@ -20,6 +20,7 @@ setup() {
   export FAKE_SELECTOR="$BATS_TEST_TMPDIR/selector"; printf '%s' '{"app":"reports"}' >"$FAKE_SELECTOR"
   # El ReferenceGrant lo administra el equipo del cluster: el default es que exista, y el test que
   # prueba su ausencia lo reemplaza.
+  export FALLA_GRANTS=""   # simula no tener RBAC para listarlos
   export FAKE_GRANTS="$BATS_TEST_TMPDIR/grants.json"
   printf '%s' '{"items":[{"metadata":{"name":"payments-to-li","namespace":"example"},"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service","name":"li"}]}}]}' >"$FAKE_GRANTS"
 
@@ -68,7 +69,12 @@ case "$*" in
   *"get svc reports -o json"*)
     echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080,"targetPort":8080,"protocol":"TCP"}]}}' ;;
   *"get svc -o json"*)   echo '{"items":[]}' ;;
-  *"get referencegrant"*) cat "$FAKE_GRANTS" ;;
+  *"get referencegrant"*)
+    if [ -n "${FALLA_GRANTS:-}" ]; then
+      echo 'Error from server (Forbidden): referencegrants.gateway.networking.k8s.io is forbidden: User "system:serviceaccount:nullplatform-tools:np-agent" cannot list resource "referencegrants" in API group "gateway.networking.k8s.io" in the namespace "example"' >&2
+      exit 1
+    fi
+    cat "$FAKE_GRANTS" ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
   *"get httproute"*"-o json"*)
@@ -337,4 +343,21 @@ correr_delete() {
   run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"falta el ReferenceGrant"* ]]
+}
+
+@test "sin permisos para listar los ReferenceGrant, warnea y sigue en vez de abortar" {
+  export FALLA_GRANTS=1
+  run correr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no se pudieron listar los ReferenceGrant"* ]]
+  [[ "$output" == *"Se sigue SIN verificar"* ]]
+  [[ "$output" == *"forbidden"* ]]
+  run grep -c '^apply -f ' "$KUBECTL_CALLS"
+  [ "$output" -gt 0 ]
+}
+
+@test "el warning por RBAC nombra el grant que haria falta" {
+  export FALLA_GRANTS=1
+  run correr
+  [[ "$output" == *"from HTTPRoute/payments, to Service/li"* ]]
 }

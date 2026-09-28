@@ -366,7 +366,9 @@ Este service **no provisiona el layer de plataforma**. Da por hecho, en cada clu
 - el `Gateway` de **ingreso** y su `AuthPolicy` de validación, en `GATEWAY_NAMESPACE`;
 - un `ReferenceGrant` en el namespace del ingreso que habilite a cada namespace de aplicación a
   consumir el `Service` del ingreso. **El service no lo crea: lo verifica y aborta si falta**, con
-  el detalle de lo que hay que pedirle al equipo que administra el cluster;
+  el detalle de lo que hay que pedirle al equipo que administra el cluster. Si el agente no tiene
+  permiso para listarlos, no aborta: **avisa por warning y sigue**, porque no poder mirar y saber
+  que falta son cosas distintas;
 - el endpoint de JWKS de este cluster y la resolución del JWKS del peer;
 - los Secrets de firma en `kuadrant-system` y la CA del peer;
 - Kuadrant y Gateway API instalados, con una `GatewayClass` utilizable;
