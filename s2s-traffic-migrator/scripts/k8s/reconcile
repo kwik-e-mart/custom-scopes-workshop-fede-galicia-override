@@ -291,9 +291,17 @@ jq -n \
 # antes de rendear para que la falta aborte sin haber tocado nada, en vez de dejar la route
 # aplicada con ResolvedRefs=False, que es un modo de falla mudo.
 require_local_ingress_grant() {
-  local grants
-  grants=$(kubectl -n "$LOCAL_INGRESS_SERVICE_NAMESPACE" get referencegrant.gateway.networking.k8s.io -o json 2>/dev/null) \
-    || die "no se pudieron listar los ReferenceGrant de '$LOCAL_INGRESS_SERVICE_NAMESPACE'. Sin ese dato no se sigue: el egreso quedaría sin salida."
+  local grants listar_err
+  # No poder MIRAR y saber que FALTA son dos cosas distintas: sin permiso de lectura sobre los
+  # ReferenceGrant —que es un objeto de otro equipo— la verificación no puede afirmar nada, y
+  # bloquear el reconcile por eso dejaría al service sin poder instalarse en ese cluster.
+  listar_err="$NP_OUTPUT_DIR/referencegrant-list.err"
+  if ! grants=$(kubectl -n "$LOCAL_INGRESS_SERVICE_NAMESPACE" get referencegrant.gateway.networking.k8s.io -o json 2>"$listar_err"); then
+    log warn "egress-interceptor: no se pudieron listar los ReferenceGrant de '$LOCAL_INGRESS_SERVICE_NAMESPACE': $(tr '\n' ' ' <"$listar_err")"
+    log warn "  Se sigue SIN verificar. Si el grant no existe, la route de egreso va a quedar con ResolvedRefs=False y el tráfico migrado no va a salir."
+    log warn "  El que tiene que existir en '$LOCAL_INGRESS_SERVICE_NAMESPACE': from HTTPRoute/$NAMESPACE, to Service/$LOCAL_INGRESS_SERVICE."
+    return 0
+  fi
   # Las dos condiciones tienen que cumplirse en el MISMO grant: from y to de objetos distintos no
   # se combinan. Un `to` sin `name` cubre todos los Services del namespace, que es válido.
   printf %s "$grants" | jq -e --arg ns "$NAMESPACE" --arg svc "$LOCAL_INGRESS_SERVICE" '
