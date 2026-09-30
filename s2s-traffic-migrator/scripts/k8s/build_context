@@ -224,10 +224,10 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   require_match "$CLUSTER_LABEL" '^[a-zA-Z0-9_.-]{1,63}$' "cluster_label"
   require_match "$LOCAL_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "local_ingress_host"
   case "$LOCAL_INGRESS_TLS_MODE" in
-    skip-verify|ca) ;;
+    skip-verify|certificate) ;;
     *)
-      log error "egress-interceptor: LOCAL_INGRESS_TLS_MODE tiene que ser 'skip-verify' o 'ca', llegó '$LOCAL_INGRESS_TLS_MODE'."
-      log error "  'ca' valida el cert del ingreso contra PEER_CA_SECRET; 'skip-verify' cifra sin autenticarlo."
+      log error "egress-interceptor: LOCAL_INGRESS_TLS_MODE tiene que ser 'skip-verify' o 'certificate', llegó '$LOCAL_INGRESS_TLS_MODE'."
+      log error "  'certificate' valida el cert del ingreso contra PEER_CA_SECRET; 'skip-verify' cifra sin autenticarlo."
       exit 1 ;;
   esac
   if [ "$LOCAL_INGRESS_SERVICE" = "$LOCAL_INGRESS_HOST" ] || [ -z "$LOCAL_INGRESS_SERVICE_NAMESPACE" ]; then
