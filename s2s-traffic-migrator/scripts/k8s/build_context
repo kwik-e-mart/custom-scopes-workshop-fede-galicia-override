@@ -27,6 +27,7 @@ GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
 PEER_GATEWAY_HOST="${PEER_GATEWAY_HOST:-}"
 # El ingreso de ESTE cluster. Con origen EKS la rama no migrada también entra por un Gateway.
 LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
+LOCAL_INGRESS_TLS_MODE="${LOCAL_INGRESS_TLS_MODE-skip-verify}"
 LOCAL_INGRESS_SERVICE="${LOCAL_INGRESS_HOST%%.*}"
 LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_HOST#*.}"
 LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_SERVICE_NAMESPACE%%.*}"
@@ -222,6 +223,13 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   require_match "$INGRESS_AUTHPOLICY" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "ingress_authpolicy"
   require_match "$CLUSTER_LABEL" '^[a-zA-Z0-9_.-]{1,63}$' "cluster_label"
   require_match "$LOCAL_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "local_ingress_host"
+  case "$LOCAL_INGRESS_TLS_MODE" in
+    skip-verify|ca) ;;
+    *)
+      log error "egress-interceptor: LOCAL_INGRESS_TLS_MODE tiene que ser 'skip-verify' o 'ca', llegó '$LOCAL_INGRESS_TLS_MODE'."
+      log error "  'ca' valida el cert del ingreso contra PEER_CA_SECRET; 'skip-verify' cifra sin autenticarlo."
+      exit 1 ;;
+  esac
   if [ "$LOCAL_INGRESS_SERVICE" = "$LOCAL_INGRESS_HOST" ] || [ -z "$LOCAL_INGRESS_SERVICE_NAMESPACE" ]; then
     log error "egress-interceptor: LOCAL_INGRESS_HOST tiene que ser el FQDN de un Service ('<service>.<namespace>.svc.cluster.local'), llegó '$LOCAL_INGRESS_HOST'."
     log error "  De ahí salen el nombre y el namespace del backendRef y del ReferenceGrant."
@@ -264,7 +272,7 @@ fi
 
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
-export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE
+export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
