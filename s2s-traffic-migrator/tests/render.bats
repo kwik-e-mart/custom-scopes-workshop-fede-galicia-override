@@ -594,8 +594,8 @@ rule() {  # <percent> [service]
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
 }
 
-@test "con LOCAL_INGRESS_TLS_MODE=ca valida contra PEER_CA_SECRET" {
-  TLS_MODE=ca run render eks "$(rule 30)"
+@test "con LOCAL_INGRESS_TLS_MODE=certificate valida contra PEER_CA_SECRET" {
+  TLS_MODE=certificate run render eks "$(rule 30)"
   [ "$status" -eq 0 ]
   local d; d=$(named "$output" DestinationRule s2s-egress-local-ingress)
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ]

@@ -500,7 +500,7 @@ rule() {  # <service_name tal cual lo escribe el dev>
 @test "un LOCAL_INGRESS_TLS_MODE desconocido ABORTA en vez de elegir uno" {
   LOCAL_INGRESS_TLS_MODE=verify run_bc
   [ "$status" -ne 0 ]
-  [[ "$output" == *"LOCAL_INGRESS_TLS_MODE tiene que ser 'skip-verify' o 'ca'"* ]]
+  [[ "$output" == *"LOCAL_INGRESS_TLS_MODE tiene que ser 'skip-verify' o 'certificate'"* ]]
 }
 
 @test "LOCAL_INGRESS_TLS_MODE vacío tambien ABORTA: declarar nada no es lo mismo que no declarar" {
