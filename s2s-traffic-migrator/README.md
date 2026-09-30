@@ -341,6 +341,7 @@ un cluster y ninguna es un secreto:
 |---|---|
 | `PEER_GATEWAY_HOST` | ingreso del sustrato **opuesto**, por donde sale todo lo que cruza. |
 | `LOCAL_INGRESS_HOST` | ingreso de **este** cluster. Con un `site` `aws-*` la rama que atiende EKS también entra por acá. |
+| `LOCAL_INGRESS_TLS_MODE` | `skip-verify` (default) o `certificate`. Con `certificate` el egreso valida el cert del ingreso contra `PEER_CA_SECRET`; con `skip-verify` cifra pero **no autentica al servidor**, que es lo que hace falta cuando el cert del ingreso no cubre su nombre interno de Service. Cualquier otro valor aborta. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
 | `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `spiffe` (default) o `cluster-keys`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |
@@ -350,7 +351,7 @@ un cluster y ninguna es un secreto:
 | `NETWORKING_VAULT_SPIFFE_ROLE` | sólo con `spiffe`: el role que mintea, uno para toda la plataforma. Default `s2s-egress`. |
 | `NETWORKING_VAULT_TOKEN_SECRET` | sólo con `spiffe`: Secret de `kuadrant-system` con el `client_token`, lo puebla el CronJob. Default `s2s-vault-token`. |
 | `WRISTBAND_SECRET_NAME` | sólo con `cluster-keys`: Secret con la clave de firma. `{namespace}` se interpola. |
-| `PEER_CA_SECRET` | CA con la que se valida el cert del peer. |
+| `PEER_CA_SECRET` | CA con la que se valida el cert del peer, y el del ingreso local sólo con `LOCAL_INGRESS_TLS_MODE=certificate`. |
 | `GATEWAY_CLASS`, `LISTEN_PORT` | del Gateway. |
 | `TOKEN_DURATION` | sólo con `cluster-keys`. Con `spiffe` el TTL es config del role de Vault. |
 

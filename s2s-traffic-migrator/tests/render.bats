@@ -32,6 +32,7 @@ render() {
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
+    local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
@@ -56,6 +57,7 @@ rendered_files() {
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
+    local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
@@ -323,15 +325,13 @@ rule() {  # <percent> [service]
   [ "$(echo "$output" | yq -N 'select(.kind == "DestinationRule") | .metadata.name' | grep -c .)" -eq 1 ]
 }
 
-@test "el ingreso local se origina con TLS contra la misma CA que el peer" {
-  # Los certs de los dos clusters los firma la misma raíz de la PoC, y el SAN del Gateway local
-  # está en esa lista.
+@test "el ingreso local se origina con TLS, cualquiera sea el modo de verificación" {
+  # El hop siempre va cifrado: lo que cambia con el modo es si se autentica al servidor.
   run render eks "$(rule 30)"
   local dr; dr=$(named "$output" DestinationRule s2s-egress-local-ingress)
   [ "$(echo "$dr" | yq '.spec.host')" = "$LOCAL_IN" ]
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
-  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ]
 }
 
 @test "desde OpenShift no se emite el DestinationRule del ingreso local" {
@@ -584,12 +584,21 @@ rule() {  # <percent> [service]
   [ -z "$(echo "$r" | yq -N '.spec.rules[0].backendRefs[] | select(.kind == "Service" and .namespace != null)')" ]
 }
 
-@test "el DestinationRule del ingreso local siempre valida contra la CA" {
+@test "por default el TLS al ingreso local no valida el cert del servidor" {
   run render eks "$(rule 30)"
+  [ "$status" -eq 0 ]
+  local d; d=$(named "$output" DestinationRule s2s-egress-local-ingress)
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "true" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.credentialName // "ausente"')" = "ausente" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
+}
+
+@test "con LOCAL_INGRESS_TLS_MODE=certificate valida contra PEER_CA_SECRET" {
+  TLS_MODE=certificate run render eks "$(rule 30)"
   [ "$status" -eq 0 ]
   local d; d=$(named "$output" DestinationRule s2s-egress-local-ingress)
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ]
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.insecureSkipVerify // "ausente"')" = "ausente" ]
-  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
 }
 
