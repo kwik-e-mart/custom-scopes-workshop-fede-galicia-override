@@ -267,6 +267,7 @@ jq -n \
   --arg local_ingress_host "$LOCAL_INGRESS_HOST" \
   --arg local_ingress_service "$LOCAL_INGRESS_SERVICE" \
   --arg local_ingress_service_namespace "$LOCAL_INGRESS_SERVICE_NAMESPACE" \
+  --arg local_ingress_tls_mode "$LOCAL_INGRESS_TLS_MODE" \
   --arg gateway_namespace "$GATEWAY_NAMESPACE" \
   --arg cluster_label "$CLUSTER_LABEL" \
   --arg platform "$PLATFORM" \

@@ -57,6 +57,7 @@ render_ctx() {
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:"kuadrant.peer.example.io",
     local_ingress_host:"s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service:"s2s-ingress-istio", local_ingress_service_namespace:"gateways",
+    local_ingress_tls_mode:"skip-verify",
     gateway_namespace:"gateways", cluster_label:"crc-openshift",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
