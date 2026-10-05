@@ -12,12 +12,12 @@ en verde y el tráfico pasa sin validar. Sin lo de `manifests/` el service recon
 objetos y el tráfico que cruza muere con un 401 o un 503 que no señalan a ningún objeto en rojo.
 
 Los valores concretos (`gateways`, `s2s-ingress`, `s2s-remote-ca`, `s2s-validator`, el header
-`x-np-token`, el puerto 8080, y `<ns>-wristband-key` o `s2s-vault-token` según la estrategia) son el
+`x-egress-token`, el puerto 8080, y `<ns>-wristband-key` o `s2s-vault-token` según la estrategia) son el
 **contrato con el service**: son los defaults del `configuration:` de `workflows/openshift/*.yaml` y
 de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también allá.
 
 **Qué archivos de `manifests/` aplican depende de la estrategia de firma del service**
-(`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY`, default `spiffe`). Ver
+(`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY`, default `cluster-keys`). Ver
 [Qué aplicar según la estrategia de firma](#qué-aplicar-según-la-estrategia-de-firma).
 
 ## Qué aplica cada archivo
@@ -49,6 +49,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__APP_NAMESPACE_JWKS__` | el JWKS (una sola clave) de la pública de ese namespace | ver abajo |
 | `__APP_NAMESPACE_SIGNING_KEY_PKCS1_PEM__` | la privada RSA 2048 en PKCS#1 | ver abajo |
 | `__PEER_CA_PEM__` | CA con la que se valida el cert del ingreso del peer | la CA propia del PoC |
+| `__EGRESS_ISSUER__` | el `iss` que el validador exige: tiene que ser el mismo que el `EGRESS_ISSUER_URL` del service, con `{namespace}` ya sustituido (sólo `cluster-keys`) | `https://egress.payments.s2s.local` |
 | `__NETWORKING_VAULT_ADDR__` | `https://host[:puerto]` del Vault que mintea (sólo `spiffe`) | el HCP Vault de noprod, puerto `8200` |
 | `__NETWORKING_VAULT_NAMESPACE__` | namespace de Vault Enterprise/HCP (sólo `spiffe`). En el `55-` va como header `X-Vault-Namespace`; en el `jwksUrl` del `45-` va en el **path**, porque `jwt.jwksUrl` de Authorino es un `GET` sin headers custom | `admin/spiffe` |
 | `__NETWORKING_VAULT_SPIFFE_MOUNT__` | path del mount del secrets engine `spiffe` | `spiffe` |
@@ -66,11 +67,11 @@ endpoint propio.
 
 ## Qué aplicar según la estrategia de firma
 
-El service elige con `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` (default `spiffe`). El cluster tiene
+El service elige con `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` (default `cluster-keys`). El cluster tiene
 que estar en la MISMA que las instancias que corren en él, y los dos clusters tienen que estar en la
 misma entre sí: el que emite y el que valida no pueden diferir.
 
-| | `spiffe` (default) | `cluster-keys` |
+| | `spiffe` | `cluster-keys` (default) |
 |---|---|---|
 | por cluster | `45-`, `55-` | `30-`, `35-` |
 | por namespace emisor | nada | `40-`, `50-` |
@@ -243,7 +244,7 @@ kubectl -n "$NS" create secret generic s2s-remote-ca --from-file=ca.crt=peer-ca.
 sed "s/__APP_NAMESPACE__/$NS/g" manifests/70-networkpolicy.yaml | kubectl apply -f -
 ```
 
-### Con `spiffe` (default)
+### Con `spiffe`
 
 Por cluster, una vez, con el mount y los roles de Vault ya creados:
 

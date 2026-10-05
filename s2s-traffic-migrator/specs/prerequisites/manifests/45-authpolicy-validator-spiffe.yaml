@@ -16,7 +16,7 @@ spec:
           ttl: 300
         credentials:
           customHeader:
-            name: x-np-token
+            name: x-egress-token
     authorization:
       emisor-habilitado:
         patternMatching:

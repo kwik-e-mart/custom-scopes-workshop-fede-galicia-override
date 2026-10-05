@@ -4,7 +4,7 @@ configuration:
     ENABLED: false
   APPLICATION_USER: 1001
   S2S_STRIP_HEADERS:
-    - x-np-token
+    - x-egress-token
     - x-np-origin
     - x-np-svc
     - x-np-scope
