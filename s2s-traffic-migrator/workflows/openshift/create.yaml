@@ -1,7 +1,7 @@
 provider_categories:
   - container-orchestration
 configuration:
-  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: spiffe
+  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: cluster-keys
   NETWORKING_VAULT_ADDR: ""
   NETWORKING_VAULT_NAMESPACE: ""
   NETWORKING_VAULT_SPIFFE_MOUNT: spiffe

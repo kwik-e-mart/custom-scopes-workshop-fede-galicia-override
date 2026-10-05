@@ -17,7 +17,7 @@ Los valores concretos (`gateways`, `s2s-ingress`, `s2s-remote-ca`, `s2s-validato
 de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también allá.
 
 **Qué archivos de `manifests/` aplican depende de la estrategia de firma del service**
-(`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY`, default `spiffe`). Ver
+(`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY`, default `cluster-keys`). Ver
 [Qué aplicar según la estrategia de firma](#qué-aplicar-según-la-estrategia-de-firma).
 
 ## Qué aplica cada archivo
@@ -66,11 +66,11 @@ endpoint propio.
 
 ## Qué aplicar según la estrategia de firma
 
-El service elige con `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` (default `spiffe`). El cluster tiene
+El service elige con `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` (default `cluster-keys`). El cluster tiene
 que estar en la MISMA que las instancias que corren en él, y los dos clusters tienen que estar en la
 misma entre sí: el que emite y el que valida no pueden diferir.
 
-| | `spiffe` (default) | `cluster-keys` |
+| | `spiffe` | `cluster-keys` (default) |
 |---|---|---|
 | por cluster | `45-`, `55-` | `30-`, `35-` |
 | por namespace emisor | nada | `40-`, `50-` |
@@ -243,7 +243,7 @@ kubectl -n "$NS" create secret generic s2s-remote-ca --from-file=ca.crt=peer-ca.
 sed "s/__APP_NAMESPACE__/$NS/g" manifests/70-networkpolicy.yaml | kubectl apply -f -
 ```
 
-### Con `spiffe` (default)
+### Con `spiffe`
 
 Por cluster, una vez, con el mount y los roles de Vault ya creados:
 

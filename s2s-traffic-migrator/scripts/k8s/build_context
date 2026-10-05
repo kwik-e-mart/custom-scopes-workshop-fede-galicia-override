@@ -40,12 +40,12 @@ GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
 # aceptaría tráfico del otro sustrato sin validar el token.
 INGRESS_AUTHPOLICY="${INGRESS_AUTHPOLICY:-s2s-validator}"
 
-SIGNING_STRATEGY="${S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY-spiffe}"
+SIGNING_STRATEGY="${S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY-cluster-keys}"
 case "$SIGNING_STRATEGY" in
   cluster-keys|spiffe) ;;
   *)
     log error "egress-interceptor: S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY='${SIGNING_STRATEGY}' no es una estrategia de firma válida."
-    log error "  Valores: spiffe (default, JWT-SVID minteado por Vault) | cluster-keys (wristband firmado con una clave del cluster)"
+    log error "  Valores: cluster-keys (default, wristband firmado con una clave del cluster) | spiffe (JWT-SVID minteado por Vault)"
     exit 1 ;;
 esac
 
