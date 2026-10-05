@@ -76,7 +76,7 @@ namespace. El header es `x-np-token` en las dos, y el `Gateway`, las `HTTPRoute`
 `DestinationRule` son las mismas: lo único que cambia es la `AuthPolicy` de egreso y el validador
 del ingreso.
 
-| | `spiffe` (default) | `cluster-keys` |
+| | `spiffe` | `cluster-keys` (default) |
 |---|---|---|
 | quién firma | Vault, con el secrets engine `spiffe` | Authorino, con una clave del cluster |
 | qué firma | un JWT-SVID | un wristband |
@@ -87,15 +87,15 @@ del ingreso.
 | qué tiene que existir en el cluster | el CronJob de login y el validador de `spiffe` | el endpoint de JWKS, el `ExternalName` al JWKS del peer y la clave por namespace |
 | qué tiene que existir afuera | un mount `spiffe` en Vault y **un** role | nada |
 
-**El default es `spiffe`.** Una instancia que reconcilie sin declarar la variable cambia de
+**El default es `cluster-keys`.** Una instancia que reconcilie sin declarar la variable cambia de
 mecanismo en esa corrida. El validador del ingreso es del layer de plataforma y no lo crea el
 service, así que el orden de rollout no es negociable:
 
-1. Aplicar en el cluster el set de prerequisites de `spiffe` (`45-` y `55-`).
+1. Aplicar en el cluster el set de prerequisites de `cluster-keys` (`30-`, `35-`, `40-` y `50-`).
 2. Recién después, reconciliar las instancias.
 
-Al revés, el tráfico que cruza muere con un 401 en el ingreso del peer. Para quedarse con el
-mecanismo viejo, la instancia declara `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: cluster-keys`.
+Al revés, el tráfico que cruza muere con un 401 en el ingreso del peer. Para usar Vault, la
+instancia declara `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: spiffe`.
 
 Las dos estrategias no son intercambiables en caliente entre clusters: el que emite y el que valida
 tienen que estar en la misma. Y con `spiffe`, `TOKEN_DURATION` y `WRISTBAND_SECRET_NAME` dejan de
@@ -344,7 +344,7 @@ un cluster y ninguna es un secreto:
 | `LOCAL_INGRESS_TLS_MODE` | `skip-verify` (default) o `certificate`. Con `certificate` el egreso valida el cert del ingreso contra `PEER_CA_SECRET`; con `skip-verify` cifra pero **no autentica al servidor**, que es lo que hace falta cuando el cert del ingreso no cubre su nombre interno de Service. Cualquier otro valor aborta. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
-| `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `spiffe` (default) o `cluster-keys`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |
+| `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `cluster-keys` (default) o `spiffe`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |
 | `NETWORKING_VAULT_ADDR` | sólo con `spiffe`, **obligatoria**: `https://host[:puerto]` del Vault que mintea. Sin default. |
 | `NETWORKING_VAULT_NAMESPACE` | sólo con `spiffe`, opcional: el namespace de Vault Enterprise/HCP. Vacío no emite el header `X-Vault-Namespace`. |
 | `NETWORKING_VAULT_SPIFFE_MOUNT` | sólo con `spiffe`: path del mount del secrets engine. Default `spiffe`. |

@@ -50,6 +50,11 @@ notif() {
 
 run_bc() { CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" run bash "$BC"; }
 
+run_bc_spiffe() {
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+    S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe run bash "$BC"
+}
+
 render_ctx() {
   jq -n --arg strategy "$1" '{
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
@@ -92,10 +97,10 @@ rendered_files() {
 
 doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 
-@test "sin declarar la variable, la estrategia es spiffe" {
+@test "sin declarar la variable, la estrategia es cluster-keys" {
   run_bc
   [ "$status" -eq 0 ]
-  [[ "$output" == *"strategy=spiffe"* ]]
+  [[ "$output" == *"strategy=cluster-keys"* ]]
 }
 
 @test "cluster-keys explícito se respeta" {
@@ -121,14 +126,14 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 
 @test "con spiffe y reglas, falta NETWORKING_VAULT_ADDR y aborta" {
   unset NETWORKING_VAULT_ADDR
-  run_bc
+  run_bc_spiffe
   [ "$status" -ne 0 ]
   [[ "$output" == *"NETWORKING_VAULT_ADDR"* ]]
 }
 
 @test "con spiffe y reglas, falta NETWORKING_VAULT_SPIFFE_MOUNT y aborta" {
   unset NETWORKING_VAULT_SPIFFE_MOUNT
-  run_bc
+  run_bc_spiffe
   [ "$status" -ne 0 ]
   [[ "$output" == *"NETWORKING_VAULT_SPIFFE_MOUNT"* ]]
 }
@@ -142,20 +147,21 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 
 @test "una NETWORKING_VAULT_ADDR que no es una URL https aborta" {
   export NETWORKING_VAULT_ADDR="vault.example.io:8200"
-  run_bc
+  run_bc_spiffe
   [ "$status" -ne 0 ]
   [[ "$output" == *"NETWORKING_VAULT_ADDR"* ]]
 }
 
 @test "con spiffe, TOKEN_DURATION seteado avisa que no tiene efecto" {
-  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" TOKEN_DURATION=60 run bash "$BC"
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" TOKEN_DURATION=60 \
+    S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe run bash "$BC"
   [ "$status" -eq 0 ]
   [[ "$output" == *"TOKEN_DURATION"* ]]
   [[ "$output" == *"spiffe"* ]]
 }
 
 @test "con spiffe, WRISTBAND_SECRET_NAME seteado avisa que no tiene efecto" {
-  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe \
     WRISTBAND_SECRET_NAME=payments-wristband-key run bash "$BC"
   [ "$status" -eq 0 ]
   [[ "$output" == *"WRISTBAND_SECRET_NAME"* ]]
@@ -169,7 +175,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 }
 
 @test "con spiffe, TOKEN_DURATION en su default NO avisa nada" {
-  run_bc
+  run_bc_spiffe
   [ "$status" -eq 0 ]
   [[ "$output" != *"TOKEN_DURATION"* ]]
 }
@@ -216,14 +222,15 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 }
 
 @test "por defecto el role es s2s-egress" {
-  run_bc
+  run_bc_spiffe
   [ "$status" -eq 0 ]
-  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" NETWORKING_VAULT_SPIFFE_ROLE=otro run bash "$BC"
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe \
+    NETWORKING_VAULT_SPIFFE_ROLE=otro run bash "$BC"
   [ "$status" -eq 0 ]
 }
 
 @test "un role con caracteres inválidos aborta" {
-  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe \
     NETWORKING_VAULT_SPIFFE_ROLE='role/../otro' run bash "$BC"
   [ "$status" -ne 0 ]
   [[ "$output" == *"NETWORKING_VAULT_SPIFFE_ROLE"* ]]
