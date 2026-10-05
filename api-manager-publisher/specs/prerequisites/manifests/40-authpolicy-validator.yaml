@@ -15,17 +15,12 @@ spec:
           jwksUrl: http://__LOCAL_JWKS_NAME__.kuadrant-system.svc.cluster.local:8080/__APP_NAMESPACE__/jwks.json
         credentials:
           customHeader:
-            name: x-np-token
-        overrides:
-          ns:
-            value: __APP_NAMESPACE__
+            name: x-egress-token
     authorization:
-      allowed-namespaces:
+      claims-esperados:
         patternMatching:
           patterns:
-            - any:
-                - selector: auth.identity.ns
-                  operator: eq
-                  value: __APP_NAMESPACE__
+            - predicate: auth.identity.iss == "__EGRESS_ISSUER__"
+            - predicate: auth.identity.src_namespace == "__APP_NAMESPACE__"
     response:
       success: {}

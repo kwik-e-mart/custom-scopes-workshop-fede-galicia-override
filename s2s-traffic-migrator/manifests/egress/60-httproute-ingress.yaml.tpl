@@ -36,7 +36,7 @@ spec:
         - type: RequestHeaderModifier
           requestHeaderModifier:
             remove:
-              - x-np-token
+              - x-egress-token
               - x-np-origin
               - x-np-svc
               - x-np-scope

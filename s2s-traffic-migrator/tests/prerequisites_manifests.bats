@@ -15,6 +15,7 @@ sustituir_keys() {  # <archivo>
   sed -e 's|__APP_NAMESPACE__|payments|g' \
       -e 's|__LOCAL_JWKS_NAME__|s2s-eks-jwks|g' \
       -e 's|__PEER_JWKS_NAME__|s2s-crc-jwks|g' \
+      -e 's|__EGRESS_ISSUER__|https://egress.payments.s2s.local|g' \
       "$1"
 }
 
@@ -63,7 +64,7 @@ aud_predicate() {
   [ -z "$(grep -o '__[A-Z0-9_]*__' "$out")" ]
   [ "$(yq '.kind' "$out")" = "AuthPolicy" ]
   [ "$(yq '.metadata.name' "$out")" = "s2s-validator" ]
-  [ "$(yq '.spec.rules.authentication.vault-spiffe.credentials.customHeader.name' "$out")" = "x-np-token" ]
+  [ "$(yq '.spec.rules.authentication.vault-spiffe.credentials.customHeader.name' "$out")" = "x-egress-token" ]
 }
 
 @test "el validador crea el mismo objeto que el de cluster-keys, o el service espera uno que no existe" {
@@ -80,11 +81,11 @@ aud_predicate() {
   done
 }
 
-@test "el validador de cluster-keys exige el token en x-np-token, igual que el de spiffe" {
+@test "el validador de cluster-keys exige el token en x-egress-token, igual que el de spiffe" {
   local out="$BATS_TEST_TMPDIR/40.yaml"
   sustituir_keys "$VALIDATOR_KEYS" >"$out"
-  [ "$(yq '.spec.rules.authentication.local-payments.credentials.customHeader.name' "$out")" = "x-np-token" ]
-  [ "$(yq '.spec.rules.authentication.peer-payments.credentials.customHeader.name' "$out")" = "x-np-token" ]
+  [ "$(yq '.spec.rules.authentication.local-payments.credentials.customHeader.name' "$out")" = "x-egress-token" ]
+  [ "$(yq '.spec.rules.authentication.peer-payments.credentials.customHeader.name' "$out")" = "x-egress-token" ]
 }
 
 @test "cada método de autenticación confía en un JWKS distinto: el local y el del peer" {
@@ -120,4 +121,13 @@ aud_predicate() {
   [ -z "$(grep -o '__[A-Z0-9_]*__' "$out")" ]
   [ "$(yq '.kind' "$out")" = "AuthPolicy" ]
   [ "$(yq '.metadata.name' "$out")" = "s2s-validator" ]
+}
+
+@test "el validador de cluster-keys autoriza por claims explícitos, no por el JWKS que validó" {
+  local out="$BATS_TEST_TMPDIR/40.yaml" preds
+  sustituir_keys "$VALIDATOR_KEYS" >"$out"
+  preds=$(yq -o=json -I=0 '[.spec.rules.authorization.claims-esperados.patternMatching.patterns[].predicate]' "$out")
+  [[ "$preds" == *'auth.identity.iss == \"https://egress.payments.s2s.local\"'* ]]
+  [[ "$preds" == *'auth.identity.src_namespace == \"payments\"'* ]]
+  [ "$(yq '.spec.rules.authentication.local-payments.overrides' "$out")" = "null" ]
 }

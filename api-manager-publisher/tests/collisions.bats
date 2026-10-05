@@ -45,7 +45,7 @@ render_route_json() {
     "app_label":"apimgr-app",
     "app_label_value":"reports.otra",
     "authpolicy_api_version":"kuadrant.io/v1",
-    "wristband_secret":"reports-wristband-key","token_duration":300,
+    "wristband_secret":"reports-wristband-key","egress_issuer":"https://egress.reports.s2s.local","token_duration":300,
     "hosts":["api.expuesta.com"],
     "routes":[{"path":"/pagos","methods":["GET"],"scope":"prod","backend":"b.com"}]
   }'

@@ -23,6 +23,7 @@ setup() {
   export KEYS_NAMESPACE=kuadrant-system
   export API_KEY_HEADER=x-api-key
   export WRISTBAND_SECRET=payments-wristband-key
+  export EGRESS_ISSUER=https://egress.payments.s2s.local
   export TOKEN_DURATION=300
 
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"

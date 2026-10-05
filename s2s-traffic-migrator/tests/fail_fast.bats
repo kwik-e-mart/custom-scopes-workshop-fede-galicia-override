@@ -91,7 +91,7 @@ correr() {
   ARGS=apply \
   NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
-  WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
+  WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
@@ -120,7 +120,7 @@ correr_openshift() {  # [interceptions-json]
   ARGS=apply \
   NAMESPACE=payments SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
-  WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
+  WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
@@ -143,7 +143,7 @@ correr_delete() {
   ARGS=delete \
   NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
-  WRISTBAND_SECRET=payments-wristband-key PEER_CA_SECRET=s2s-remote-ca \
+  WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \

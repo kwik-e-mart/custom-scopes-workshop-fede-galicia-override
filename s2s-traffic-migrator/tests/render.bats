@@ -30,6 +30,7 @@ render() {
   jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" '{
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
+    egress_issuer:"https://egress.payments.s2s.local",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
@@ -55,6 +56,7 @@ rendered_files() {
   jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" '{
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
+    egress_issuer:"https://egress.payments.s2s.local",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
@@ -107,8 +109,8 @@ rule() {  # <percent> [service]
 @test "la AuthPolicy firma con la clave de SU namespace, en RS256" {
   run render openshift "$(rule 100)"
   local ap; ap=$(doc "$output" AuthPolicy)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-np-token.wristband.signingKeyRefs[0].name')" = "payments-wristband-key" ]
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-np-token.wristband.signingKeyRefs[0].algorithm')" = "RS256" ]
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" = "payments-wristband-key" ]
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].algorithm')" = "RS256" ]
   [[ "$ap" != *"ES256"* ]]
 }
 
@@ -122,7 +124,7 @@ rule() {  # <percent> [service]
 @test "el claim de identidad es el namespace, y el token va sin prefijo Bearer" {
   run render openshift "$(rule 100)"
   local ap; ap=$(doc "$output" AuthPolicy)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-np-token.wristband.customClaims.ns.value')" = "payments" ]
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.customClaims.src_namespace.value')" = "payments" ]
   [[ "$ap" != *"Bearer"* ]]
 }
 
@@ -471,7 +473,7 @@ rule() {  # <percent> [service]
   run render openshift "$(rule 100)"
   local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
   local remove; remove=$(echo "$r" | yq -o=json -I=0 '[.spec.rules[0].filters[] | select(.type == "RequestHeaderModifier")][0].requestHeaderModifier.remove')
-  for h in x-np-token x-np-origin x-np-svc x-np-scope; do
+  for h in x-egress-token x-np-origin x-np-svc x-np-scope; do
     [ "$(echo "$remove" | jq --arg h "$h" 'index($h) != null')" = "true" ]
   done
 }

@@ -7,6 +7,7 @@ configuration:
   API_KEY_HEADER: x-api-key
   LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
   WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
+  EGRESS_ISSUER_URL: "https://egress.{namespace}.s2s.local"
   TOKEN_DURATION: "300"
   GITOPS_PUSH_RETRIES: "5"
 steps:
@@ -36,6 +37,7 @@ steps:
       - { name: API_KEY_HEADER, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
       - { name: WRISTBAND_SECRET, type: environment }
+      - { name: EGRESS_ISSUER, type: environment }
       - { name: TOKEN_DURATION, type: environment }
       - { name: GITOPS_PUSH_RETRIES, type: environment }
   - name: reconcile delete

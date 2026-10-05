@@ -65,6 +65,7 @@ warn_inert() {
 if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
   warn_inert TOKEN_DURATION "${TOKEN_DURATION:-}" 300
   warn_inert WRISTBAND_SECRET_NAME "${WRISTBAND_SECRET_NAME:-}" '{namespace}-wristband-key'
+  warn_inert EGRESS_ISSUER_URL "${EGRESS_ISSUER_URL:-}" 'https://egress.{namespace}.s2s.local'
 else
   warn_inert NETWORKING_VAULT_ADDR "$NETWORKING_VAULT_ADDR" ""
   warn_inert NETWORKING_VAULT_NAMESPACE "$NETWORKING_VAULT_NAMESPACE" ""
@@ -107,6 +108,11 @@ WRISTBAND_SECRET="${WRISTBAND_SECRET_NAME:-}"
 [ -n "$WRISTBAND_SECRET" ] || WRISTBAND_SECRET='{namespace}-wristband-key'
 WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
 require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
+
+EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
+[ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER='https://egress.{namespace}.s2s.local'
+EGRESS_ISSUER=${EGRESS_ISSUER//\{namespace\}/$NAMESPACE}
+require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
 
 gitops_substrate_hint() {
   printf %s "$SITE"
@@ -270,7 +276,7 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   done < <(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | [.scope, .scope_fqdn] | @tsv')
 fi
 
-export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET PEER_CA_SECRET LISTEN_PORT
+export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY

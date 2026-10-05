@@ -46,6 +46,11 @@ WRISTBAND_SECRET="${WRISTBAND_SECRET_NAME:-}"
 WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
 require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
 
+EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
+[ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER='https://egress.{namespace}.s2s.local'
+EGRESS_ISSUER=${EGRESS_ISSUER//\{namespace\}/$NAMESPACE}
+require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
+
 if [ -z "$SERVICE_ID" ]; then
   log error "api-manager: la notificación no trae service.id. Es obligatorio: nombra la HTTPRoute y la AuthPolicy de esta instancia."
   exit 1
@@ -124,7 +129,7 @@ fi
 
 export NAMESPACE APP_TARGET APP_LABEL_VALUE SERVICE_ID SITE PLATFORM HOSTS_JSON ROUTES_JSON
 export GATEWAY_NAME GATEWAY_NAMESPACE KEYS_NAMESPACE API_KEY_HEADER LOCAL_INGRESS_HOST
-export WRISTBAND_SECRET TOKEN_DURATION
+export WRISTBAND_SECRET EGRESS_ISSUER TOKEN_DURATION
 
 log info "api-manager: exponiendo $APP_LABEL_VALUE (service $SERVICE_ID) key=$WRISTBAND_SECRET"
 printf %s "$HOSTS_JSON" | jq -r '.[] | "  dominio: \(.)"' | while IFS= read -r L; do log info "$L"; done

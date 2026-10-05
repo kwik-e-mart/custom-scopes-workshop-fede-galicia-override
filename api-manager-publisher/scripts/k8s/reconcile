@@ -30,6 +30,7 @@ case "$ACTION" in
       --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
       --arg local_ingress_host "${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}" \
       --arg wristband_secret "$WRISTBAND_SECRET" \
+      --arg egress_issuer "$EGRESS_ISSUER" \
       --argjson token_duration "$TOKEN_DURATION" \
       --argjson hosts "$HOSTS_JSON" \
       --argjson routes "$ROUTES_JSON" \

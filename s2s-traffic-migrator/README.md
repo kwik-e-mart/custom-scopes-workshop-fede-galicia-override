@@ -72,7 +72,7 @@ en verde.
 ## Estrategia de firma
 
 `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` elige quién le da identidad al tráfico que sale del
-namespace. El header es `x-np-token` en las dos, y el `Gateway`, las `HTTPRoute` y las
+namespace. El header es `x-egress-token` en las dos, y el `Gateway`, las `HTTPRoute` y las
 `DestinationRule` son las mismas: lo único que cambia es la `AuthPolicy` de egreso y el validador
 del ingreso.
 
@@ -82,7 +82,7 @@ del ingreso.
 | qué firma | un JWT-SVID | un wristband |
 | dónde vive el material de firma | dentro de Vault, no sale nunca | `Secret <ns>-wristband-key` en `kuadrant-system` |
 | qué hay en el cluster | el `client_token` de Vault, TTL 1 h, rotado cada 30 min, acotado a mintear un solo role | la clave privada RSA, sin rotación |
-| granularidad de la identidad | **una sola para toda la plataforma** (un role, un `sub`) | **una por namespace** (clave y JWKS propios, claim `ns`) |
+| granularidad de la identidad | **una sola para toda la plataforma** (un role, un `sub`) | **una por namespace** (clave y JWKS propios, claim `src_namespace`) |
 | el destino puede autorizar por namespace | no | sí |
 | qué tiene que existir en el cluster | el CronJob de login y el validador de `spiffe` | el endpoint de JWKS, el `ExternalName` al JWKS del peer y la clave por namespace |
 | qué tiene que existir afuera | un mount `spiffe` en Vault y **un** role | nada |
@@ -107,9 +107,10 @@ declaradas con un valor distinto del default, en vez de aceptarlas en silencio.
 **`spiffe` no distingue namespaces.** Es la diferencia más importante entre las dos y hay que
 tenerla presente antes de prender el default.
 
-Con `cluster-keys` hay una clave y un JWKS **por namespace**, y el validador de destino sobreescribe
-el claim `ns` según cuál JWKS verificó la firma: la clave que valida *es* la identidad, y la authz
-(`auth.identity.ns == <ns>`) puede decir "este namespace sí, este no".
+Con `cluster-keys` hay una clave y un JWKS **por namespace**, y el token lleva `iss` y
+`src_namespace` propios de ese namespace. El validador de destino los chequea explícitamente
+(`auth.identity.iss` y `auth.identity.src_namespace`) y puede decir "este namespace sí, este no";
+el JWKS por namespace es lo que impide que otro los falsifique.
 
 Con `spiffe` hay **un solo role en Vault para toda la plataforma**:
 
@@ -344,6 +345,7 @@ un cluster y ninguna es un secreto:
 | `LOCAL_INGRESS_TLS_MODE` | `skip-verify` (default) o `certificate`. Con `certificate` el egreso valida el cert del ingreso contra `PEER_CA_SECRET`; con `skip-verify` cifra pero **no autentica al servidor**, que es lo que hace falta cuando el cert del ingreso no cubre su nombre interno de Service. Cualquier otro valor aborta. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
+| `EGRESS_ISSUER_URL` | el `iss` del token, con `{namespace}` sustituido. Default `https://egress.{namespace}.s2s.local`. Tiene que coincidir con el `__EGRESS_ISSUER__` del validador del cluster. |
 | `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `cluster-keys` (default) o `spiffe`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |
 | `NETWORKING_VAULT_ADDR` | sólo con `spiffe`, **obligatoria**: `https://host[:puerto]` del Vault que mintea. Sin default. |
 | `NETWORKING_VAULT_NAMESPACE` | sólo con `spiffe`, opcional: el namespace de Vault Enterprise/HCP. Vacío no emite el header `X-Vault-Namespace`. |
