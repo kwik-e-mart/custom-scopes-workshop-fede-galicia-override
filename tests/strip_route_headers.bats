@@ -9,7 +9,7 @@ setup() {
   source "${BATS_TEST_DIRNAME}/../shared/scripts/strip_route_headers"
   OUTPUT_DIR="$BATS_TEST_TMPDIR/out"
   mkdir -p "$OUTPUT_DIR"
-  HEADERS=$'- x-np-token\n- x-np-origin\n- x-np-svc\n- x-np-scope\n- x-api-key'
+  HEADERS=$'- x-egress-token\n- x-np-origin\n- x-np-svc\n- x-np-scope\n- x-api-key'
 }
 
 route_without_filters() {
@@ -52,7 +52,7 @@ rhm_count() {
   run strip_route_headers "s2s headers" "$HEADERS"
   [ "$status" -eq 0 ]
   [ "$(rhm_count 0)" = "1" ]
-  for h in x-np-token x-np-origin x-np-svc x-np-scope x-api-key; do
+  for h in x-egress-token x-np-origin x-np-svc x-np-scope x-api-key; do
     [ "$(removed 0 | jq --arg h "$h" 'index($h) != null')" = "true" ]
   done
 }
@@ -87,7 +87,7 @@ EOF
   [ "$status" -eq 0 ]
   [ "$(rhm_count 0)" = "1" ]
   [ "$(removed 0 | jq 'index("x-ya-estaba") != null')" = "true" ]
-  [ "$(removed 0 | jq 'index("x-np-token") != null')" = "true" ]
+  [ "$(removed 0 | jq 'index("x-egress-token") != null')" = "true" ]
   local f="$OUTPUT_DIR/ingress-1049050904-789675678.yaml"
   [ "$(yq '[.spec.rules[0].filters[] | select(.type == "RequestHeaderModifier")][0].requestHeaderModifier.set[0].value' "$f")" = "conservame" ]
 }
@@ -128,14 +128,14 @@ EOF
   [ "$status" -eq 0 ]
   [ "$(rhm_count 0)" = "1" ]
   [ "$(rhm_count 1)" = "1" ]
-  [ "$(removed 1 | jq 'index("x-np-token") != null')" = "true" ]
+  [ "$(removed 1 | jq 'index("x-egress-token") != null')" = "true" ]
 }
 
 @test "los nombres de header se normalizan a minúscula" {
   route_without_filters
-  run strip_route_headers "s2s headers" $'- X-NP-Token\n- X-NP-Origin'
+  run strip_route_headers "s2s headers" $'- X-Egress-Token\n- X-NP-Origin'
   [ "$status" -eq 0 ]
-  [ "$(removed 0 | jq -r '.[0]')" = "x-np-token" ]
+  [ "$(removed 0 | jq -r '.[0]')" = "x-egress-token" ]
   [ "$(removed 0 | jq 'length')" = "2" ]
 }
 

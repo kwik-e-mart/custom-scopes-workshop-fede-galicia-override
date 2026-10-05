@@ -59,6 +59,7 @@ render_ctx() {
   jq -n --arg strategy "$1" '{
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
+    egress_issuer:"https://egress.payments.s2s.local",
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:"kuadrant.peer.example.io",
     local_ingress_host:"s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service:"s2s-ingress-istio", local_ingress_service_namespace:"gateways",
@@ -244,11 +245,11 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
   [ "$ttl" -lt 300 ]
 }
 
-@test "spiffe manda el token en x-np-token, SIN prefijo Bearer" {
+@test "spiffe manda el token en x-egress-token, SIN prefijo Bearer" {
   run render spiffe
   [ "$status" -eq 0 ]
   local ap; ap=$(doc "$output" AuthPolicy)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-np-token.plain.expression')" = \
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.plain.expression')" = \
     "auth.metadata.vault_mint.data.token" ]
   [[ "$ap" != *"Bearer"* ]]
 }
@@ -298,10 +299,12 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
   run render cluster-keys
   [ "$status" -eq 0 ]
   local ap; ap=$(doc "$output" AuthPolicy)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-np-token.wristband.signingKeyRefs[0].name')" = \
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" = \
     "payments-wristband-key" ]
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-np-token.wristband.customClaims.ns.value')" = \
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.customClaims.src_namespace.value')" = \
     "payments" ]
+  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.issuer')" = \
+    "https://egress.payments.s2s.local" ]
 }
 
 @test "cluster-keys no habla con Vault en ningún lado" {
@@ -323,9 +326,9 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 
 @test "las dos estrategias emiten el mismo nombre de header" {
   run render spiffe
-  [[ "$(doc "$output" AuthPolicy)" == *"x-np-token"* ]]
+  [[ "$(doc "$output" AuthPolicy)" == *"x-egress-token"* ]]
   run render cluster-keys
-  [[ "$(doc "$output" AuthPolicy)" == *"x-np-token"* ]]
+  [[ "$(doc "$output" AuthPolicy)" == *"x-egress-token"* ]]
 }
 
 @test "las dos estrategias llevan la label de managed" {

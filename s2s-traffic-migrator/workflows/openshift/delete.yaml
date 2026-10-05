@@ -8,6 +8,7 @@ configuration:
   NETWORKING_VAULT_SPIFFE_ROLE: s2s-egress
   NETWORKING_VAULT_TOKEN_SECRET: s2s-vault-token
   WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
+  EGRESS_ISSUER_URL: "https://egress.{namespace}.s2s.local"
   PEER_CA_SECRET: s2s-remote-ca
   PEER_GATEWAY_HOST: s2s-remote-gateway.tailscale.svc.cluster.local
   LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
@@ -38,6 +39,7 @@ steps:
       - { name: INTERCEPTIONS_JSON, type: environment }
       - { name: SERVICE_ID, type: environment }
       - { name: WRISTBAND_SECRET, type: environment }
+      - { name: EGRESS_ISSUER, type: environment }
       - { name: SIGNING_STRATEGY, type: environment }
       - { name: NETWORKING_VAULT_ADDR, type: environment }
       - { name: NETWORKING_VAULT_NAMESPACE, type: environment }

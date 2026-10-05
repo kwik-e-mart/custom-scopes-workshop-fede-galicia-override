@@ -22,12 +22,12 @@ spec:
     response:
       success:
         headers:
-          "x-np-token":
+          "x-egress-token":
             wristband:
-              issuer: {{ $ns | quote }}
+              issuer: {{ .egress_issuer | quote }}
               tokenDuration: {{ .token_duration | conv.ToInt }}
               customClaims:
-                "ns":
+                "src_namespace":
                   value: {{ $ns | quote }}
               signingKeyRefs:
                 # RS256 con la clave en PKCS#1 es la única combinación que cierra: el verificador

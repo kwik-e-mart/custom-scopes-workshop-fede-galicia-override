@@ -16,32 +16,24 @@ spec:
           ttl: 300
         credentials:
           customHeader:
-            name: x-np-token
-        overrides:
-          ns:
-            value: __APP_NAMESPACE__
+            name: x-egress-token
       peer-__APP_NAMESPACE__:
         jwt:
           jwksUrl: http://__PEER_JWKS_NAME__.kuadrant-system.svc.cluster.local:8080/__APP_NAMESPACE__/jwks.json
           ttl: 300
         credentials:
           customHeader:
-            name: x-np-token
-        overrides:
-          ns:
-            value: __APP_NAMESPACE__
+            name: x-egress-token
     authorization:
-      allowed-namespaces:
+      claims-esperados:
         patternMatching:
           patterns:
-            - any:
-                - selector: auth.identity.ns
-                  operator: eq
-                  value: __APP_NAMESPACE__
+            - predicate: auth.identity.iss == "__EGRESS_ISSUER__"
+            - predicate: auth.identity.src_namespace == "__APP_NAMESPACE__"
     response:
       unauthenticated:
         message:
-          value: "falta el token de egreso en x-np-token, o no lo firmó ninguna clave conocida"
+          value: "falta el token de egreso en x-egress-token, o no lo firmó ninguna clave conocida"
       unauthorized:
         message:
           value: "el token no corresponde a un namespace habilitado en este ingreso"

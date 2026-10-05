@@ -56,6 +56,6 @@ spec:
           value: "no se pudo acuñar el token de egreso: el emisor no devolvió uno"
       success:
         headers:
-          "x-np-token":
+          "x-egress-token":
             plain:
               expression: 'auth.metadata.vault_mint.data.token'
