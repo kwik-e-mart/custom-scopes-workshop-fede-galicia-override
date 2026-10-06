@@ -25,6 +25,15 @@ rules:
   - apiGroups: ["networking.istio.io"]
     resources: ["destinationrules"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts", "configmaps"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -84,15 +93,23 @@ subjects:
 {{- end }}
 */}}
 ---
-# Namespaced a propósito, y sin `get` ni `list`: en KEYS_NAMESPACE también vive la clave de firma
-# del wristband. Cluster-wide, esto sería borrar cualquier Secret de cualquier namespace.
+# Namespaced a propósito: en KEYS_NAMESPACE vive la clave de firma del wristband, y cluster-wide
+# esto sería leer y borrar cualquier Secret de cualquier namespace. El `list` lo necesita
+# build_context para descubrir qué generación de la clave está vigente, y el bloque de rbac para
+# poder crear el Role del rotador sin que el API server lo rechace por escalada de privilegios.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: np-agent-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "delete"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

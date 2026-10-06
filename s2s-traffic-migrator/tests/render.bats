@@ -31,7 +31,7 @@ render() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -61,7 +61,7 @@ rendered_files() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -393,13 +393,13 @@ rule() {  # <percent> [service]
   # y la de ingreso —que vive en OTRO namespace y por eso el delete la borra aparte.
   run render openshift "$(rule 100)"
   [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 5 ]
-  [ "$(echo "$output" | grep -c 'nullplatform: "true"')" -eq 5 ]
+  [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 
   # Con origen EKS y rama local hay un DestinationRule más, y también tiene que quedar marcado o
   # el delete lo dejaría huérfano.
   run render eks "$(rule 30)"
   [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 5 ]
-  [ "$(echo "$output" | grep -c 'nullplatform: "true"')" -eq 5 ]
+  [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 }
 
 # ── el template no puede ser un vector de inyección ──────────────────────────
@@ -526,10 +526,11 @@ rule() {  # <percent> [service]
   # desde que hay una AuthPolicy que la referencia, haya o no tráfico declarado todavía.
   run rendered_files openshift '[]'
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep -c .)" -eq 3 ]
+  [ "$(echo "$output" | grep -c .)" -eq 4 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
   [[ "$output" == *"20-authpolicy.yaml"* ]]
-  [[ "$output" == *"15-keygen-init.yaml"* ]]
+  [[ "$output" == *"15-keygen-rbac.yaml"* ]]
+  [[ "$output" == *"16-keygen-jobs.yaml"* ]]
 }
 
 @test "el orden de aplicación pone al Gateway antes de lo que lo referencia" {
@@ -615,3 +616,72 @@ rule() {  # <percent> [service]
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.insecureSkipVerify // "ausente"')" = "ausente" ]
 }
 
+
+@test "el keygen vive en el namespace de origen pero su Role de claves en kuadrant-system" {
+  run render openshift "$(rule 100)"
+  local roles
+  roles=$(echo "$output" | yq -N 'select(.kind == "Role") | .metadata.name + " " + .metadata.namespace')
+  [[ "$roles" == *"wristband-rotator payments"* ]]
+  [[ "$roles" == *"wristband-rotator-payments kuadrant-system"* ]]
+}
+
+@test "el Role en kuadrant-system lleva el namespace en el nombre: ahi conviven todos" {
+  run render openshift "$(rule 100)"
+  [[ "$output" == *"wristband-rotator-payments"* ]]
+  [[ "$output" != *$'name: wristband-rotator\n  namespace: kuadrant-system'* ]]
+}
+
+@test "el keygen NO lleva el label managed: el delete de la instancia no lo barre" {
+  run render openshift "$(rule 100)"
+  local marcados
+  marcados=$(echo "$output" | yq -N 'select(.metadata.labels."egress-interceptor/managed" == "true") | .kind')
+  [[ "$marcados" != *"Job"* ]]
+  [[ "$marcados" != *"CronJob"* ]]
+  [[ "$marcados" != *"ConfigMap"* ]]
+  [[ "$marcados" != *"ServiceAccount"* ]]
+}
+
+@test "el ExternalSecret que crea el Job nombra la clave con la generacion" {
+  run render openshift "$(rule 100)"
+  local init
+  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"')
+  [[ "$init" == *'KID="${ORIGIN_NS}-wristband-key-gen1"'* ]]
+  [[ "$init" == *'namespace: ${KEYS_NS}'* ]]
+}
+
+@test "el Secret que materializa el ExternalSecret lleva los labels de busqueda" {
+  run render openshift "$(rule 100)"
+  local init
+  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"')
+  [[ "$init" == *'egress-interceptor/wristband-key: "true"'* ]]
+  [[ "$init" == *'egress-interceptor/origin-namespace: ${ORIGIN_NS}'* ]]
+  [[ "$init" == *'egress-interceptor/key-generation: "1"'* ]]
+  [[ "$init" == *'nullplatform: "true"'* ]]
+}
+
+@test "el Job es idempotente: si ya hay clave para el namespace no genera otra" {
+  run render openshift "$(rule 100)"
+  local init
+  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"')
+  [[ "$init" == *'kubectl get secret -n "${KEYS_NS}" -l "${SELECTOR}" -o name'* ]]
+  [[ "$init" == *"no se toca"* ]]
+}
+
+@test "la rotacion escribe el ExternalSecret en kuadrant-system y parchea la policy en el origen" {
+  run render openshift "$(rule 100)"
+  local rot
+  rot=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."rotate.sh"')
+  [[ "$rot" == *'SECRET_PREFIX="${ORIGIN_NS}-wristband-key-gen"'* ]]
+  [[ "$rot" == *'kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${KEYS_NS}"'* ]]
+  [[ "$rot" == *'kubectl patch authpolicy "${AUTH_POLICY_NAME}" -n "${ORIGIN_NS}"'* ]]
+}
+
+@test "los scripts embebidos son bash valido" {
+  run render openshift "$(rule 100)"
+  local cm; cm="$BATS_TEST_TMPDIR/cm"
+  mkdir -p "$cm"
+  echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"' > "$cm/init.sh"
+  echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."rotate.sh"' > "$cm/rotate.sh"
+  bash -n "$cm/init.sh"
+  bash -n "$cm/rotate.sh"
+}

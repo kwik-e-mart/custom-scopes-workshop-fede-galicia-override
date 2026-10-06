@@ -59,6 +59,7 @@ VAULT_APPROLE_ROLE_ID="${VAULT_APPROLE_ROLE_ID:-}"
 VAULT_APPROLE_SECRET="${VAULT_APPROLE_SECRET:-vault-approle-creds}"
 VAULT_SECRET_STORE="${VAULT_SECRET_STORE:-vault-ocp-plataforma}"
 LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}"
+KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
 
 warn_inert() {
   local name="$1" value="$2" default="$3"
@@ -107,9 +108,53 @@ require_match() {  # <value> <regex> <field>
 require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
 [ -n "$SERVICE_ID" ] && require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
-WRISTBAND_SECRET="${WRISTBAND_SECRET_NAME:-}"
-[ -n "$WRISTBAND_SECRET" ] || WRISTBAND_SECRET='{namespace}-wristband-key'
-WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
+WRISTBAND_KEY_SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=$NAMESPACE"
+
+if ! type -t current_wristband_secret >/dev/null 2>&1; then
+current_wristband_secret() {
+  local out gen name best_gen="" best_name=""
+  if ! out=$(kubectl -n "$KEYS_NAMESPACE" get secret -l "$WRISTBAND_KEY_SELECTOR" \
+      -o jsonpath="{range .items[*]}{.metadata.labels['egress-interceptor/key-generation']}{'\t'}{.metadata.name}{'\n'}{end}" 2>&1); then
+    log error "egress-interceptor: no se pudieron listar las claves de firma en '$KEYS_NAMESPACE'." >&2
+    log error "  $out" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r gen name; do
+    [ -n "$name" ] || continue
+    [[ "$gen" =~ ^[0-9]+$ ]] || continue
+    if [ -z "$best_gen" ] || [ "$gen" -gt "$best_gen" ]; then
+      best_gen="$gen"
+      best_name="$name"
+    fi
+  done <<<"$out"
+  [ -n "$best_name" ] || return 2
+  printf '%s' "$best_name"
+}
+fi
+
+resolve_wristband_secret() {
+  if [ -n "${WRISTBAND_SECRET_NAME:-}" ]; then
+    printf '%s' "${WRISTBAND_SECRET_NAME//\{namespace\}/$NAMESPACE}"
+    return 0
+  fi
+  if [ "$SIGNING_STRATEGY" != "cluster-keys" ]; then
+    printf '%s-wristband-key' "$NAMESPACE"
+    return 0
+  fi
+  local found rc=0
+  found=$(current_wristband_secret) || rc=$?
+  case "$rc" in
+    0) printf '%s' "$found" ;;
+    2) printf '%s-wristband-key-gen1' "$NAMESPACE" ;;
+    *) return 1 ;;
+  esac
+}
+
+WRISTBAND_SECRET=$(resolve_wristband_secret) || {
+  log error "egress-interceptor: no se pudo resolver la clave de firma de '$NAMESPACE'. No se aplicó nada."
+  log error "  El agente necesita 'list' sobre secrets en '$KEYS_NAMESPACE' (Role np-agent-keys)."
+  exit 1
+}
 require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
 
 EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
@@ -284,7 +329,7 @@ export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
-export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL
+export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
 log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \

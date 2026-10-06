@@ -12,7 +12,8 @@ configuration:
   VAULT_APPROLE_SECRET: vault-approle-creds
   VAULT_SECRET_STORE: vault-ocp-plataforma
   LOCAL_JWKS_URL: ""
-  WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
+  KEYS_NAMESPACE: kuadrant-system
+  WRISTBAND_SECRET_NAME: ""
   EGRESS_ISSUER_URL: "https://egress.{namespace}.s2s.local"
   PEER_CA_SECRET: s2s-remote-ca
   PEER_GATEWAY_HOST: s2s-remote-gateway.tailscale.svc.cluster.local
@@ -51,6 +52,7 @@ steps:
       - { name: VAULT_APPROLE_SECRET, type: environment }
       - { name: VAULT_SECRET_STORE, type: environment }
       - { name: LOCAL_JWKS_URL, type: environment }
+      - { name: KEYS_NAMESPACE, type: environment }
       - { name: NETWORKING_VAULT_ADDR, type: environment }
       - { name: NETWORKING_VAULT_NAMESPACE, type: environment }
       - { name: NETWORKING_VAULT_SPIFFE_MOUNT, type: environment }

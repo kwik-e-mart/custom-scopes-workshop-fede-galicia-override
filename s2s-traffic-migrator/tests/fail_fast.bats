@@ -75,6 +75,8 @@ case "$*" in
       exit 1
     fi
     cat "$FAKE_GRANTS" ;;
+  *"get job wristband-init-"*|*"get cronjob wristband-rotate-"*)
+    [ -n "${KEYGEN_PRESENTE:-}" ] || exit 1 ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
   *"get httproute"*"-o json"*)
@@ -95,7 +97,8 @@ correr() {
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
-  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json \
+  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
+  KEYS_NAMESPACE=kuadrant-system \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -127,7 +130,8 @@ correr_openshift() {  # [interceptions-json]
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
-  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json \
+  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
+  KEYS_NAMESPACE=kuadrant-system \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -153,7 +157,8 @@ correr_delete() {
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
-  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json \
+  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
+  KEYS_NAMESPACE=kuadrant-system \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -392,5 +397,29 @@ correr_delete() {
 @test "con spiffe no espera ningún Job de clave" {
   run correr
   run grep -c 'job/wristband-init' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "la primera vez el Job y el CronJob del keygen SÍ se aplican" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "si el Job y el CronJob ya existen, no se vuelven a aplicar" {
+  SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
+  run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "el ConfigMap con los scripts se reaplica aunque el keygen ya exista" {
+  SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
+  run grep -c '15-keygen-rbac.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "con spiffe no se consulta si el keygen existe" {
+  run correr
+  run grep -c 'get job wristband-init-' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }

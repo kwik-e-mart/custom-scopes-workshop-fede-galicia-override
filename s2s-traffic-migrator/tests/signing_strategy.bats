@@ -64,7 +64,7 @@ render_ctx() {
     local_ingress_host:"s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service:"s2s-ingress-istio", local_ingress_service_namespace:"gateways",
     local_ingress_tls_mode:"skip-verify",
-    gateway_namespace:"gateways", cluster_label:"crc-openshift",
+    gateway_namespace:"gateways", cluster_label:"crc-openshift", keys_namespace:"kuadrant-system",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",

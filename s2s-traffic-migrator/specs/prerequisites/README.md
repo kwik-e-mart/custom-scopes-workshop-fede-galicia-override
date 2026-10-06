@@ -31,8 +31,8 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `35-peer-jwks-service.yaml` | `Service` `ExternalName` al JWKS del cluster opuesto | cluster | **sólo `cluster-keys`**, y sólo con tráfico cruzado: es lo que hace que la `jwksUrl` del peer resuelva desde este cluster |
 | `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `cluster-keys`** |
 | `45-authpolicy-validator-spiffe.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `spiffe`**. Mismo nombre de objeto que `40-`: se aplica uno o el otro, nunca los dos |
-| `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system` | por namespace emisor | **sólo `cluster-keys`** |
-| `15-keygen-init.yaml` | SA + Role + `Job` de bootstrap + `CronJob` de rotación semanal + `ConfigMap` con `init.sh` y `rotate.sh`. La clave vive en Vault y llega al cluster por `ExternalSecret`; el `kid` lleva la generación | por namespace emisor | **sólo `cluster-keys`**, y sólo si la clave la administra Vault en vez de crearse a mano con `50-` |
+| `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system`. Alternativa manual a lo que emite el service; si se usa, fijar `WRISTBAND_SECRET_NAME` para que el descubrimiento por label no lo pise | por namespace emisor | **sólo `cluster-keys`** |
+| `15-keygen-rbac.yaml` + `16-keygen-jobs.yaml` | **Los emite el service, no son prerequisito.** SA + Roles + `ConfigMap` con `init.sh` y `rotate.sh`, y el `Job` de bootstrap + `CronJob` de rotación semanal. La clave vive en Vault y llega a `kuadrant-system` por `ExternalSecret` con el nombre `<ns>-wristband-key-gen<N>`; el `kid` es ese nombre. Reemplaza a `50-` | por namespace emisor | **sólo `cluster-keys`** |
 | `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |

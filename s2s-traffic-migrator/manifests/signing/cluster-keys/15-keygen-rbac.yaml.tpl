@@ -3,19 +3,17 @@ kind: ServiceAccount
 metadata:
   name: wristband-rotator
   namespace: {{ .namespace }}
+  labels:
+    nullplatform: "true"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: wristband-rotator
   namespace: {{ .namespace }}
+  labels:
+    nullplatform: "true"
 rules:
-  - apiGroups: ["external-secrets.io"]
-    resources: ["externalsecrets"]
-    verbs: ["get", "list", "create", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "delete"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]
     verbs: ["get", "patch"]
@@ -25,95 +23,62 @@ kind: RoleBinding
 metadata:
   name: wristband-rotator
   namespace: {{ .namespace }}
+  labels:
+    nullplatform: "true"
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: wristband-rotator }
 subjects:
   - { kind: ServiceAccount, name: wristband-rotator, namespace: {{ .namespace }} }
 ---
-apiVersion: batch/v1
-kind: Job
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
-  name: wristband-init-{{ .namespace }}
-  namespace: {{ .namespace }}
-spec:
-  backoffLimit: 1
-  template:
-    spec:
-      serviceAccountName: wristband-rotator
-      restartPolicy: Never
-      containers:
-        - name: init
-          image: {{ .keygen_image }}
-          env:
-            - { name: ORIGIN_NS, value: "{{ .namespace }}" }
-            - { name: CLUSTER, value: "{{ .cluster_label }}" }
-            - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
-            - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
-            - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
-          command: ["/bin/bash", "/scripts/init.sh"]
-          volumeMounts:
-            - { name: scripts, mountPath: /scripts }
-            - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
-      volumes:
-        - name: scripts
-          configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
-        - name: vault-secret-id
-          secret: { secretName: {{ .vault_approle_secret }} }
+  name: wristband-rotator-{{ .namespace }}
+  namespace: {{ .keys_namespace }}
+  labels:
+    nullplatform: "true"
+rules:
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "delete"]
 ---
-apiVersion: batch/v1
-kind: CronJob
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata:
-  name: wristband-rotate-{{ .namespace }}
-  namespace: {{ .namespace }}
-spec:
-  schedule: "0 3 * * 0"
-  concurrencyPolicy: Forbid
-  jobTemplate:
-    spec:
-      backoffLimit: 0
-      template:
-        spec:
-          serviceAccountName: wristband-rotator
-          restartPolicy: Never
-          containers:
-            - name: rotate
-              image: {{ .keygen_image }}
-              env:
-                - { name: ORIGIN_NS, value: "{{ .namespace }}" }
-                - { name: CLUSTER, value: "{{ .cluster_label }}" }
-                - { name: AUTH_POLICY_NAME, value: "{{ .gateway_name }}" }
-                - { name: TOKEN_DURATION, value: "300" }
-                - { name: EXTRA_WAIT, value: "0" }
-                - { name: LOCAL_JWKS_URL, value: "{{ .local_jwks_url }}" }
-                - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
-                - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
-                - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
-              command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl > /dev/null && /bin/bash /scripts/rotate.sh"]
-              volumeMounts:
-                - { name: scripts, mountPath: /scripts }
-                - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
-          volumes:
-            - name: scripts
-              configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
-            - name: vault-secret-id
-              secret: { secretName: {{ .vault_approle_secret }} }
+  name: wristband-rotator-{{ .namespace }}
+  namespace: {{ .keys_namespace }}
+  labels:
+    nullplatform: "true"
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: wristband-rotator-{{ .namespace }} }
+subjects:
+  - { kind: ServiceAccount, name: wristband-rotator, namespace: {{ .namespace }} }
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: wristband-rotate-scripts
   namespace: {{ .namespace }}
+  labels:
+    nullplatform: "true"
 data:
   init.sh: |
     #!/usr/bin/env bash
-    # Bootstrap: genera la generación 1 de la clave de un origen y publica su JWKS
-    # inicial (una sola clave) en Vault. Correr una vez antes de aplicar la AuthPolicy.
     set -euo pipefail
 
     : "${ORIGIN_NS:?falta ORIGIN_NS}"
     : "${CLUSTER:?falta CLUSTER}"
+    : "${KEYS_NS:?falta KEYS_NS}"
 
     VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
-    KID="wristband-key-${ORIGIN_NS}-gen1"
+    KID="${ORIGIN_NS}-wristband-key-gen1"
+    SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=${ORIGIN_NS}"
+
+    if [ -n "$(kubectl get secret -n "${KEYS_NS}" -l "${SELECTOR}" -o name)" ]; then
+      echo "${ORIGIN_NS} ya tiene clave de firma en ${KEYS_NS}, no se toca"
+      exit 0
+    fi
 
     vault write -field=token auth/approle/login \
       role_id="${VAULT_ROLE_ID}" secret_id="$(cat /var/run/secrets/vault/secret-id)" \
@@ -122,17 +87,48 @@ data:
     VAULT_TOKEN="$(cat /tmp/vault-token)"
 
     if vault kv get "kv/${VAULT_KV_BASE}/signing-key-gen1" > /dev/null 2>&1; then
-      echo "ya existe signing-key-gen1 para ${ORIGIN_NS}, no se pisa"
-      exit 0
+      echo "signing-key-gen1 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
+    else
+      openssl genrsa -traditional -out /tmp/gen1.pem 2048
+      head -1 /tmp/gen1.pem | grep -q "BEGIN RSA PRIVATE KEY"
+      openssl rsa -in /tmp/gen1.pem -pubout -out /tmp/gen1.pub
+      vault kv put "kv/${VAULT_KV_BASE}/signing-key-gen1" private_key=@/tmp/gen1.pem
+      python3 /scripts/build-jwks.py --old /tmp/gen1.pub --old-kid "${KID}" > /tmp/jwks.json
+      vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@/tmp/jwks.json
     fi
 
-    openssl genrsa -out /tmp/gen1.pem 2048
-    openssl rsa -in /tmp/gen1.pem -pubout -out /tmp/gen1.pub
-
-    vault kv put "kv/${VAULT_KV_BASE}/signing-key-gen1" private_key=@/tmp/gen1.pem
-
-    python3 /scripts/build-jwks.py --old /tmp/gen1.pub --old-kid "${KID}" > /tmp/jwks.json
-    vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@/tmp/jwks.json
+    cat <<EOF | kubectl apply -f -
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: ${KID}
+      namespace: ${KEYS_NS}
+      labels:
+        nullplatform: "true"
+        egress-interceptor/wristband-key: "true"
+        egress-interceptor/origin-namespace: ${ORIGIN_NS}
+        egress-interceptor/key-generation: "1"
+    spec:
+      refreshInterval: 1m
+      secretStoreRef:
+        name: {{ .vault_secret_store }}
+        kind: SecretStore
+      target:
+        name: ${KID}
+        template:
+          metadata:
+            labels:
+              nullplatform: "true"
+              egress-interceptor/wristband-key: "true"
+              egress-interceptor/origin-namespace: ${ORIGIN_NS}
+              egress-interceptor/key-generation: "1"
+      data:
+        - secretKey: key.pem
+          remoteRef:
+            key: ${VAULT_KV_BASE}/signing-key-gen1
+            property: private_key
+    EOF
+    kubectl wait --for=condition=Ready "externalsecret/${KID}" -n "${KEYS_NS}" --timeout=120s
 
     echo "bootstrap de ${ORIGIN_NS} listo: ${KID}"
   rotate.sh: |
@@ -145,13 +141,14 @@ data:
 
     : "${ORIGIN_NS:?falta ORIGIN_NS}"
     : "${CLUSTER:?falta CLUSTER}"
+    : "${KEYS_NS:?falta KEYS_NS}"
     : "${AUTH_POLICY_NAME:?falta AUTH_POLICY_NAME}"
     : "${TOKEN_DURATION:=300}"
     : "${EXTRA_WAIT:=0}"
     : "${LOCAL_JWKS_URL:=}"
 
     VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
-    SECRET_PREFIX="wristband-key-${ORIGIN_NS}-gen"
+    SECRET_PREFIX="${ORIGIN_NS}-wristband-key-gen"
 
     log() { echo "[$(date -Iseconds)] $*"; }
 
@@ -172,13 +169,13 @@ data:
       log "limpiando ExternalSecret/Secret huérfanos de corridas anteriores interrumpidas"
       local current
       current="$(current_signing_key)"
-      for es in $(kubectl get externalsecret -n "${ORIGIN_NS}" -o name | grep "${SECRET_PREFIX}" || true); do
+      for es in $(kubectl get externalsecret -n "${KEYS_NS}" -o name | grep "${SECRET_PREFIX}" || true); do
         name="${es#externalsecret.external-secrets.io/}"
         if [ "${name}" != "${current}" ]; then
           log "borrando ExternalSecret huérfano: ${name}"
-          kubectl delete externalsecret "${name}" -n "${ORIGIN_NS}" --ignore-not-found
-          kubectl delete secret "${name}" -n "${ORIGIN_NS}" --ignore-not-found
-          vault kv delete "kv/${VAULT_KV_BASE}/signing-key-${name##${SECRET_PREFIX}}" || true
+          kubectl delete externalsecret "${name}" -n "${KEYS_NS}" --ignore-not-found
+          kubectl delete secret "${name}" -n "${KEYS_NS}" --ignore-not-found
+          vault kv delete "kv/${VAULT_KV_BASE}/signing-key-gen${name##${SECRET_PREFIX}}" || true
         fi
       done
     }
@@ -233,7 +230,12 @@ data:
     kind: ExternalSecret
     metadata:
       name: ${SECRET_PREFIX}${gen}
-      namespace: ${ORIGIN_NS}
+      namespace: ${KEYS_NS}
+      labels:
+        nullplatform: "true"
+        egress-interceptor/wristband-key: "true"
+        egress-interceptor/origin-namespace: ${ORIGIN_NS}
+        egress-interceptor/key-generation: "${gen}"
     spec:
       refreshInterval: 1m
       secretStoreRef:
@@ -241,13 +243,20 @@ data:
         kind: SecretStore
       target:
         name: ${SECRET_PREFIX}${gen}
+        template:
+          metadata:
+            labels:
+              nullplatform: "true"
+              egress-interceptor/wristband-key: "true"
+              egress-interceptor/origin-namespace: ${ORIGIN_NS}
+              egress-interceptor/key-generation: "${gen}"
       data:
         - secretKey: key.pem
           remoteRef:
             key: ${VAULT_KV_BASE}/signing-key-gen${gen}
             property: private_key
     EOF
-      kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${ORIGIN_NS}" --timeout=60s
+      kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${KEYS_NS}" --timeout=60s
     }
 
     switch_signing_key_ref() {
@@ -261,8 +270,8 @@ data:
       local old_gen="$1"
       log "retirando clave vieja gen${old_gen}: JWKS, ExternalSecret y Secret"
       vault kv delete "kv/${VAULT_KV_BASE}/signing-key-gen${old_gen}"
-      kubectl delete externalsecret "${SECRET_PREFIX}${old_gen}" -n "${ORIGIN_NS}" --ignore-not-found
-      kubectl delete secret "${SECRET_PREFIX}${old_gen}" -n "${ORIGIN_NS}" --ignore-not-found
+      kubectl delete externalsecret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
+      kubectl delete secret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
     }
 
     main() {

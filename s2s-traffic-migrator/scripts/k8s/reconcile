@@ -287,6 +287,7 @@ jq -n \
   --arg vault_approle_secret "$VAULT_APPROLE_SECRET" \
   --arg vault_secret_store "$VAULT_SECRET_STORE" \
   --arg local_jwks_url "$LOCAL_JWKS_URL" \
+  --arg keys_namespace "$KEYS_NAMESPACE" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
@@ -344,6 +345,20 @@ mapfile -t MANIFESTS < "$MANIFEST_LIST"
 if [ "${#MANIFESTS[@]}" -eq 0 ]; then
   log error "egress-interceptor: el render no produjo ningún manifiesto con contenido."
   exit 1
+fi
+
+keygen_jobs_present() {
+  kubectl -n "$NAMESPACE" get job "wristband-init-$NAMESPACE" >/dev/null 2>&1 \
+    && kubectl -n "$NAMESPACE" get cronjob "wristband-rotate-$NAMESPACE" >/dev/null 2>&1
+}
+
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && keygen_jobs_present; then
+  log info "egress-interceptor: el keygen de $NAMESPACE ya existe, no se reaplica el Job ni el CronJob."
+  KEEP=()
+  for f in "${MANIFESTS[@]}"; do
+    [ "$(basename "$f")" = "16-keygen-jobs.yaml" ] || KEEP+=("$f")
+  done
+  MANIFESTS=("${KEEP[@]}")
 fi
 SERVICES_DIR="$NP_OUTPUT_DIR/services"
 mkdir -p "$SERVICES_DIR"

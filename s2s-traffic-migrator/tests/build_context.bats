@@ -50,6 +50,21 @@ done
 printf %s "$NP_MOCK_SCOPES" | jq -c '{results: .}' | jq -c "$QUERY"
 MOCK
   chmod +x "$BATS_TEST_TMPDIR/bin/np"
+  export FAKE_KEY_SECRETS="$BATS_TEST_TMPDIR/key-secrets.txt"
+  : >"$FAKE_KEY_SECRETS"
+  export FALLA_SECRET_LIST=""
+  export KUBECTL_CALLS="$BATS_TEST_TMPDIR/kubectl-calls.log"
+  : >"$KUBECTL_CALLS"
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+if [ -n "${FALLA_SECRET_LIST:-}" ]; then
+  echo 'Error from server (Forbidden): secrets is forbidden: User "system:serviceaccount:nullplatform-tools:np-agent" cannot list resource "secrets" in API group "" in the namespace "kuadrant-system"' >&2
+  exit 1
+fi
+cat "$FAKE_KEY_SECRETS"
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
@@ -171,11 +186,78 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   # Es el invariante que sostiene la identidad en el ingreso, donde cada clave tiene su propia
   # regla. Un nombre fijo haría que todos los namespaces firmaran con la misma clave.
   run_bc
-  [[ "$output" == *"key=payments-wristband-key"* ]]
+  [[ "$output" == *"key=payments-wristband-key-gen1"* ]]
 
   NS_PROVIDER=other
   run_bc
-  [[ "$output" == *"key=other-wristband-key"* ]]
+  [[ "$output" == *"key=other-wristband-key-gen1"* ]]
+}
+
+@test "sin ninguna clave en el cluster, el nombre es el de la generación 1" {
+  run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-wristband-key-gen1"* ]]
+}
+
+@test "con varias generaciones vivas se elige la MAS ALTA, no la primera que lista" {
+  printf '2\tpayments-wristband-key-gen2\n1\tpayments-wristband-key-gen1\n' >"$FAKE_KEY_SECRETS"
+  run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-wristband-key-gen2"* ]]
+}
+
+@test "la generación se compara como número, no como texto" {
+  printf '9\tpayments-wristband-key-gen9\n10\tpayments-wristband-key-gen10\n' >"$FAKE_KEY_SECRETS"
+  run_bc
+  [[ "$output" == *"key=payments-wristband-key-gen10"* ]]
+}
+
+@test "la búsqueda filtra por el namespace de origen y por el label de clave" {
+  run_bc
+  run grep -c "get secret -l egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=payments" "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "la búsqueda mira el namespace de las claves, no el de la app" {
+  run_bc
+  run grep -c -- "-n kuadrant-system get secret" "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "un Secret sin el label de generación se ignora en vez de romper la comparación" {
+  printf '\tpayments-wristband-key\n3\tpayments-wristband-key-gen3\n' >"$FAKE_KEY_SECRETS"
+  run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-wristband-key-gen3"* ]]
+}
+
+@test "si no se pueden listar las claves, ABORTA en vez de caer a gen1" {
+  # Un Forbidden tratado como 'no hay ninguna' repuntaría la AuthPolicy de un namespace que ya
+  # rotó a una clave que no existe, y el tráfico se cae sin que nadie toque nada.
+  printf '2\tpayments-wristband-key-gen2\n' >"$FAKE_KEY_SECRETS"
+  FALLA_SECRET_LIST=1 run_bc
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"key=payments-wristband-key-gen1"* ]]
+}
+
+@test "el error de RBAC nombra el permiso que falta y dónde" {
+  FALLA_SECRET_LIST=1 run_bc
+  [[ "$output" == *"list"* ]]
+  [[ "$output" == *"kuadrant-system"* ]]
+}
+
+@test "WRISTBAND_SECRET_NAME explícito le gana a lo que haya en el cluster" {
+  printf '7\tpayments-wristband-key-gen7\n' >"$FAKE_KEY_SECRETS"
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" WRISTBAND_SECRET_NAME='{namespace}-fija' run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-fija"* ]]
+}
+
+@test "con spiffe no se consulta el cluster: no hay clave que descubrir" {
+  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe run_bc
+  [ "$status" -eq 0 ]
+  run grep -c "get secret" "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }
 
 @test "WRISTBAND_SECRET_NAME de la configuración del workflow sustituye {namespace}" {
