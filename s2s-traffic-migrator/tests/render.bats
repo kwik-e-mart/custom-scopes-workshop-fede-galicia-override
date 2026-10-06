@@ -34,6 +34,7 @@ render() {
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
+    vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
     local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
@@ -63,6 +64,7 @@ rendered_files() {
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
+    vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
     local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
@@ -519,12 +521,15 @@ rule() {  # <percent> [service]
   [[ "$output" != *"60-httproute-ingress"* ]]
 }
 
-@test "sin ninguna regla sólo quedan el Gateway y su AuthPolicy" {
+@test "sin ninguna regla quedan el Gateway, su AuthPolicy y el keygen de la clave" {
+  # El keygen acompaña a la AuthPolicy y no a las reglas: la clave de firma tiene que existir
+  # desde que hay una AuthPolicy que la referencia, haya o no tráfico declarado todavía.
   run rendered_files openshift '[]'
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep -c .)" -eq 2 ]
+  [ "$(echo "$output" | grep -c .)" -eq 3 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
   [[ "$output" == *"20-authpolicy.yaml"* ]]
+  [[ "$output" == *"51-keygen-init.yaml"* ]]
 }
 
 @test "el orden de aplicación pone al Gateway antes de lo que lo referencia" {

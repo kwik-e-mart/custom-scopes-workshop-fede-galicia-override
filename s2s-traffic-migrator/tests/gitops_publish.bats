@@ -39,6 +39,7 @@ make_render() {  # <site>
     local_ingress_host: "s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service: "s2s-ingress-istio", local_ingress_service_namespace: "gateways",
     local_ingress_tls_mode: "skip-verify",
+    vault_addr: "https://vault.example:8200", vault_namespace: "admin/ocp",
     keygen_image: "alpine/k8s:1.30.3", vault_approle_role_id: "role-id",
     vault_approle_secret: "vault-approle-creds", vault_secret_store: "vault-ocp-plataforma",
     local_jwks_url: "http://jwks.example:8080/payments/jwks.json",
