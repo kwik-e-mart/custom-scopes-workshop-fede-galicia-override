@@ -296,3 +296,49 @@ data:
     }
 
     main "$@"
+  build-jwks.py: |
+    #!/usr/bin/env python3
+    """Arma un JWKS a partir de una o dos claves públicas RSA en PEM."""
+    import argparse
+    import base64
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+
+
+    def jwk_from_pem(path: str, kid: str) -> dict:
+        with open(path, "rb") as f:
+            pub = serialization.load_pem_public_key(f.read())
+        numbers = pub.public_numbers()
+
+        def b64url(n: int) -> str:
+            length = (n.bit_length() + 7) // 8
+            return base64.urlsafe_b64encode(n.to_bytes(length, "big")).rstrip(b"=").decode()
+
+        return {
+            "kty": "RSA",
+            "use": "sig",
+            "alg": "RS256",
+            "kid": kid,
+            "n": b64url(numbers.n),
+            "e": b64url(numbers.e),
+        }
+
+
+    def main() -> None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--old", required=True)
+        parser.add_argument("--old-kid", required=True)
+        parser.add_argument("--new")
+        parser.add_argument("--new-kid")
+        args = parser.parse_args()
+
+        keys = [jwk_from_pem(args.old, args.old_kid)]
+        if args.new:
+            keys.append(jwk_from_pem(args.new, args.new_kid))
+
+        print(json.dumps({"keys": keys}))
+
+
+    if __name__ == "__main__":
+        main()
