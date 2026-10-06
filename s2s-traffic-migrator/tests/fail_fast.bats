@@ -370,3 +370,27 @@ correr_delete() {
   run correr
   [[ "$output" == *"from HTTPRoute/payments, to Service/li"* ]]
 }
+
+@test "con cluster-keys espera al Job de la clave ANTES de exigir Enforced" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  local job pol
+  job=$(grep -n 'wait --for=condition=Complete job/wristband-init-payments' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/s2s-egress' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  [ -n "$job" ]
+  [ -n "$pol" ]
+  [ "$job" -lt "$pol" ]
+}
+
+@test "si el Job de la clave no termina, ABORTA y no toca el selector" {
+  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="job/wristband-init" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wristband-init-payments"* ]]
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "con spiffe no espera ningún Job de clave" {
+  run correr
+  run grep -c 'job/wristband-init' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}

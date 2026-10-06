@@ -32,7 +32,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `cluster-keys`** |
 | `45-authpolicy-validator-spiffe.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `spiffe`**. Mismo nombre de objeto que `40-`: se aplica uno o el otro, nunca los dos |
 | `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system` | por namespace emisor | **sólo `cluster-keys`** |
-| `51-keygen-init.yaml` | SA + Role + `Job` de bootstrap + `CronJob` de rotación semanal + `ConfigMap` con `init.sh` y `rotate.sh`. La clave vive en Vault y llega al cluster por `ExternalSecret`; el `kid` lleva la generación | por namespace emisor | **sólo `cluster-keys`**, y sólo si la clave la administra Vault en vez de crearse a mano con `50-` |
+| `15-keygen-init.yaml` | SA + Role + `Job` de bootstrap + `CronJob` de rotación semanal + `ConfigMap` con `init.sh` y `rotate.sh`. La clave vive en Vault y llega al cluster por `ExternalSecret`; el `kid` lleva la generación | por namespace emisor | **sólo `cluster-keys`**, y sólo si la clave la administra Vault en vez de crearse a mano con `50-` |
 | `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |

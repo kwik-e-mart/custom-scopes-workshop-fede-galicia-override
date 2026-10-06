@@ -529,7 +529,7 @@ rule() {  # <percent> [service]
   [ "$(echo "$output" | grep -c .)" -eq 3 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
   [[ "$output" == *"20-authpolicy.yaml"* ]]
-  [[ "$output" == *"51-keygen-init.yaml"* ]]
+  [[ "$output" == *"15-keygen-init.yaml"* ]]
 }
 
 @test "el orden de aplicación pone al Gateway antes de lo que lo referencia" {

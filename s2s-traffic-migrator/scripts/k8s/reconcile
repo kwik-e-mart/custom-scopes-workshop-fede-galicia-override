@@ -378,6 +378,14 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
   die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
 fi
 
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
+  if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/wristband-init-$NAMESPACE" --timeout=180s; then
+    log error "el Job wristband-init-$NAMESPACE no terminó: sin él no hay clave de firma y la AuthPolicy nunca va a enforcear."
+    log error "$(kubectl -n "$NAMESPACE" logs "job/wristband-init-$NAMESPACE" --tail=20 2>&1)"
+    exit 1
+  fi
+fi
+
 # `Accepted=True` sólo dice que Kuadrant entendió el objeto. Sin esperar `Enforced=True`, el swap
 # manda tráfico por un Gateway que todavía no firma y el destino responde 401.
 if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$GATEWAY_NAME" --timeout=180s; then
