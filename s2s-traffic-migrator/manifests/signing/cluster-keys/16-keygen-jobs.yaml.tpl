@@ -21,7 +21,7 @@ spec:
             - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
             - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
             - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
-          command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl openssl vault > /dev/null && /bin/bash /scripts/init.sh"]
+          command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl openssl > /dev/null && /bin/bash /scripts/init.sh"]
           volumeMounts:
             - { name: scripts, mountPath: /scripts }
             - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
@@ -62,7 +62,7 @@ spec:
                 - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
                 - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
                 - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
-              command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl openssl vault > /dev/null && /bin/bash /scripts/rotate.sh"]
+              command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl openssl > /dev/null && /bin/bash /scripts/rotate.sh"]
               volumeMounts:
                 - { name: scripts, mountPath: /scripts }
                 - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }

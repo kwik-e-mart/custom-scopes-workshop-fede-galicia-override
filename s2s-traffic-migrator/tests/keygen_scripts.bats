@@ -24,11 +24,14 @@ setup() {
     -f "$SVC/manifests/signing/cluster-keys/15-keygen-rbac.yaml.tpl" \
     -o "$BATS_TEST_TMPDIR/keygen.yaml"
   local k
-  for k in init.sh rotate.sh build-jwks.py; do
+  for k in vault-lib.sh init.sh rotate.sh build-jwks.py; do
     yq -N "select(.kind == \"ConfigMap\") | .data.\"$k\"" "$BATS_TEST_TMPDIR/keygen.yaml" >"$SCRIPTS_DIR/$k"
   done
 
   export VAULT_KV="$BATS_TEST_TMPDIR/kv"
+  export VAULT_ADDR="https://vault.example:8200"
+  export KV_VERSION=2
+  export JWKS_URL="http://jwks.example:8080/payments/jwks.json"
   export VAULT_CALLS="$BATS_TEST_TMPDIR/vault-calls.log"
   export VAULT_PUT_HISTORY="$BATS_TEST_TMPDIR/vault-puts.log"
   export KUBECTL_CALLS="$BATS_TEST_TMPDIR/kubectl-calls.log"
@@ -45,43 +48,67 @@ setup() {
   export VAULT_SECRET_ID_FILE="$BATS_TEST_TMPDIR/secret-id"
   printf 'un-secret-id' >"$VAULT_SECRET_ID_FILE"
 
-  cat >"$BATS_TEST_TMPDIR/bin/vault" <<'MOCK'
+  cat >"$BATS_TEST_TMPDIR/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"$VAULT_CALLS"
-if [ "$1" = "write" ]; then echo "s.token-falso"; exit 0; fi
-[ "$1" = "kv" ] || exit 0
-op="$2"; shift 2
-path=""; field=""
-for a in "$@"; do
-  case "$a" in
-    -field=*) field="${a#-field=}" ;;
-    kv/*)     path="${a#kv/}" ;;
+# Modela la HTTP API de Vault sobre un KV en disco. El cuerpo de error se imprime igual que con
+# --fail-with-body, y un 404 sale con 22 como el curl real.
+metodo=GET; cuerpo=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) metodo="$2"; shift 2 ;;
+    --data-binary) cuerpo="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
   esac
 done
-case "$op" in
-  put)
-    mkdir -p "$VAULT_KV/$path"
-    for a in "$@"; do
-      case "$a" in
-        kv/*|-*) continue ;;
-      esac
-      k="${a%%=*}"; v="${a#*=}"
-      if [ "${v:0:1}" = "@" ]; then
-        cp "${v:1}" "$VAULT_KV/$path/$k"
-        printf '%s\t%s\t%s\n' "$path" "$k" "$(tr -d '\n' <"${v:1}")" >>"$VAULT_PUT_HISTORY"
-      else
-        printf '%s' "$v" >"$VAULT_KV/$path/$k"
-        printf '%s\t%s\t%s\n' "$path" "$k" "$v" >>"$VAULT_PUT_HISTORY"
-      fi
-    done ;;
-  get)
-    [ -d "$VAULT_KV/$path" ] || exit 1
-    if [ -n "$field" ]; then
-      [ -f "$VAULT_KV/$path/$field" ] || exit 1
-      cat "$VAULT_KV/$path/$field"
+printf '%s %s\n' "$metodo" "$url" >>"$VAULT_CALLS"
+
+case "$url" in
+  "$JWKS_URL") cat "$FAKE_JWKS_SERVED"; exit 0 ;;
+esac
+
+ruta="${url#*/v1/}"
+case "$ruta" in
+  auth/approle/login)
+    echo '{"auth":{"client_token":"s.token-falso"}}'; exit 0 ;;
+  sys/internal/ui/mounts/kv)
+    printf '{"data":{"options":{"version":"%s"}}}\n' "${KV_VERSION:-2}"; exit 0 ;;
+esac
+
+if [ "${KV_VERSION:-2}" = "2" ]; then
+  interna="${ruta#kv/data/}"
+  meta="${ruta#kv/metadata/}"
+else
+  interna="${ruta#kv/}"
+  meta="$interna"
+fi
+
+case "$metodo" in
+  GET)
+    if [ ! -d "$VAULT_KV/$interna" ]; then
+      echo '{"errors":[]}'; exit 22
+    fi
+    datos=$(for f in "$VAULT_KV/$interna"/*; do
+              [ -f "$f" ] || continue
+              jq -nc --arg k "$(basename "$f")" --rawfile v "$f" '{($k): $v}'
+            done | jq -sc 'add // {}')
+    if [ "${KV_VERSION:-2}" = "2" ]; then
+      jq -nc --argjson d "$datos" '{data:{data:$d}}'
+    else
+      jq -nc --argjson d "$datos" '{data:$d}'
     fi ;;
-  delete)
-    find "$VAULT_KV/$path" -depth -delete 2>/dev/null || true ;;
+  POST)
+    mkdir -p "$VAULT_KV/$interna"
+    if [ "${KV_VERSION:-2}" = "2" ]; then datos=$(printf '%s' "$cuerpo" | jq -c '.data'); else datos="$cuerpo"; fi
+    printf '%s\t%s\n' "$interna" "$(printf '%s' "$datos" | jq -c .)" >>"$VAULT_PUT_HISTORY"
+    for k in $(printf '%s' "$datos" | jq -r 'keys[]'); do
+      printf '%s' "$datos" | jq -r --arg k "$k" '.[$k]' >"$VAULT_KV/$interna/$k"
+    done
+    echo '{}' ;;
+  DELETE)
+    find "$VAULT_KV/$meta" -depth -delete 2>/dev/null || true
+    echo '{}' ;;
 esac
 exit 0
 MOCK
@@ -122,11 +149,6 @@ if [ -n "$new" ]; then printf ',{"kid":"%s","n":"%s"}' "$newkid" "$(mod "$new")"
 printf ']}\n'
 MOCK
 
-  cat >"$BATS_TEST_TMPDIR/bin/curl" <<'MOCK'
-#!/usr/bin/env bash
-cat "$FAKE_JWKS_SERVED"
-MOCK
-
   chmod +x "$BATS_TEST_TMPDIR/bin/"*
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
@@ -158,7 +180,7 @@ jwks_publicado() { cat "$VAULT_KV/ocp/eks-kuadrant/payments/jwks/jwks"; }
 
 # El JWKS de solape es intermedio: al final de la rotación se republica sólo con la clave nueva.
 jwks_de_solape() {
-  grep -F 'ocp/eks-kuadrant/payments/jwks	jwks	' "$VAULT_PUT_HISTORY" | head -1 | cut -f3
+  grep -F 'ocp/eks-kuadrant/payments/jwks	' "$VAULT_PUT_HISTORY" | head -1 | cut -f2 | jq -r '.jwks'
 }
 
 @test "el bootstrap genera la clave en PKCS#1: es lo unico que Authorino parsea" {
@@ -189,7 +211,7 @@ jwks_de_solape() {
   printf 'secret/payments-wristband-key-gen3\n' >"$FAKE_KEY_SECRETS"
   init
   [ "$status" -eq 0 ]
-  run grep -c 'kv put' "$VAULT_CALLS"
+  run grep -c 'POST' "$VAULT_CALLS"
   [ "$output" -eq 0 ]
 }
 
@@ -250,7 +272,7 @@ jwks_de_solape() {
   rotate
   [ "$status" -ne 0 ]
   [[ "$output" == *"no se rota a ciegas"* ]]
-  run grep -c 'kv delete' "$VAULT_CALLS"
+  run grep -c 'DELETE' "$VAULT_CALLS"
   [ "$output" -eq 0 ]
 }
 
@@ -258,7 +280,7 @@ jwks_de_solape() {
   sembrar_gen1
   printf 'externalsecret.external-secrets.io/payments-wristband-key-gen9\n' >"$FAKE_EXTERNALSECRETS"
   rotate
-  run grep -c 'kv delete kv/ocp/eks-kuadrant/payments/signing-key-gen9' "$VAULT_CALLS"
+  run grep -c 'DELETE .*/kv/metadata/ocp/eks-kuadrant/payments/signing-key-gen9' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
 }
 
@@ -267,4 +289,31 @@ jwks_de_solape() {
   run /usr/bin/python3 "$SCRIPTS_DIR/build-jwks.py" --old /dev/null --old-kid k --new /dev/null
   [ "$status" -ne 0 ]
   [[ "$output" == *"--new y --new-kid van juntas"* ]]
+}
+
+@test "con KV v2 las rutas de datos llevan /data" {
+  sembrar_gen1
+  rotate
+  [ "$status" -eq 0 ]
+  run grep -c '/v1/kv/data/ocp/eks-kuadrant/payments/signing-key-gen2' "$VAULT_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "con KV v1 las rutas NO llevan /data y la respuesta se lee de .data" {
+  # Elegir mal la version se manifiesta como un 404 que parece "no existe la clave": si el
+  # recover leyera el campo del lugar equivocado, la rotacion abortaria.
+  KV_VERSION=1 sembrar_gen1
+  KV_VERSION=1 rotate
+  [ "$status" -eq 0 ]
+  run grep -c '/v1/kv/ocp/eks-kuadrant/payments/signing-key-gen2' "$VAULT_CALLS"
+  [ "$output" -ge 1 ]
+  run grep -c '/v1/kv/data/' "$VAULT_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "el login manda role_id y secret_id al endpoint de AppRole" {
+  sembrar_gen1
+  rotate
+  run grep -c 'POST .*/v1/auth/approle/login' "$VAULT_CALLS"
+  [ "$output" -ge 1 ]
 }

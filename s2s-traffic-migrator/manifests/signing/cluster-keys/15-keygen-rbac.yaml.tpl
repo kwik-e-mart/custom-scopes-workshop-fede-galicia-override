@@ -63,6 +63,87 @@ metadata:
   labels:
     nullplatform: "true"
 data:
+  vault-lib.sh: |
+    #!/usr/bin/env bash
+    # Cliente de Vault sobre su HTTP API. No se usa el CLI a propósito: HashiCorp relicenció Vault
+    # bajo BUSL y Alpine lo sacó de sus repos, así que `apk add vault` no existe y nunca va a
+    # existir. curl y jq sí están, y la API es estable.
+
+    : "${VAULT_ADDR:?falta VAULT_ADDR}"
+    VAULT_API="${VAULT_ADDR%/}/v1"
+    VAULT_KV_MOUNT="${VAULT_KV_MOUNT:-kv}"
+
+    vault_curl() {  # <metodo> <ruta sin /v1> [cuerpo json]
+      local metodo="$1" ruta="$2" cuerpo="${3:-}"
+      local -a args=(--silent --show-error --fail-with-body -X "$metodo")
+      if [ -n "${VAULT_TOKEN:-}" ]; then args+=(-H "X-Vault-Token: ${VAULT_TOKEN}"); fi
+      if [ -n "${VAULT_NAMESPACE:-}" ]; then args+=(-H "X-Vault-Namespace: ${VAULT_NAMESPACE}"); fi
+      if [ -n "$cuerpo" ]; then args+=(-H "Content-Type: application/json" --data-binary "$cuerpo"); fi
+      curl "${args[@]}" "${VAULT_API}/${ruta}"
+    }
+
+    vault_login() {
+      local respuesta
+      if ! respuesta=$(vault_curl POST auth/approle/login \
+          "$(jq -nc --arg r "${VAULT_ROLE_ID}" --arg s "$(cat "${SECRET_ID_FILE}")" \
+              '{role_id:$r, secret_id:$s}')"); then
+        echo "login a Vault (${VAULT_API}) fallido: ${respuesta}" >&2
+        return 1
+      fi
+      VAULT_TOKEN=$(printf '%s' "$respuesta" | jq -r '.auth.client_token // empty')
+      export VAULT_TOKEN
+      if [ -z "${VAULT_TOKEN}" ]; then
+        echo "Vault no devolvió client_token en el login de AppRole" >&2
+        return 1
+      fi
+    }
+
+    # KV v1 y v2 no comparten ni la ruta ni la forma de la respuesta, y elegir mal se manifiesta
+    # como un 404 que parece "no existe la clave". Se consulta una vez y se cachea.
+    vault_kv_version() {
+      if [ -z "${VAULT_KV_VERSION:-}" ]; then
+        VAULT_KV_VERSION=$(vault_curl GET "sys/internal/ui/mounts/${VAULT_KV_MOUNT}" \
+          | jq -r '.data.options.version // "1"')
+        export VAULT_KV_VERSION
+      fi
+      printf '%s' "${VAULT_KV_VERSION}"
+    }
+
+    vault_kv_path() {  # <ruta relativa al mount>
+      if [ "$(vault_kv_version)" = "2" ]; then
+        printf '%s/data/%s' "${VAULT_KV_MOUNT}" "$1"
+      else
+        printf '%s/%s' "${VAULT_KV_MOUNT}" "$1"
+      fi
+    }
+
+    vault_kv_get_field() {  # <ruta> <campo>
+      local filtro=".data.data"
+      if [ "$(vault_kv_version)" != "2" ]; then filtro=".data"; fi
+      vault_curl GET "$(vault_kv_path "$1")" \
+        | jq -er --arg campo "$2" "${filtro}[\$campo] // empty"
+    }
+
+    vault_kv_exists() {  # <ruta>
+      vault_curl GET "$(vault_kv_path "$1")" >/dev/null 2>&1
+    }
+
+    vault_kv_put_file() {  # <ruta> <campo> <archivo>
+      local cuerpo
+      cuerpo=$(jq -nc --arg k "$2" --rawfile v "$3" '{($k): $v}')
+      if [ "$(vault_kv_version)" = "2" ]; then
+        cuerpo=$(printf '%s' "$cuerpo" | jq -c '{data: .}')
+      fi
+      vault_curl POST "$(vault_kv_path "$1")" "$cuerpo" >/dev/null
+    }
+
+    vault_kv_delete() {  # <ruta>
+      if [ "$(vault_kv_version)" = "2" ]; then
+        vault_curl DELETE "${VAULT_KV_MOUNT}/metadata/$1" >/dev/null
+      else
+        vault_curl DELETE "${VAULT_KV_MOUNT}/$1" >/dev/null
+      fi
+    }
   init.sh: |
     #!/usr/bin/env bash
     set -euo pipefail
@@ -75,6 +156,7 @@ data:
     mkdir -p "${WORK}"
     SCRIPTS="${SCRIPTS_DIR:-/scripts}"
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
+    source "${SCRIPTS}/vault-lib.sh"
     VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
     KID="${ORIGIN_NS}-wristband-key-gen1"
     SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=${ORIGIN_NS}"
@@ -84,21 +166,17 @@ data:
       exit 0
     fi
 
-    vault write -field=token auth/approle/login \
-      role_id="${VAULT_ROLE_ID}" secret_id="$(cat "${SECRET_ID_FILE}")" \
-      > "${WORK}/vault-token"
-    export VAULT_TOKEN
-    VAULT_TOKEN="$(cat "${WORK}/vault-token")"
+    vault_login
 
-    if vault kv get "kv/${VAULT_KV_BASE}/signing-key-gen1" > /dev/null 2>&1; then
+    if vault_kv_exists "${VAULT_KV_BASE}/signing-key-gen1"; then
       echo "signing-key-gen1 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
     else
       openssl genrsa -traditional -out "${WORK}/gen1.pem" 2048
       head -1 "${WORK}/gen1.pem" | grep -q "BEGIN RSA PRIVATE KEY"
       openssl rsa -in "${WORK}/gen1.pem" -pubout -out "${WORK}/gen1.pub"
-      vault kv put "kv/${VAULT_KV_BASE}/signing-key-gen1" private_key=@"${WORK}/gen1.pem"
+      vault_kv_put_file "${VAULT_KV_BASE}/signing-key-gen1" private_key "${WORK}/gen1.pem"
       python3 "${SCRIPTS}/build-jwks.py" --old "${WORK}/gen1.pub" --old-kid "${KID}" > "${WORK}/jwks.json"
-      vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@"${WORK}/jwks.json"
+      vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks "${WORK}/jwks.json"
     fi
 
     cat <<EOF | kubectl apply -f -
@@ -155,18 +233,11 @@ data:
     mkdir -p "${WORK}"
     SCRIPTS="${SCRIPTS_DIR:-/scripts}"
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
+    source "${SCRIPTS}/vault-lib.sh"
     VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
     SECRET_PREFIX="${ORIGIN_NS}-wristband-key-gen"
 
     log() { echo "[$(date -Iseconds)] $*"; }
-
-    vault_login() {
-      vault write -field=token auth/approle/login \
-        role_id="${VAULT_ROLE_ID}" secret_id="$(cat "${SECRET_ID_FILE}")" \
-        > "${WORK}/vault-token"
-      export VAULT_TOKEN
-      VAULT_TOKEN="$(cat "${WORK}/vault-token")"
-    }
 
     current_signing_key() {
       kubectl get authpolicy "${AUTH_POLICY_NAME}" -n "${ORIGIN_NS}" \
@@ -182,7 +253,7 @@ data:
           log "borrando ExternalSecret huérfano: ${name}"
           kubectl delete externalsecret "${name}" -n "${KEYS_NS}" --ignore-not-found
           kubectl delete secret "${name}" -n "${KEYS_NS}" --ignore-not-found
-          vault kv delete "kv/${VAULT_KV_BASE}/signing-key-gen${name##${SECRET_PREFIX}}" || true
+          vault_kv_delete "${VAULT_KV_BASE}/signing-key-gen${name##${SECRET_PREFIX}}" || true
         fi
       done
     }
@@ -199,7 +270,7 @@ data:
 
     recover_public_key() {
       local gen="$1"
-      if ! vault kv get -field=private_key "kv/${VAULT_KV_BASE}/signing-key-gen${gen}" \
+      if ! vault_kv_get_field "${VAULT_KV_BASE}/signing-key-gen${gen}" private_key \
           > "${WORK}/gen${gen}.pem"; then
         echo "no se pudo recuperar gen${gen} de Vault: sin su pública el JWKS de solape sería falso" >&2
         exit 1
@@ -209,8 +280,7 @@ data:
 
     publish_private_key() {
       local gen="$1"
-      vault kv put "kv/${VAULT_KV_BASE}/signing-key-gen${gen}" \
-        private_key=@"${WORK}/gen${gen}.pem"
+      vault_kv_put_file "${VAULT_KV_BASE}/signing-key-gen${gen}" private_key "${WORK}/gen${gen}.pem"
     }
 
     publish_jwks_with_both_keys() {
@@ -219,7 +289,7 @@ data:
         --old "${WORK}/gen${old_gen}.pub" --old-kid "${SECRET_PREFIX}${old_gen}" \
         --new "${WORK}/gen${new_gen}.pub" --new-kid "${SECRET_PREFIX}${new_gen}" \
         > "${WORK}/jwks-both.json"
-      vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@"${WORK}/jwks-both.json"
+      vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks "${WORK}/jwks-both.json"
     }
 
     publish_jwks_single_key() {
@@ -227,7 +297,7 @@ data:
       python3 "${SCRIPTS}/build-jwks.py" \
         --old "${WORK}/gen${gen}.pub" --old-kid "${SECRET_PREFIX}${gen}" \
         > "${WORK}/jwks-single.json"
-      vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@"${WORK}/jwks-single.json"
+      vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks "${WORK}/jwks-single.json"
     }
 
     wait_for_kid_in_jwks() {
@@ -293,7 +363,7 @@ data:
     retire_old_key() {
       local old_gen="$1"
       log "retirando clave vieja gen${old_gen}: JWKS, ExternalSecret y Secret"
-      vault kv delete "kv/${VAULT_KV_BASE}/signing-key-gen${old_gen}"
+      vault_kv_delete "${VAULT_KV_BASE}/signing-key-gen${old_gen}"
       kubectl delete externalsecret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
       kubectl delete secret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
     }
