@@ -11,7 +11,9 @@ configuration:
   VAULT_APPROLE_ROLE_ID: ""
   VAULT_APPROLE_SECRET: vault-approle-creds
   VAULT_SECRET_STORE: vault-ocp-plataforma
-  LOCAL_JWKS_URL: ""
+  LOCAL_JWKS_URL: "http://s2s-eks-jwks.kuadrant-system.svc.cluster.local:8080/{namespace}/jwks.json"
+  PEER_JWKS_URL: "http://s2s-crc-jwks.kuadrant-system.svc.cluster.local:8080/{namespace}/jwks.json"
+  INGRESS_GATEWAY_NAME: s2s-ingress
   KEYS_NAMESPACE: kuadrant-system
   WRISTBAND_SECRET_NAME: ""
   EGRESS_ISSUER_URL: "https://egress.{namespace}.s2s.local"
@@ -52,6 +54,8 @@ steps:
       - { name: VAULT_APPROLE_SECRET, type: environment }
       - { name: VAULT_SECRET_STORE, type: environment }
       - { name: LOCAL_JWKS_URL, type: environment }
+      - { name: PEER_JWKS_URL, type: environment }
+      - { name: INGRESS_GATEWAY_NAME, type: environment }
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: NETWORKING_VAULT_ADDR, type: environment }
       - { name: NETWORKING_VAULT_NAMESPACE, type: environment }

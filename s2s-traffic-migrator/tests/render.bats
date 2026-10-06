@@ -31,7 +31,7 @@ render() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -61,7 +61,7 @@ rendered_files() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -79,7 +79,13 @@ rendered_files() {
 # doc <render> <kind>: el documento de ese kind, sin comentarios. Se borran a propósito: varios
 # explican qué pasaría con la config equivocada (`LoadBalancer`, `insecureSkipVerify`) y una
 # aserción por substring los leería como si estuvieran configurados.
-doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
+doc() {  # <render> <kind> [nombre]
+  if [ -n "${3:-}" ]; then
+    echo "$1" | yq "select(.kind == \"$2\" and .metadata.name == \"$3\") | ... comments=\"\""
+  else
+    echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""
+  fi
+}
 # Con origen EKS hay DOS DestinationRule: el del peer y el del FQDN del scope.
 named() { echo "$1" | yq "select(.kind == \"$2\" and .metadata.name == \"$3\") | ... comments=\"\""; }
 
@@ -116,7 +122,7 @@ rule() {  # <percent> [service]
 
 @test "la AuthPolicy firma con la clave de SU namespace, en RS256" {
   run render openshift "$(rule 100)"
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" = "payments-wristband-key" ]
   [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].algorithm')" = "RS256" ]
   [[ "$ap" != *"ES256"* ]]
@@ -124,14 +130,14 @@ rule() {  # <percent> [service]
 
 @test "la AuthPolicy cuelga del Gateway, no de cada HTTPRoute" {
   run render openshift "$(rule 100)"
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.targetRef.kind')" = "Gateway" ]
   [ "$(echo "$ap" | yq '.spec.targetRef.name')" = "s2s-egress" ]
 }
 
 @test "el claim de identidad es el namespace, y el token va sin prefijo Bearer" {
   run render openshift "$(rule 100)"
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.customClaims.src_namespace.value')" = "payments" ]
   [[ "$ap" != *"Bearer"* ]]
 }
@@ -372,7 +378,7 @@ rule() {  # <percent> [service]
   echo "$output" | yq 'true' >/dev/null
   # Un solo Gateway y una sola AuthPolicy para los dos.
   [ "$(echo "$output" | yq -N '.kind' | grep -cx Gateway)" -eq 1 ]
-  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 1 ]
+  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 2 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .metadata.name' | grep -c '^s2s-egress-')" -eq 2 ]
 }
 
@@ -526,11 +532,12 @@ rule() {  # <percent> [service]
   # desde que hay una AuthPolicy que la referencia, haya o no tráfico declarado todavía.
   run rendered_files openshift '[]'
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep -c .)" -eq 4 ]
+  [ "$(echo "$output" | grep -c .)" -eq 5 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
   [[ "$output" == *"20-authpolicy.yaml"* ]]
   [[ "$output" == *"15-keygen-rbac.yaml"* ]]
   [[ "$output" == *"16-keygen-jobs.yaml"* ]]
+  [[ "$output" == *"25-authpolicy-validator.yaml"* ]]
 }
 
 @test "el orden de aplicación pone al Gateway antes de lo que lo referencia" {
@@ -539,7 +546,7 @@ rule() {  # <percent> [service]
   # Lo que este test cuida es que alguien saque los prefijos y el orden cambie sin que se note.
   run rendered_files eks "$(rule 50)"
   [ "$(echo "$output" | head -1)" = "10-gateway.yaml" ]
-  [ "$(echo "$output" | grep -n 'authpolicy' | cut -d: -f1)" -lt "$(echo "$output" | grep -n 'httproute' | head -1 | cut -d: -f1)" ]
+  [ "$(echo "$output" | grep -n 'authpolicy' | head -1 | cut -d: -f1)" -lt "$(echo "$output" | grep -n 'httproute' | head -1 | cut -d: -f1)" ]
   [ "$(echo "$output" | grep -n 'destinationrule' | head -1 | cut -d: -f1)" -lt "$(echo "$output" | grep -n 'httproute' | head -1 | cut -d: -f1)" ]
 }
 

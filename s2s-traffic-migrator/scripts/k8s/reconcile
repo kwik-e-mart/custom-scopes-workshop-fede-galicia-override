@@ -161,6 +161,35 @@ delete_own_services() {  # <rol>
     --ignore-not-found
 }
 
+reconcile_ingress_validator() {  # <archivo rendeado>
+  local archivo="$1" parche
+  if ! kubectl -n "$GATEWAY_NAMESPACE" get "authpolicy/$INGRESS_AUTHPOLICY" >/dev/null 2>&1; then
+    log info "egress-interceptor: $INGRESS_AUTHPOLICY no existe en $GATEWAY_NAMESPACE, se crea con las reglas de $NAMESPACE."
+    kubectl apply -f "$archivo"
+    return
+  fi
+  parche=$(kubectl create -f "$archivo" --dry-run=client -o json \
+    | jq -c '{spec:{rules:{authentication:.spec.rules.authentication, authorization:.spec.rules.authorization}}}') \
+    || return 1
+  log info "egress-interceptor: $INGRESS_AUTHPOLICY ya existe, se mergean sólo las reglas de $NAMESPACE."
+  kubectl -n "$GATEWAY_NAMESPACE" patch "authpolicy/$INGRESS_AUTHPOLICY" --type=merge -p "$parche"
+}
+
+delete_ingress_validator_rules() {
+  local actual restante
+  actual=$(kubectl -n "$GATEWAY_NAMESPACE" get "authpolicy/$INGRESS_AUTHPOLICY" -o json 2>/dev/null) || return 0
+  restante=$(printf %s "$actual" | jq -c --arg ns "$NAMESPACE" '
+      .spec.rules.authentication |= with_entries(select(.key != ("local-" + $ns) and .key != ("peer-" + $ns)))
+    | .spec.rules.authorization  |= ((. // {}) | with_entries(select(.key != ("claims-" + $ns))))') || return 1
+  if [ "$(printf %s "$restante" | jq '.spec.rules.authentication | length')" -eq 0 ]; then
+    log info "egress-interceptor: $NAMESPACE era el último emisor, se borra $INGRESS_AUTHPOLICY."
+    kubectl -n "$GATEWAY_NAMESPACE" delete "authpolicy/$INGRESS_AUTHPOLICY" --ignore-not-found
+    return
+  fi
+  log info "egress-interceptor: se sacan de $INGRESS_AUTHPOLICY sólo las reglas de $NAMESPACE."
+  printf %s "$restante" | kubectl apply -f -
+}
+
 if [ "$ACTION" = "delete" ]; then
   gitops_publish_removal \
     || die "falló la publicación del borrado al repo gitops. No se borró nada del cluster."
@@ -207,6 +236,10 @@ if [ "$ACTION" = "delete" ]; then
   kubectl -n "$GATEWAY_NAMESPACE" delete httproute.gateway.networking.k8s.io \
     -l "${MANAGED_LABEL}=true" --ignore-not-found \
     || die "falló el borrado de la route de ingreso en $GATEWAY_NAMESPACE."
+  if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
+    delete_ingress_validator_rules \
+      || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
+  fi
   log info "reconcile delete OK en ns $NAMESPACE"
   # `return` y no `exit`: el workflow sourcea los steps, así que un exit mata la corrida entera y
   # se saltea los steps siguientes. exit queda sólo para los errores.
@@ -288,6 +321,9 @@ jq -n \
   --arg vault_secret_store "$VAULT_SECRET_STORE" \
   --arg local_jwks_url "$LOCAL_JWKS_URL" \
   --arg keys_namespace "$KEYS_NAMESPACE" \
+  --arg peer_jwks_url "$PEER_JWKS_URL" \
+  --arg ingress_authpolicy "$INGRESS_AUTHPOLICY" \
+  --arg ingress_gateway_name "$INGRESS_GATEWAY_NAME" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
@@ -352,6 +388,19 @@ keygen_jobs_present() {
     && kubectl -n "$NAMESPACE" get cronjob "wristband-rotate-$NAMESPACE" >/dev/null 2>&1
 }
 
+VALIDATOR_FILE=""
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
+  KEEP=()
+  for f in "${MANIFESTS[@]}"; do
+    if [ "$(basename "$f")" = "25-authpolicy-validator.yaml" ]; then
+      VALIDATOR_FILE="$f"
+    else
+      KEEP+=("$f")
+    fi
+  done
+  MANIFESTS=("${KEEP[@]}")
+fi
+
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && keygen_jobs_present; then
   log info "egress-interceptor: el keygen de $NAMESPACE ya existe, no se reaplica el Job ni el CronJob."
   KEEP=()
@@ -373,6 +422,10 @@ if [ -f "$SERVICES_DIR/70-service-local.yaml" ]; then
 fi
 apply_manifests "${MANIFESTS[@]}" \
   || die "falló el apply de los manifiestos. El tráfico NO se desvió."
+if [ -n "$VALIDATOR_FILE" ]; then
+  reconcile_ingress_validator "$VALIDATOR_FILE" \
+    || die "falló el alta de las reglas de $NAMESPACE en el validador de ingreso $INGRESS_AUTHPOLICY."
+fi
 
 # El data plane tiene que estar arriba ANTES de desviarle el tráfico, o el Service queda
 # apuntando a un selector sin pods. Estos dos waits son los que fallaron en silencio el

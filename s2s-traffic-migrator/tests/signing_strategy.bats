@@ -64,7 +64,7 @@ render_ctx() {
     local_ingress_host:"s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service:"s2s-ingress-istio", local_ingress_service_namespace:"gateways",
     local_ingress_tls_mode:"skip-verify",
-    gateway_namespace:"gateways", cluster_label:"crc-openshift", keys_namespace:"kuadrant-system",
+    gateway_namespace:"gateways", cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
@@ -99,7 +99,13 @@ rendered_files() {
   render_all_manifests "$BATS_TEST_TMPDIR/render-ctx.json" "$out" "$1" | xargs -n1 basename
 }
 
-doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
+doc() {  # <render> <kind> [nombre]
+  if [ -n "${3:-}" ]; then
+    echo "$1" | yq "select(.kind == \"$2\" and .metadata.name == \"$3\") | ... comments=\"\""
+  else
+    echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""
+  fi
+}
 
 @test "sin declarar la variable, la estrategia es cluster-keys" {
   run_bc
@@ -191,7 +197,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "spiffe rinde una AuthPolicy que mintea contra el role configurado" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.url')" = \
     "https://vault.example.io:8200/v1/spiffe/role/s2s-egress/mintjwt" ]
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.method')" = "POST" ]
@@ -200,7 +206,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "el cache del mint se llavea por el role, que es el que define la identidad" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.cache.key.expression')" = \
     '"s2s-egress"' ]
 }
@@ -224,7 +230,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "el role NO lleva el namespace ni el cluster: es uno solo para toda la plataforma" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [[ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.url')" != *"payments"* ]]
   [[ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.url')" != *"crc-openshift"* ]]
 }
@@ -247,7 +253,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "el TTL del cache queda por debajo del TTL del JWT-SVID" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap ttl; ap=$(doc "$output" AuthPolicy)
+  local ap ttl; ap=$(doc "$output" AuthPolicy s2s-egress)
   ttl=$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.cache.ttl')
   [ "$ttl" -lt 300 ]
 }
@@ -255,7 +261,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "spiffe manda el token en x-egress-token, SIN prefijo Bearer" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.plain.expression')" = \
     "auth.metadata.vault_mint.data.token" ]
   [[ "$ap" != *"Bearer"* ]]
@@ -264,7 +270,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "spiffe no deja pasar el request si Vault no devolvió token" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   local pred; pred=$(echo "$ap" | yq '.spec.rules.authorization.vault_mint_check.patternMatching.patterns[0].predicate')
   [[ "$pred" == *"has(auth.metadata.vault_mint.data.token)"* ]]
   [ -n "$(echo "$ap" | yq '.spec.rules.response.unauthorized.message.value // ""')" ]
@@ -273,7 +279,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "el guard del mint chequea cada nivel: has(a.b.c) solo no absorbe la falta de data" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap pred; ap=$(doc "$output" AuthPolicy)
+  local ap pred; ap=$(doc "$output" AuthPolicy s2s-egress)
   pred=$(echo "$ap" | yq '.spec.rules.authorization.vault_mint_check.patternMatching.patterns[0].predicate')
   [[ "$pred" == *"has(auth.metadata.vault_mint) &&"* ]]
   [[ "$pred" == *"has(auth.metadata.vault_mint.data) &&"* ]]
@@ -282,14 +288,14 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "spiffe manda el body del mint como JSON, que es lo único que acepta Vault" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.contentType')" = "application/json" ]
 }
 
 @test "spiffe lee el token de Vault de un Secret, no de un literal" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.sharedSecretRef.name')" = "s2s-vault-token" ]
   [ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.credentials.customHeader.name')" = "X-Vault-Token" ]
 }
@@ -297,7 +303,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "spiffe pide como audiencia el ingreso del peer" {
   run render spiffe
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [[ "$(echo "$ap" | yq '.spec.rules.metadata.vault_mint.http.body.expression')" \
      == *"kuadrant.peer.example.io"* ]]
 }
@@ -305,7 +311,7 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 @test "cluster-keys sigue rindiendo el wristband firmado con la clave del namespace" {
   run render cluster-keys
   [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy)
+  local ap; ap=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" = \
     "payments-wristband-key" ]
   [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.customClaims.src_namespace.value')" = \
@@ -326,9 +332,9 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 
 @test "las dos estrategias cuelgan la AuthPolicy del mismo Gateway" {
   run render spiffe
-  local ap_spiffe; ap_spiffe=$(doc "$output" AuthPolicy)
+  local ap_spiffe; ap_spiffe=$(doc "$output" AuthPolicy s2s-egress)
   run render cluster-keys
-  local ap_keys; ap_keys=$(doc "$output" AuthPolicy)
+  local ap_keys; ap_keys=$(doc "$output" AuthPolicy s2s-egress)
   [ "$(echo "$ap_spiffe" | yq '.spec.targetRef.kind')" = "Gateway" ]
   [ "$(echo "$ap_spiffe" | yq '.spec.targetRef.name')" = \
     "$(echo "$ap_keys" | yq '.spec.targetRef.name')" ]
@@ -336,15 +342,15 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
 
 @test "las dos estrategias emiten el mismo nombre de header" {
   run render spiffe
-  [[ "$(doc "$output" AuthPolicy)" == *"x-egress-token"* ]]
+  [[ "$(doc "$output" AuthPolicy s2s-egress)" == *"x-egress-token"* ]]
   run render cluster-keys
-  [[ "$(doc "$output" AuthPolicy)" == *"x-egress-token"* ]]
+  [[ "$(doc "$output" AuthPolicy s2s-egress)" == *"x-egress-token"* ]]
 }
 
 @test "las dos estrategias llevan la label de managed" {
   run render spiffe
   [ "$status" -eq 0 ]
-  [ "$(doc "$output" AuthPolicy | yq '.metadata.labels."egress-interceptor/managed"')" = "true" ]
+  [ "$(doc "$output" AuthPolicy s2s-egress | yq '.metadata.labels."egress-interceptor/managed"')" = "true" ]
 }
 
 @test "la AuthPolicy de la estrategia se aplica en su orden numérico, no al final" {
@@ -356,11 +362,14 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
     "$(echo "$output" | grep -n '20-authpolicy.yaml' | cut -d: -f1)" ]
 }
 
-@test "cada estrategia rinde UNA sola AuthPolicy" {
+@test "con cluster-keys el service emite TAMBIEN el validador de ingreso; con spiffe no" {
+  run render cluster-keys
+  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 2 ]
+  [ -n "$(doc "$output" AuthPolicy s2s-validator)" ]
+
   run render spiffe
   [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 1 ]
-  run render cluster-keys
-  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 1 ]
+  [ -z "$(doc "$output" AuthPolicy s2s-validator)" ]
 }
 
 @test "una estrategia sin directorio de manifiestos ABORTA en vez de aplicar el resto" {
