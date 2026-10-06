@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s2s-keygen
+  namespace: kuadrant-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: s2s-keygen
+  namespace: kuadrant-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["__LOCAL_JWKS_NAME__"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: s2s-keygen
+  namespace: kuadrant-system
+subjects:
+  - kind: ServiceAccount
+    name: s2s-keygen
+    namespace: kuadrant-system
+roleRef:
+  kind: Role
+  name: s2s-keygen
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s2s-keygen-__APP_NAMESPACE__
+  namespace: kuadrant-system
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          serviceAccountName: s2s-keygen
+          restartPolicy: OnFailure
+          containers:
+            - name: keygen
+              image: __KEYGEN_IMAGE__
+              env:
+                - name: SECRET_NAME
+                  value: __APP_NAMESPACE__-wristband-key
+                - name: JWKS_CONFIGMAP
+                  value: __LOCAL_JWKS_NAME__
+                - name: JWKS_KEY
+                  value: __APP_NAMESPACE__.json
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  if kubectl -n kuadrant-system get secret "$SECRET_NAME" >/dev/null 2>&1; then
+                    echo "$SECRET_NAME ya existe, no se toca"
+                    exit 0
+                  fi
+                  WORK=$(mktemp -d)
+                  trap 'rm -rf "$WORK"' EXIT
+                  openssl genrsa -traditional -out "$WORK/key.pem" 2048
+                  head -1 "$WORK/key.pem" | grep -q "BEGIN RSA PRIVATE KEY" || {
+                    echo "la clave no salio en PKCS#1: el firmador de Authorino no la parsea" >&2
+                    exit 1
+                  }
+                  openssl rsa -in "$WORK/key.pem" -pubout -out "$WORK/pub.pem"
+                  N=$(openssl rsa -pubin -in "$WORK/pub.pem" -noout -modulus \
+                      | sed 's/^Modulus=//' | xxd -r -p | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+                  JWKS=$(jq -nc --arg n "$N" --arg kid "$SECRET_NAME" \
+                      '{keys:[{kty:"RSA",use:"sig",alg:"RS256",kid:$kid,n:$n,e:"AQAB"}]}')
+                  kubectl -n kuadrant-system create secret generic "$SECRET_NAME" \
+                    --from-file=key.pem="$WORK/key.pem"
+                  kubectl -n kuadrant-system patch configmap "$JWKS_CONFIGMAP" --type merge \
+                    -p "$(jq -nc --arg k "$JWKS_KEY" --arg v "$JWKS" '{data:{($k):$v}}')"

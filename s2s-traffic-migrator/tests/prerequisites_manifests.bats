@@ -131,3 +131,34 @@ aud_predicate() {
   [[ "$preds" == *'auth.identity.src_namespace == \"payments\"'* ]]
   [ "$(yq '.spec.rules.authentication.local-payments.overrides' "$out")" = "null" ]
 }
+
+@test "el keygen rinde YAML válido y sin placeholders sueltos" {
+  local out; out=$(sustituir_keys "$MANIFESTS/51-keygen-cronjob.yaml" | sed -e 's|__KEYGEN_IMAGE__|registry.interna/keygen@sha256:abc|g')
+  [[ "$out" != *"__"* ]]
+  local kinds; kinds=$(echo "$out" | yq -N '.kind' | tr '\n' ' ')
+  [ "$kinds" = "ServiceAccount Role RoleBinding CronJob " ]
+}
+
+@test "el keygen no puede pisar una clave existente: el Role no tiene update ni delete" {
+  local verbos; verbos=$(sustituir_keys "$MANIFESTS/51-keygen-cronjob.yaml" |
+    yq -N 'select(.kind == "Role") | .rules[] | select(.resources[] == "secrets") | .verbs[]' | tr '\n' ' ')
+  [[ "$verbos" == *"get"* ]]
+  [[ "$verbos" == *"create"* ]]
+  [[ "$verbos" != *"update"* ]]
+  [[ "$verbos" != *"delete"* ]]
+  [[ "$verbos" != *"patch"* ]]
+}
+
+@test "el keygen crea el MISMO Secret que espera el service, o la firma no arranca" {
+  local secreto; secreto=$(sustituir_keys "$MANIFESTS/51-keygen-cronjob.yaml" |
+    yq -N 'select(.kind == "CronJob") | .spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name == "SECRET_NAME") | .value')
+  # El default de WRISTBAND_SECRET_NAME en build_context es {namespace}-wristband-key.
+  [ "$secreto" = "payments-wristband-key" ]
+}
+
+@test "el keygen publica el JWKS bajo la clave que sirve el endpoint" {
+  local clave; clave=$(sustituir_keys "$MANIFESTS/51-keygen-cronjob.yaml" |
+    yq -N 'select(.kind == "CronJob") | .spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name == "JWKS_KEY") | .value')
+  # 30-jwks-endpoint.yaml sirve /<namespace>/jwks.json desde la entrada <namespace>.json.
+  [ "$clave" = "payments.json" ]
+}

@@ -32,6 +32,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `cluster-keys`** |
 | `45-authpolicy-validator-spiffe.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `spiffe`**. Mismo nombre de objeto que `40-`: se aplica uno o el otro, nunca los dos |
 | `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system` | por namespace emisor | **sólo `cluster-keys`** |
+| `51-keygen-cronjob.yaml` | `ServiceAccount` + `Role` + `RoleBinding` + `CronJob` que genera la clave de firma del namespace y publica su JWKS | por namespace emisor | **sólo `cluster-keys`**, y sólo si no se quiere crear la clave a mano con `50-` |
 | `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |
@@ -60,6 +61,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__NETWORKING_VAULT_AUTH_ROLE__` | role de ese mount, bindeado a la SA de Authorino | `s2s-authorino-egress` |
 | `__NETWORKING_VAULT_TOKEN_SECRET__` | Secret de `kuadrant-system` donde el CronJob deja el `client_token` | `s2s-vault-token` |
 | `__VAULT_LOGIN_IMAGE__` | imagen del CronJob de login. Necesita `curl`, `jq` y `kubectl` | una imagen interna pineada por digest |
+| `__KEYGEN_IMAGE__` | imagen del CronJob que genera la clave. Necesita `openssl`, `jq` y `kubectl`: `openssl` para emitir la RSA en PKCS#1 y para sacar el módulo con el que se arma el JWKS | una imagen interna pineada por digest |
 
 `__LOCAL_JWKS_NAME__` y `__PEER_JWKS_NAME__` **tienen que ser distintos**: cada cluster resuelve el
 endpoint del peer en su propio `kuadrant-system`, así que un nombre compartido colisiona con el
