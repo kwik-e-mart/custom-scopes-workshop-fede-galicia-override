@@ -1,0 +1,186 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s2s-keygen
+  namespace: kuadrant-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: s2s-keygen
+  namespace: kuadrant-system
+rules:
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: s2s-keygen
+  namespace: kuadrant-system
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: s2s-keygen }
+subjects:
+  - { kind: ServiceAccount, name: s2s-keygen, namespace: kuadrant-system }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: s2s-keygen
+  namespace: __APP_NAMESPACE__
+rules:
+  - apiGroups: ["kuadrant.io"]
+    resources: ["authpolicies"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: s2s-keygen
+  namespace: __APP_NAMESPACE__
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: s2s-keygen }
+subjects:
+  - { kind: ServiceAccount, name: s2s-keygen, namespace: kuadrant-system }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: s2s-keygen-script
+  namespace: kuadrant-system
+data:
+  keygen.sh: |
+    #!/bin/bash
+    # MODE=init    crea la generación g0 (clave en Vault, JWKS, ExternalSecret). La AuthPolicy se aplica después.
+    # MODE=rotate  clave nueva -> Vault -> JWKS con vieja+nueva -> ExternalSecret -> espera a que el
+    #              validador la conozca -> cambia signingKeyRefs -> espera -> JWKS solo con la nueva.
+    # El orden es lo que evita cortes: un token ya emitido tiene que poder validarse hasta que expire.
+    set -euo pipefail
+    apk add --no-cache openssl >/dev/null
+
+    : "${NS:?}" "${CLUSTER:?}" "${VAULT_ADDR:?}" "${VAULT_NAMESPACE:?}" "${ROLE_ID:?}" "${SECRET_ID:?}"
+    MODE="${MODE:-init}"; MOUNT="${VAULT_KV_MOUNT:?}"; STORE="${VAULT_SECRET_STORE:?}"
+    AUTHPOLICY="${EGRESS_AUTHPOLICY:?}"; JWKS_URL="${LOCAL_JWKS_URL:?}"
+    JWKS_TTL="${JWKS_TTL:-15}"; TOKEN_TTL="${TOKEN_TTL:-60}"
+    log() { echo "[$(date +%H:%M:%S)] $*"; }
+
+    T=$(curl -sf -H "X-Vault-Namespace: $VAULT_NAMESPACE" \
+      -d "{\"role_id\":\"$ROLE_ID\",\"secret_id\":\"$SECRET_ID\"}" "$VAULT_ADDR/v1/auth/approle/login" | jq -r .auth.client_token)
+    vault() { curl -sf -H "X-Vault-Token: $T" -H "X-Vault-Namespace: $VAULT_NAMESPACE" "$@"; }
+    kv_put() { vault -X POST -d "$2" "$VAULT_ADDR/v1/$MOUNT/data/$1" >/dev/null; }
+    kv_get() { vault "$VAULT_ADDR/v1/$MOUNT/data/$1" | jq -r ".data.data"; }
+    kv_del() { vault -X DELETE "$VAULT_ADDR/v1/$MOUNT/metadata/$1" >/dev/null || true; }
+    kv_list() { vault -X LIST "$VAULT_ADDR/v1/$MOUNT/metadata/$1" 2>/dev/null | jq -r '.data.keys[]?' || true; }
+    b64u() { xxd -r -p | base64 -w0 | tr '+/' '-_' | tr -d '='; }
+
+    publicar_jwks() {  # $1 = array JSON de claves
+      kv_put "$CLUSTER/$NS/jwks" "$(jq -n --arg j "$(jq -cn --argjson k "$1" '{keys:$k}')" '{data:{jwks:$j}}')"
+    }
+
+    if [ "$MODE" = init ]; then GEN=g0; else GEN=$(date +%Y%m%d%H%M%S); fi
+    KID="wristband-key-$NS-$GEN"
+    log "namespace=$NS modo=$MODE generacion=$GEN kid=$KID"
+
+    openssl genrsa -traditional -out /tmp/key.pem 2048 2>/dev/null
+    head -1 /tmp/key.pem | grep -q 'BEGIN RSA PRIVATE KEY' || { log "ERROR: la clave no quedó en PKCS#1"; exit 1; }
+    N=$(openssl rsa -in /tmp/key.pem -noout -modulus | cut -d= -f2 | b64u)
+    NEWJWK=$(jq -cn --arg kid "$KID" --arg n "$N" '{kty:"RSA",alg:"RS256",use:"sig",kid:$kid,n:$n,e:"AQAB"}')
+
+    if [ "$MODE" = rotate ]; then
+      CUR=$(kubectl -n "$NS" get authpolicy "$AUTHPOLICY" -o jsonpath='{.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name}')
+      CURGEN="${CUR##*-}"
+      for es in $(kubectl -n kuadrant-system get externalsecret -o name | sed 's|.*/||' | grep "^wristband-key-$NS-" || true); do
+        [ "$es" = "$CUR" ] || { log "limpieza: ExternalSecret huérfano $es"; kubectl -n kuadrant-system delete externalsecret "$es" >/dev/null; }
+      done
+      for k in $(kv_list "$CLUSTER/$NS/" | grep '^key-' || true); do
+        [ "$k" = "key-$CURGEN" ] || { log "limpieza: clave huérfana en Vault $k"; kv_del "$CLUSTER/$NS/$k"; }
+      done
+    fi
+
+    log "1/6 clave nueva a Vault ($CLUSTER/$NS/key-$GEN)"
+    kv_put "$CLUSTER/$NS/key-$GEN" "$(jq -n --rawfile k /tmp/key.pem '{data:{"key.pem":$k}}')"
+    shred -u /tmp/key.pem 2>/dev/null || rm -f /tmp/key.pem
+
+    if [ "$MODE" = init ]; then OLDKEYS='[]'; OLD=""; else
+      OLD=$(kubectl -n "$NS" get authpolicy "$AUTHPOLICY" -o jsonpath='{.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name}')
+      OLDKEYS=$(kv_get "$CLUSTER/$NS/jwks" | jq -r .jwks | jq -c --arg o "$OLD" '[.keys[] | select(.kid==$o)]')
+    fi
+
+    log "2/6 JWKS fase 1 (vieja + nueva)"
+    publicar_jwks "$(jq -cn --argjson o "$OLDKEYS" --argjson n "$NEWJWK" '$o + [$n]')"
+
+    log "3/6 ExternalSecret $KID en kuadrant-system"
+    kubectl apply -f - >/dev/null <<YAML
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata: {name: $KID, namespace: kuadrant-system}
+    spec:
+      refreshInterval: 1h
+      secretStoreRef: {name: $STORE, kind: SecretStore}
+      target: {name: $KID, creationPolicy: Owner}
+      data:
+      - secretKey: key.pem
+        remoteRef: {key: $CLUSTER/$NS/key-$GEN, property: key.pem}
+    YAML
+    kubectl -n kuadrant-system wait --for=condition=Ready externalsecret/"$KID" --timeout=120s >/dev/null
+
+    if [ "$MODE" = init ]; then log "listo: aplicar ahora la AuthPolicy de $NS con signingKeyRefs=$KID"; exit 0; fi
+
+    log "4/6 esperando a que el validador sirva el kid nuevo ($JWKS_URL)"
+    for i in $(seq 1 120); do
+      curl -sf "$JWKS_URL" | jq -e --arg k "$KID" 'any(.keys[]; .kid==$k)' >/dev/null 2>&1 && break
+      [ "$i" = 120 ] && { log "ERROR: el JWKS no se propagó en 10 min; NO se cambia la firma"; exit 1; }
+      sleep 5
+    done
+    log "    propagado en el validador local"
+    if [ "${EXTRA_WAIT:-0}" -gt 0 ]; then log "    espera extra para validadores remotos: ${EXTRA_WAIT}s"; sleep "$EXTRA_WAIT"; fi
+    log "    espero el ttl del cache de Authorino (${JWKS_TTL}s + margen)"; sleep $((JWKS_TTL + 5))
+
+    log "5/6 cambio de signingKeyRefs: $OLD -> $KID"
+    kubectl -n "$NS" patch authpolicy "$AUTHPOLICY" --type json \
+      -p "[{\"op\":\"replace\",\"path\":\"/spec/rules/response/success/headers/x-egress-token/wristband/signingKeyRefs/0/name\",\"value\":\"$KID\"}]" >/dev/null
+
+    WAIT=$((TOKEN_TTL + JWKS_TTL + 10))
+    log "6/6 espero ${WAIT}s (duración del token + ttl) antes de retirar la clave vieja"; sleep "$WAIT"
+    publicar_jwks "$(jq -cn --argjson n "$NEWJWK" '[$n]')"
+    kubectl -n kuadrant-system delete externalsecret "$OLD" --ignore-not-found >/dev/null
+    kv_del "$CLUSTER/$NS/key-${OLD##*-}"
+    log "rotación completa: firma con $KID; clave vieja $OLD retirada"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s2s-keygen-init-__APP_NAMESPACE__
+  namespace: kuadrant-system
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: s2s-keygen
+      restartPolicy: Never
+      containers:
+        - name: keygen
+          image: __KEYGEN_IMAGE__
+          command: ["bash", "/scripts/keygen.sh"]
+          env:
+            - { name: NS, value: "__APP_NAMESPACE__" }
+            - { name: MODE, value: "init" }
+            - { name: CLUSTER, value: "__CLUSTER_LABEL__" }
+            - { name: VAULT_ADDR, value: "__NETWORKING_VAULT_ADDR__" }
+            - { name: VAULT_NAMESPACE, value: "__NETWORKING_VAULT_NAMESPACE__" }
+            - { name: VAULT_KV_MOUNT, value: "__VAULT_KV_MOUNT__" }
+            - { name: VAULT_SECRET_STORE, value: "__VAULT_SECRET_STORE__" }
+            - { name: EGRESS_AUTHPOLICY, value: "__EGRESS_AUTHPOLICY__" }
+            - { name: LOCAL_JWKS_URL, value: "__LOCAL_JWKS_URL__" }
+            - { name: ROLE_ID, value: "__VAULT_APPROLE_ROLE_ID__" }
+            - name: SECRET_ID
+              valueFrom:
+                secretKeyRef: { name: __VAULT_APPROLE_SECRET__, key: secret-id }
+          volumeMounts:
+            - { name: scripts, mountPath: /scripts }
+      volumes:
+        - name: scripts
+          configMap: { name: s2s-keygen-script }
