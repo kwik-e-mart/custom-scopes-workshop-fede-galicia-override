@@ -317,3 +317,18 @@ jwks_de_solape() {
   run grep -c 'POST .*/v1/auth/approle/login' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
 }
+
+@test "con la clave ya presente el bootstrap termina bien SIN VAULT_ADDR" {
+  # La lib se sourcea despues del early exit: si valida al sourcearse, el Job explota en un
+  # cluster sin Vault aunque no tenga nada que pedirle.
+  printf 'secret/payments-wristband-key-gen1\n' >"$FAKE_KEY_SECRETS"
+  VAULT_ADDR="" init
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ya tiene clave de firma"* ]]
+}
+
+@test "si hay que ir a Vault y falta VAULT_ADDR, el error lo dice" {
+  VAULT_ADDR="" init
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"VAULT_ADDR"* ]]
+}

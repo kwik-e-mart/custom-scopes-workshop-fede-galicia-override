@@ -69,8 +69,6 @@ data:
     # bajo BUSL y Alpine lo sacó de sus repos, así que `apk add vault` no existe y nunca va a
     # existir. curl y jq sí están, y la API es estable.
 
-    : "${VAULT_ADDR:?falta VAULT_ADDR}"
-    VAULT_API="${VAULT_ADDR%/}/v1"
     VAULT_KV_MOUNT="${VAULT_KV_MOUNT:-kv}"
 
     vault_curl() {  # <metodo> <ruta sin /v1> [cuerpo json]
@@ -83,6 +81,8 @@ data:
     }
 
     vault_login() {
+      : "${VAULT_ADDR:?falta VAULT_ADDR: sin eso el keygen no puede hablar con Vault}"
+      VAULT_API="${VAULT_ADDR%/}/v1"
       local respuesta
       if ! respuesta=$(vault_curl POST auth/approle/login \
           "$(jq -nc --arg r "${VAULT_ROLE_ID}" --arg s "$(cat "${SECRET_ID_FILE}")" \
@@ -156,7 +156,6 @@ data:
     mkdir -p "${WORK}"
     SCRIPTS="${SCRIPTS_DIR:-/scripts}"
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
-    source "${SCRIPTS}/vault-lib.sh"
     VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
     KID="${ORIGIN_NS}-wristband-key-gen1"
     SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=${ORIGIN_NS}"
@@ -165,6 +164,8 @@ data:
       echo "${ORIGIN_NS} ya tiene clave de firma en ${KEYS_NS}, no se toca"
       exit 0
     fi
+
+    source "${SCRIPTS}/vault-lib.sh"
 
     vault_login
 

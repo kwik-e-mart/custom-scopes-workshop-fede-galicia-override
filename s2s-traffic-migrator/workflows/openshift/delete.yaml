@@ -2,8 +2,8 @@ provider_categories:
   - container-orchestration
 configuration:
   S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: cluster-keys
-  NETWORKING_VAULT_ADDR: ""
-  NETWORKING_VAULT_NAMESPACE: ""
+  NETWORKING_VAULT_ADDR: "https://vault.example:8200"
+  NETWORKING_VAULT_NAMESPACE: "admin"
   NETWORKING_VAULT_SPIFFE_MOUNT: spiffe
   NETWORKING_VAULT_SPIFFE_ROLE: s2s-egress
   NETWORKING_VAULT_TOKEN_SECRET: s2s-vault-token
