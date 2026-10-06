@@ -34,6 +34,9 @@ render() {
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
+    keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
+    vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
+    local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
@@ -60,6 +63,9 @@ rendered_files() {
     peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
+    keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
+    vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
+    local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"

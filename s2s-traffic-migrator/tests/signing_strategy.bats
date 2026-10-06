@@ -67,6 +67,9 @@ render_ctx() {
     gateway_namespace:"gateways", cluster_label:"crc-openshift",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
+    keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
+    vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
+    local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
     signing_strategy:$strategy,
     vault_addr:"https://vault.example.io:8200", vault_namespace:"admin/spiffe",
     vault_spiffe_mount:"spiffe", vault_spiffe_role:"s2s-egress",
@@ -168,11 +171,15 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
   [[ "$output" == *"WRISTBAND_SECRET_NAME"* ]]
 }
 
-@test "con cluster-keys, las variables de Vault seteadas avisan que no tienen efecto" {
+@test "con cluster-keys, sólo las variables del mint de spiffe avisan que no tienen efecto" {
+  # El KV de Vault lo usan las DOS estrategias: cluster-keys guarda ahí la clave de firma. Lo que
+  # no aplica con cluster-keys es el minteo, o sea el mount y el role de spiffe.
   CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+    NETWORKING_VAULT_SPIFFE_MOUNT=spiffe-otro \
     S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=cluster-keys run bash "$BC"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"NETWORKING_VAULT_ADDR"* ]]
+  [[ "$output" == *"NETWORKING_VAULT_SPIFFE_MOUNT"* ]]
+  [[ "$output" != *"NETWORKING_VAULT_ADDR está declarada"* ]]
 }
 
 @test "con spiffe, TOKEN_DURATION en su default NO avisa nada" {
@@ -307,11 +314,14 @@ doc() { echo "$1" | yq "select(.kind == \"$2\") | ... comments=\"\""; }
     "https://egress.payments.s2s.local" ]
 }
 
-@test "cluster-keys no habla con Vault en ningún lado" {
+@test "con cluster-keys la AuthPolicy firma local: no llama a Vault para mintear" {
+  # La clave SÍ viene de Vault (la trae el keygen), pero el wristband lo firma Authorino con esa
+  # clave. Si la AuthPolicy tuviera un metadata.http, estaríamos minteando por HTTP como spiffe.
   run render cluster-keys
   [ "$status" -eq 0 ]
-  [[ "$output" != *"vault"* ]]
-  [[ "$output" != *"Vault"* ]]
+  local ap; ap=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy")')
+  [ "$(echo "$ap" | yq '.spec.rules.metadata // "ausente"')" = "ausente" ]
+  [ -n "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" ]
 }
 
 @test "las dos estrategias cuelgan la AuthPolicy del mismo Gateway" {

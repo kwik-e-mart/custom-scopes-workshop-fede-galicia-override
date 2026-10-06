@@ -2,13 +2,13 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: wristband-rotator
-  namespace: __APP_NAMESPACE__
+  namespace: {{ .namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: wristband-rotator
-  namespace: __APP_NAMESPACE__
+  namespace: {{ .namespace }}
 rules:
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
@@ -24,16 +24,16 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: wristband-rotator
-  namespace: __APP_NAMESPACE__
+  namespace: {{ .namespace }}
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: wristband-rotator }
 subjects:
-  - { kind: ServiceAccount, name: wristband-rotator, namespace: __APP_NAMESPACE__ }
+  - { kind: ServiceAccount, name: wristband-rotator, namespace: {{ .namespace }} }
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: wristband-init-__APP_NAMESPACE__
-  namespace: __APP_NAMESPACE__
+  name: wristband-init-{{ .namespace }}
+  namespace: {{ .namespace }}
 spec:
   backoffLimit: 1
   template:
@@ -42,13 +42,13 @@ spec:
       restartPolicy: Never
       containers:
         - name: init
-          image: __KEYGEN_IMAGE__
+          image: {{ .keygen_image }}
           env:
-            - { name: ORIGIN_NS, value: "__APP_NAMESPACE__" }
-            - { name: CLUSTER, value: "__CLUSTER_LABEL__" }
-            - { name: VAULT_ADDR, value: "__NETWORKING_VAULT_ADDR__" }
-            - { name: VAULT_NAMESPACE, value: "__NETWORKING_VAULT_NAMESPACE__" }
-            - { name: VAULT_ROLE_ID, value: "__VAULT_APPROLE_ROLE_ID__" }
+            - { name: ORIGIN_NS, value: "{{ .namespace }}" }
+            - { name: CLUSTER, value: "{{ .cluster_label }}" }
+            - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
+            - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
+            - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
           command: ["/bin/bash", "/scripts/init.sh"]
           volumeMounts:
             - { name: scripts, mountPath: /scripts }
@@ -57,13 +57,13 @@ spec:
         - name: scripts
           configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
         - name: vault-secret-id
-          secret: { secretName: __VAULT_APPROLE_SECRET__ }
+          secret: { secretName: {{ .vault_approle_secret }} }
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: wristband-rotate-__APP_NAMESPACE__
-  namespace: __APP_NAMESPACE__
+  name: wristband-rotate-{{ .namespace }}
+  namespace: {{ .namespace }}
 spec:
   schedule: "0 3 * * 0"
   concurrencyPolicy: Forbid
@@ -76,17 +76,17 @@ spec:
           restartPolicy: Never
           containers:
             - name: rotate
-              image: __KEYGEN_IMAGE__
+              image: {{ .keygen_image }}
               env:
-                - { name: ORIGIN_NS, value: "__APP_NAMESPACE__" }
-                - { name: CLUSTER, value: "__CLUSTER_LABEL__" }
-                - { name: AUTH_POLICY_NAME, value: "__EGRESS_AUTHPOLICY__" }
+                - { name: ORIGIN_NS, value: "{{ .namespace }}" }
+                - { name: CLUSTER, value: "{{ .cluster_label }}" }
+                - { name: AUTH_POLICY_NAME, value: "{{ .gateway_name }}" }
                 - { name: TOKEN_DURATION, value: "300" }
                 - { name: EXTRA_WAIT, value: "0" }
-                - { name: LOCAL_JWKS_URL, value: "__LOCAL_JWKS_URL__" }
-                - { name: VAULT_ADDR, value: "__NETWORKING_VAULT_ADDR__" }
-                - { name: VAULT_NAMESPACE, value: "__NETWORKING_VAULT_NAMESPACE__" }
-                - { name: VAULT_ROLE_ID, value: "__VAULT_APPROLE_ROLE_ID__" }
+                - { name: LOCAL_JWKS_URL, value: "{{ .local_jwks_url }}" }
+                - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
+                - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
+                - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
               command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl > /dev/null && /bin/bash /scripts/rotate.sh"]
               volumeMounts:
                 - { name: scripts, mountPath: /scripts }
@@ -95,13 +95,13 @@ spec:
             - name: scripts
               configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
             - name: vault-secret-id
-              secret: { secretName: __VAULT_APPROLE_SECRET__ }
+              secret: { secretName: {{ .vault_approle_secret }} }
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: wristband-rotate-scripts
-  namespace: __APP_NAMESPACE__
+  namespace: {{ .namespace }}
 data:
   init.sh: |
     #!/usr/bin/env bash
@@ -237,7 +237,7 @@ data:
     spec:
       refreshInterval: 1m
       secretStoreRef:
-        name: __VAULT_SECRET_STORE__
+        name: {{ .vault_secret_store }}
         kind: SecretStore
       target:
         name: ${SECRET_PREFIX}${gen}

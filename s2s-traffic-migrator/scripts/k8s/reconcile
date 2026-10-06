@@ -282,6 +282,11 @@ jq -n \
   --arg vault_spiffe_mount "$NETWORKING_VAULT_SPIFFE_MOUNT" \
   --arg vault_spiffe_role "$NETWORKING_VAULT_SPIFFE_ROLE" \
   --arg vault_token_secret "$NETWORKING_VAULT_TOKEN_SECRET" \
+  --arg keygen_image "$KEYGEN_IMAGE" \
+  --arg vault_approle_role_id "$VAULT_APPROLE_ROLE_ID" \
+  --arg vault_approle_secret "$VAULT_APPROLE_SECRET" \
+  --arg vault_secret_store "$VAULT_SECRET_STORE" \
+  --arg local_jwks_url "$LOCAL_JWKS_URL" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \

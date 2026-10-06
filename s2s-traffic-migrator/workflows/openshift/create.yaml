@@ -7,6 +7,11 @@ configuration:
   NETWORKING_VAULT_SPIFFE_MOUNT: spiffe
   NETWORKING_VAULT_SPIFFE_ROLE: s2s-egress
   NETWORKING_VAULT_TOKEN_SECRET: s2s-vault-token
+  KEYGEN_IMAGE: "alpine/k8s:1.30.3"
+  VAULT_APPROLE_ROLE_ID: ""
+  VAULT_APPROLE_SECRET: vault-approle-creds
+  VAULT_SECRET_STORE: vault-ocp-plataforma
+  LOCAL_JWKS_URL: ""
   WRISTBAND_SECRET_NAME: "{namespace}-wristband-key"
   EGRESS_ISSUER_URL: "https://egress.{namespace}.s2s.local"
   PEER_CA_SECRET: s2s-remote-ca
@@ -41,6 +46,11 @@ steps:
       - { name: WRISTBAND_SECRET, type: environment }
       - { name: EGRESS_ISSUER, type: environment }
       - { name: SIGNING_STRATEGY, type: environment }
+      - { name: KEYGEN_IMAGE, type: environment }
+      - { name: VAULT_APPROLE_ROLE_ID, type: environment }
+      - { name: VAULT_APPROLE_SECRET, type: environment }
+      - { name: VAULT_SECRET_STORE, type: environment }
+      - { name: LOCAL_JWKS_URL, type: environment }
       - { name: NETWORKING_VAULT_ADDR, type: environment }
       - { name: NETWORKING_VAULT_NAMESPACE, type: environment }
       - { name: NETWORKING_VAULT_SPIFFE_MOUNT, type: environment }
