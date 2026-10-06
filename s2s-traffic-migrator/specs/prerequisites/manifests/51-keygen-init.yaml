@@ -1,37 +1,21 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: s2s-keygen
-  namespace: kuadrant-system
+  name: wristband-rotator
+  namespace: __APP_NAMESPACE__
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: s2s-keygen
-  namespace: kuadrant-system
+  name: wristband-rotator
+  namespace: __APP_NAMESPACE__
 rules:
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: s2s-keygen
-  namespace: kuadrant-system
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: s2s-keygen }
-subjects:
-  - { kind: ServiceAccount, name: s2s-keygen, namespace: kuadrant-system }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: s2s-keygen
-  namespace: __APP_NAMESPACE__
-rules:
+    verbs: ["get", "delete"]
   - apiGroups: ["kuadrant.io"]
     resources: ["authpolicies"]
     verbs: ["get", "patch"]
@@ -39,148 +23,276 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: s2s-keygen
+  name: wristband-rotator
   namespace: __APP_NAMESPACE__
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: s2s-keygen }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: wristband-rotator }
 subjects:
-  - { kind: ServiceAccount, name: s2s-keygen, namespace: kuadrant-system }
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: s2s-keygen-script
-  namespace: kuadrant-system
-data:
-  keygen.sh: |
-    #!/bin/bash
-    # MODE=init    crea la generación g0 (clave en Vault, JWKS, ExternalSecret). La AuthPolicy se aplica después.
-    # MODE=rotate  clave nueva -> Vault -> JWKS con vieja+nueva -> ExternalSecret -> espera a que el
-    #              validador la conozca -> cambia signingKeyRefs -> espera -> JWKS solo con la nueva.
-    # El orden es lo que evita cortes: un token ya emitido tiene que poder validarse hasta que expire.
-    set -euo pipefail
-    apk add --no-cache openssl >/dev/null
-
-    : "${NS:?}" "${CLUSTER:?}" "${VAULT_ADDR:?}" "${VAULT_NAMESPACE:?}" "${ROLE_ID:?}" "${SECRET_ID:?}"
-    MODE="${MODE:-init}"; MOUNT="${VAULT_KV_MOUNT:?}"; STORE="${VAULT_SECRET_STORE:?}"
-    AUTHPOLICY="${EGRESS_AUTHPOLICY:?}"; JWKS_URL="${LOCAL_JWKS_URL:?}"
-    JWKS_TTL="${JWKS_TTL:-15}"; TOKEN_TTL="${TOKEN_TTL:-60}"
-    log() { echo "[$(date +%H:%M:%S)] $*"; }
-
-    T=$(curl -sf -H "X-Vault-Namespace: $VAULT_NAMESPACE" \
-      -d "{\"role_id\":\"$ROLE_ID\",\"secret_id\":\"$SECRET_ID\"}" "$VAULT_ADDR/v1/auth/approle/login" | jq -r .auth.client_token)
-    vault() { curl -sf -H "X-Vault-Token: $T" -H "X-Vault-Namespace: $VAULT_NAMESPACE" "$@"; }
-    kv_put() { vault -X POST -d "$2" "$VAULT_ADDR/v1/$MOUNT/data/$1" >/dev/null; }
-    kv_get() { vault "$VAULT_ADDR/v1/$MOUNT/data/$1" | jq -r ".data.data"; }
-    kv_del() { vault -X DELETE "$VAULT_ADDR/v1/$MOUNT/metadata/$1" >/dev/null || true; }
-    kv_list() { vault -X LIST "$VAULT_ADDR/v1/$MOUNT/metadata/$1" 2>/dev/null | jq -r '.data.keys[]?' || true; }
-    b64u() { xxd -r -p | base64 -w0 | tr '+/' '-_' | tr -d '='; }
-
-    publicar_jwks() {  # $1 = array JSON de claves
-      kv_put "$CLUSTER/$NS/jwks" "$(jq -n --arg j "$(jq -cn --argjson k "$1" '{keys:$k}')" '{data:{jwks:$j}}')"
-    }
-
-    if [ "$MODE" = init ]; then GEN=g0; else GEN=$(date +%Y%m%d%H%M%S); fi
-    KID="wristband-key-$NS-$GEN"
-    log "namespace=$NS modo=$MODE generacion=$GEN kid=$KID"
-
-    openssl genrsa -traditional -out /tmp/key.pem 2048 2>/dev/null
-    head -1 /tmp/key.pem | grep -q 'BEGIN RSA PRIVATE KEY' || { log "ERROR: la clave no quedó en PKCS#1"; exit 1; }
-    N=$(openssl rsa -in /tmp/key.pem -noout -modulus | cut -d= -f2 | b64u)
-    NEWJWK=$(jq -cn --arg kid "$KID" --arg n "$N" '{kty:"RSA",alg:"RS256",use:"sig",kid:$kid,n:$n,e:"AQAB"}')
-
-    if [ "$MODE" = rotate ]; then
-      CUR=$(kubectl -n "$NS" get authpolicy "$AUTHPOLICY" -o jsonpath='{.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name}')
-      CURGEN="${CUR##*-}"
-      for es in $(kubectl -n kuadrant-system get externalsecret -o name | sed 's|.*/||' | grep "^wristband-key-$NS-" || true); do
-        [ "$es" = "$CUR" ] || { log "limpieza: ExternalSecret huérfano $es"; kubectl -n kuadrant-system delete externalsecret "$es" >/dev/null; }
-      done
-      for k in $(kv_list "$CLUSTER/$NS/" | grep '^key-' || true); do
-        [ "$k" = "key-$CURGEN" ] || { log "limpieza: clave huérfana en Vault $k"; kv_del "$CLUSTER/$NS/$k"; }
-      done
-    fi
-
-    log "1/6 clave nueva a Vault ($CLUSTER/$NS/key-$GEN)"
-    kv_put "$CLUSTER/$NS/key-$GEN" "$(jq -n --rawfile k /tmp/key.pem '{data:{"key.pem":$k}}')"
-    shred -u /tmp/key.pem 2>/dev/null || rm -f /tmp/key.pem
-
-    if [ "$MODE" = init ]; then OLDKEYS='[]'; OLD=""; else
-      OLD=$(kubectl -n "$NS" get authpolicy "$AUTHPOLICY" -o jsonpath='{.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name}')
-      OLDKEYS=$(kv_get "$CLUSTER/$NS/jwks" | jq -r .jwks | jq -c --arg o "$OLD" '[.keys[] | select(.kid==$o)]')
-    fi
-
-    log "2/6 JWKS fase 1 (vieja + nueva)"
-    publicar_jwks "$(jq -cn --argjson o "$OLDKEYS" --argjson n "$NEWJWK" '$o + [$n]')"
-
-    log "3/6 ExternalSecret $KID en kuadrant-system"
-    kubectl apply -f - >/dev/null <<YAML
-    apiVersion: external-secrets.io/v1
-    kind: ExternalSecret
-    metadata: {name: $KID, namespace: kuadrant-system}
-    spec:
-      refreshInterval: 1h
-      secretStoreRef: {name: $STORE, kind: SecretStore}
-      target: {name: $KID, creationPolicy: Owner}
-      data:
-      - secretKey: key.pem
-        remoteRef: {key: $CLUSTER/$NS/key-$GEN, property: key.pem}
-    YAML
-    kubectl -n kuadrant-system wait --for=condition=Ready externalsecret/"$KID" --timeout=120s >/dev/null
-
-    if [ "$MODE" = init ]; then log "listo: aplicar ahora la AuthPolicy de $NS con signingKeyRefs=$KID"; exit 0; fi
-
-    log "4/6 esperando a que el validador sirva el kid nuevo ($JWKS_URL)"
-    for i in $(seq 1 120); do
-      curl -sf "$JWKS_URL" | jq -e --arg k "$KID" 'any(.keys[]; .kid==$k)' >/dev/null 2>&1 && break
-      [ "$i" = 120 ] && { log "ERROR: el JWKS no se propagó en 10 min; NO se cambia la firma"; exit 1; }
-      sleep 5
-    done
-    log "    propagado en el validador local"
-    if [ "${EXTRA_WAIT:-0}" -gt 0 ]; then log "    espera extra para validadores remotos: ${EXTRA_WAIT}s"; sleep "$EXTRA_WAIT"; fi
-    log "    espero el ttl del cache de Authorino (${JWKS_TTL}s + margen)"; sleep $((JWKS_TTL + 5))
-
-    log "5/6 cambio de signingKeyRefs: $OLD -> $KID"
-    kubectl -n "$NS" patch authpolicy "$AUTHPOLICY" --type json \
-      -p "[{\"op\":\"replace\",\"path\":\"/spec/rules/response/success/headers/x-egress-token/wristband/signingKeyRefs/0/name\",\"value\":\"$KID\"}]" >/dev/null
-
-    WAIT=$((TOKEN_TTL + JWKS_TTL + 10))
-    log "6/6 espero ${WAIT}s (duración del token + ttl) antes de retirar la clave vieja"; sleep "$WAIT"
-    publicar_jwks "$(jq -cn --argjson n "$NEWJWK" '[$n]')"
-    kubectl -n kuadrant-system delete externalsecret "$OLD" --ignore-not-found >/dev/null
-    kv_del "$CLUSTER/$NS/key-${OLD##*-}"
-    log "rotación completa: firma con $KID; clave vieja $OLD retirada"
+  - { kind: ServiceAccount, name: wristband-rotator, namespace: __APP_NAMESPACE__ }
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: s2s-keygen-init-__APP_NAMESPACE__
-  namespace: kuadrant-system
+  name: wristband-init-__APP_NAMESPACE__
+  namespace: __APP_NAMESPACE__
 spec:
-  backoffLimit: 0
-  ttlSecondsAfterFinished: 3600
+  backoffLimit: 1
   template:
     spec:
-      serviceAccountName: s2s-keygen
+      serviceAccountName: wristband-rotator
       restartPolicy: Never
       containers:
-        - name: keygen
+        - name: init
           image: __KEYGEN_IMAGE__
-          command: ["bash", "/scripts/keygen.sh"]
           env:
-            - { name: NS, value: "__APP_NAMESPACE__" }
-            - { name: MODE, value: "init" }
+            - { name: ORIGIN_NS, value: "__APP_NAMESPACE__" }
             - { name: CLUSTER, value: "__CLUSTER_LABEL__" }
             - { name: VAULT_ADDR, value: "__NETWORKING_VAULT_ADDR__" }
             - { name: VAULT_NAMESPACE, value: "__NETWORKING_VAULT_NAMESPACE__" }
-            - { name: VAULT_KV_MOUNT, value: "__VAULT_KV_MOUNT__" }
-            - { name: VAULT_SECRET_STORE, value: "__VAULT_SECRET_STORE__" }
-            - { name: EGRESS_AUTHPOLICY, value: "__EGRESS_AUTHPOLICY__" }
-            - { name: LOCAL_JWKS_URL, value: "__LOCAL_JWKS_URL__" }
-            - { name: ROLE_ID, value: "__VAULT_APPROLE_ROLE_ID__" }
-            - name: SECRET_ID
-              valueFrom:
-                secretKeyRef: { name: __VAULT_APPROLE_SECRET__, key: secret-id }
+            - { name: VAULT_ROLE_ID, value: "__VAULT_APPROLE_ROLE_ID__" }
+          command: ["/bin/bash", "/scripts/init.sh"]
           volumeMounts:
             - { name: scripts, mountPath: /scripts }
+            - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
       volumes:
         - name: scripts
-          configMap: { name: s2s-keygen-script }
+          configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
+        - name: vault-secret-id
+          secret: { secretName: __VAULT_APPROLE_SECRET__ }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wristband-rotate-__APP_NAMESPACE__
+  namespace: __APP_NAMESPACE__
+spec:
+  schedule: "0 3 * * 0"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: wristband-rotator
+          restartPolicy: Never
+          containers:
+            - name: rotate
+              image: __KEYGEN_IMAGE__
+              env:
+                - { name: ORIGIN_NS, value: "__APP_NAMESPACE__" }
+                - { name: CLUSTER, value: "__CLUSTER_LABEL__" }
+                - { name: AUTH_POLICY_NAME, value: "__EGRESS_AUTHPOLICY__" }
+                - { name: TOKEN_DURATION, value: "300" }
+                - { name: EXTRA_WAIT, value: "0" }
+                - { name: LOCAL_JWKS_URL, value: "__LOCAL_JWKS_URL__" }
+                - { name: VAULT_ADDR, value: "__NETWORKING_VAULT_ADDR__" }
+                - { name: VAULT_NAMESPACE, value: "__NETWORKING_VAULT_NAMESPACE__" }
+                - { name: VAULT_ROLE_ID, value: "__VAULT_APPROLE_ROLE_ID__" }
+              command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl > /dev/null && /bin/bash /scripts/rotate.sh"]
+              volumeMounts:
+                - { name: scripts, mountPath: /scripts }
+                - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
+          volumes:
+            - name: scripts
+              configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
+            - name: vault-secret-id
+              secret: { secretName: __VAULT_APPROLE_SECRET__ }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wristband-rotate-scripts
+  namespace: __APP_NAMESPACE__
+data:
+  init.sh: |
+    #!/usr/bin/env bash
+    # Bootstrap: genera la generación 1 de la clave de un origen y publica su JWKS
+    # inicial (una sola clave) en Vault. Correr una vez antes de aplicar la AuthPolicy.
+    set -euo pipefail
+
+    : "${ORIGIN_NS:?falta ORIGIN_NS}"
+    : "${CLUSTER:?falta CLUSTER}"
+
+    VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
+    KID="wristband-key-${ORIGIN_NS}-gen1"
+
+    vault write -field=token auth/approle/login \
+      role_id="${VAULT_ROLE_ID}" secret_id="$(cat /var/run/secrets/vault/secret-id)" \
+      > /tmp/vault-token
+    export VAULT_TOKEN
+    VAULT_TOKEN="$(cat /tmp/vault-token)"
+
+    if vault kv get "kv/${VAULT_KV_BASE}/signing-key-gen1" > /dev/null 2>&1; then
+      echo "ya existe signing-key-gen1 para ${ORIGIN_NS}, no se pisa"
+      exit 0
+    fi
+
+    openssl genrsa -out /tmp/gen1.pem 2048
+    openssl rsa -in /tmp/gen1.pem -pubout -out /tmp/gen1.pub
+
+    vault kv put "kv/${VAULT_KV_BASE}/signing-key-gen1" private_key=@/tmp/gen1.pem
+
+    python3 /scripts/build-jwks.py --old /tmp/gen1.pub --old-kid "${KID}" > /tmp/jwks.json
+    vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@/tmp/jwks.json
+
+    echo "bootstrap de ${ORIGIN_NS} listo: ${KID}"
+  rotate.sh: |
+    #!/usr/bin/env bash
+    # Lógica de rotación de la clave de wristband de un namespace de origen.
+    # Pendiente conocido: hoy corre sobre alpine/k8s instalando openssl/jq/vault con
+    # apk en cada ejecución (depende de salida a internet); para producción conviene
+    # una imagen propia con todo embebido.
+    set -euo pipefail
+
+    : "${ORIGIN_NS:?falta ORIGIN_NS}"
+    : "${CLUSTER:?falta CLUSTER}"
+    : "${AUTH_POLICY_NAME:?falta AUTH_POLICY_NAME}"
+    : "${TOKEN_DURATION:=300}"
+    : "${EXTRA_WAIT:=0}"
+    : "${LOCAL_JWKS_URL:=}"
+
+    VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
+    SECRET_PREFIX="wristband-key-${ORIGIN_NS}-gen"
+
+    log() { echo "[$(date -Iseconds)] $*"; }
+
+    vault_login() {
+      vault write -field=token auth/approle/login \
+        role_id="${VAULT_ROLE_ID}" secret_id="$(cat /var/run/secrets/vault/secret-id)" \
+        > /tmp/vault-token
+      export VAULT_TOKEN
+      VAULT_TOKEN="$(cat /tmp/vault-token)"
+    }
+
+    current_signing_key() {
+      kubectl get authpolicy "${AUTH_POLICY_NAME}" -n "${ORIGIN_NS}" \
+        -o jsonpath='{.spec.rules.response.success.filters.wristband.wristband.signingKeyRefs[0].name}'
+    }
+
+    cleanup_orphans() {
+      log "limpiando ExternalSecret/Secret huérfanos de corridas anteriores interrumpidas"
+      local current
+      current="$(current_signing_key)"
+      for es in $(kubectl get externalsecret -n "${ORIGIN_NS}" -o name | grep "${SECRET_PREFIX}" || true); do
+        name="${es#externalsecret.external-secrets.io/}"
+        if [ "${name}" != "${current}" ]; then
+          log "borrando ExternalSecret huérfano: ${name}"
+          kubectl delete externalsecret "${name}" -n "${ORIGIN_NS}" --ignore-not-found
+          kubectl delete secret "${name}" -n "${ORIGIN_NS}" --ignore-not-found
+          vault kv delete "kv/${VAULT_KV_BASE}/signing-key-${name##${SECRET_PREFIX}}" || true
+        fi
+      done
+    }
+
+    generate_keypair() {
+      local gen="$1"
+      openssl genrsa -out "/tmp/gen${gen}.pem" 2048
+      openssl rsa -in "/tmp/gen${gen}.pem" -pubout -out "/tmp/gen${gen}.pub"
+    }
+
+    publish_private_key() {
+      local gen="$1"
+      vault kv put "kv/${VAULT_KV_BASE}/signing-key-gen${gen}" \
+        private_key=@"/tmp/gen${gen}.pem"
+    }
+
+    publish_jwks_with_both_keys() {
+      local old_gen="$1" new_gen="$2"
+      python3 /scripts/build-jwks.py \
+        --old "/tmp/gen${old_gen}.pub" --old-kid "${SECRET_PREFIX}${old_gen}" \
+        --new "/tmp/gen${new_gen}.pub" --new-kid "${SECRET_PREFIX}${new_gen}" \
+        > /tmp/jwks-both.json
+      vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@/tmp/jwks-both.json
+    }
+
+    publish_jwks_single_key() {
+      local gen="$1"
+      python3 /scripts/build-jwks.py \
+        --old "/tmp/gen${gen}.pub" --old-kid "${SECRET_PREFIX}${gen}" \
+        > /tmp/jwks-single.json
+      vault kv put "kv/${VAULT_KV_BASE}/jwks" jwks=@/tmp/jwks-single.json
+    }
+
+    wait_for_kid_in_jwks() {
+      local kid="$1"
+      [ -z "${LOCAL_JWKS_URL}" ] && return 0
+      log "esperando a que ${LOCAL_JWKS_URL} sirva kid=${kid}"
+      for _ in $(seq 1 60); do
+        if curl -fsS "${LOCAL_JWKS_URL}" | jq -e --arg kid "${kid}" '.keys[] | select(.kid == $kid)' > /dev/null; then
+          return 0
+        fi
+        sleep 5
+      done
+      echo "timeout esperando propagación de kid=${kid}" >&2
+      exit 1
+    }
+
+    apply_new_signing_secret() {
+      local gen="$1"
+      cat <<EOF | kubectl apply -f -
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: ${SECRET_PREFIX}${gen}
+      namespace: ${ORIGIN_NS}
+    spec:
+      refreshInterval: 1m
+      secretStoreRef:
+        name: __VAULT_SECRET_STORE__
+        kind: SecretStore
+      target:
+        name: ${SECRET_PREFIX}${gen}
+      data:
+        - secretKey: key.pem
+          remoteRef:
+            key: ${VAULT_KV_BASE}/signing-key-gen${gen}
+            property: private_key
+    EOF
+      kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${ORIGIN_NS}" --timeout=60s
+    }
+
+    switch_signing_key_ref() {
+      local gen="$1"
+      log "apuntando ${AUTH_POLICY_NAME} a ${SECRET_PREFIX}${gen} (sin reiniciar Authorino)"
+      kubectl patch authpolicy "${AUTH_POLICY_NAME}" -n "${ORIGIN_NS}" --type=merge -p \
+        "{\"spec\":{\"rules\":{\"response\":{\"success\":{\"filters\":{\"wristband\":{\"wristband\":{\"signingKeyRefs\":[{\"name\":\"${SECRET_PREFIX}${gen}\",\"algorithm\":\"RS256\"}]}}}}}}}}"
+    }
+
+    retire_old_key() {
+      local old_gen="$1"
+      log "retirando clave vieja gen${old_gen}: JWKS, ExternalSecret y Secret"
+      vault kv delete "kv/${VAULT_KV_BASE}/signing-key-gen${old_gen}"
+      kubectl delete externalsecret "${SECRET_PREFIX}${old_gen}" -n "${ORIGIN_NS}" --ignore-not-found
+      kubectl delete secret "${SECRET_PREFIX}${old_gen}" -n "${ORIGIN_NS}" --ignore-not-found
+    }
+
+    main() {
+      vault_login
+      cleanup_orphans
+
+      local old_gen new_gen
+      old_gen="$(current_signing_key | sed "s/${SECRET_PREFIX}//")"
+      new_gen="$((old_gen + 1))"
+
+      log "rotando ${ORIGIN_NS}: gen${old_gen} -> gen${new_gen}"
+
+      generate_keypair "${old_gen}" 2>/dev/null || true
+      generate_keypair "${new_gen}"
+      publish_private_key "${new_gen}"
+      publish_jwks_with_both_keys "${old_gen}" "${new_gen}"
+
+      wait_for_kid_in_jwks "${SECRET_PREFIX}${new_gen}"
+      [ "${EXTRA_WAIT}" != "0" ] && { log "EXTRA_WAIT=${EXTRA_WAIT}s para validadores remotos"; sleep "${EXTRA_WAIT}"; }
+
+      apply_new_signing_secret "${new_gen}"
+      switch_signing_key_ref "${new_gen}"
+
+      log "esperando ${TOKEN_DURATION}s a que expiren los tokens emitidos con la clave vieja"
+      sleep "${TOKEN_DURATION}"
+
+      publish_jwks_single_key "${new_gen}"
+      retire_old_key "${old_gen}"
+
+      log "rotación de ${ORIGIN_NS} completa: clave vigente = ${SECRET_PREFIX}${new_gen}"
+    }
+
+    main "$@"

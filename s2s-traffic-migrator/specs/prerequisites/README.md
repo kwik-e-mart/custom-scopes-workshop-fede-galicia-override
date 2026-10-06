@@ -32,7 +32,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `cluster-keys`** |
 | `45-authpolicy-validator-spiffe.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `spiffe`**. Mismo nombre de objeto que `40-`: se aplica uno o el otro, nunca los dos |
 | `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system` | por namespace emisor | **sólo `cluster-keys`** |
-| `51-keygen-init.yaml` | SA + Roles + `ConfigMap` con el script + `Job` de `MODE=init`: genera la clave en Vault, publica el JWKS y materializa el `Secret` con un `ExternalSecret` | por namespace emisor | **sólo `cluster-keys`**, y sólo si la clave la administra Vault en vez de crearse a mano con `50-` |
+| `51-keygen-init.yaml` | SA + Role + `Job` de bootstrap + `CronJob` de rotación semanal + `ConfigMap` con `init.sh` y `rotate.sh`. La clave vive en Vault y llega al cluster por `ExternalSecret`; el `kid` lleva la generación | por namespace emisor | **sólo `cluster-keys`**, y sólo si la clave la administra Vault en vez de crearse a mano con `50-` |
 | `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |
@@ -63,7 +63,6 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__VAULT_LOGIN_IMAGE__` | imagen del CronJob de login. Necesita `curl`, `jq` y `kubectl` | una imagen interna pineada por digest |
 | `__KEYGEN_IMAGE__` | imagen del Job de keygen. Necesita `bash`, `curl`, `jq`, `kubectl` y poder instalar `openssl` | `alpine/k8s:1.31.2` |
 | `__CLUSTER_LABEL__` | identifica al cluster dentro del KV: las claves cuelgan de `<mount>/<cluster>/<namespace>/` | `arqc-delta-136` |
-| `__VAULT_KV_MOUNT__` | mount del KV donde viven las claves y el JWKS | `kv/ocp` |
 | `__VAULT_SECRET_STORE__` | `SecretStore` de external-secrets que apunta a ese Vault | `vault-ocp-plataforma` |
 | `__EGRESS_AUTHPOLICY__` | la `AuthPolicy` de firma del namespace, que el modo `rotate` parchea | `s2s-egress` |
 | `__LOCAL_JWKS_URL__` | URL del JWKS de este cluster, que `rotate` consulta para saber si el `kid` nuevo se propagó | `http://jwks.rot-dest.svc.cluster.local:8080/<ns>/jwks.json` |
