@@ -34,6 +34,13 @@ done
 printf %s "$NP_MOCK_SCOPES" | jq -c '{results: .}' | jq -c "$QUERY"
 MOCK
   chmod +x "$BATS_TEST_TMPDIR/bin/np"
+  export FAKE_KEY_SECRETS="$BATS_TEST_TMPDIR/key-secrets.txt"
+  : >"$FAKE_KEY_SECRETS"
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+cat "$FAKE_KEY_SECRETS"
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
@@ -64,7 +71,7 @@ render_ctx() {
     local_ingress_host:"s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service:"s2s-ingress-istio", local_ingress_service_namespace:"gateways",
     local_ingress_tls_mode:"skip-verify",
-    gateway_namespace:"gateways", cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress",
+    gateway_namespace:"gateways", cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",

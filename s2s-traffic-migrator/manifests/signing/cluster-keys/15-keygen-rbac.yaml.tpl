@@ -151,12 +151,13 @@ data:
     : "${ORIGIN_NS:?falta ORIGIN_NS}"
     : "${CLUSTER:?falta CLUSTER}"
     : "${KEYS_NS:?falta KEYS_NS}"
+    : "${VAULT_KV_CLUSTER:?falta VAULT_KV_CLUSTER}"
 
     WORK="${WORK_DIR:-/tmp}"
     mkdir -p "${WORK}"
     SCRIPTS="${SCRIPTS_DIR:-/scripts}"
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
-    VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
+    VAULT_KV_BASE="${VAULT_KV_CLUSTER}/${ORIGIN_NS}"
     KID="${ORIGIN_NS}-wristband-key-gen1"
     SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=${ORIGIN_NS}"
 
@@ -169,13 +170,13 @@ data:
 
     vault_login
 
-    if vault_kv_exists "${VAULT_KV_BASE}/signing-key-gen1"; then
-      echo "signing-key-gen1 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
+    if vault_kv_exists "${VAULT_KV_BASE}/key-1"; then
+      echo "key-1 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
     else
       openssl genrsa -traditional -out "${WORK}/gen1.pem" 2048
       head -1 "${WORK}/gen1.pem" | grep -q "BEGIN RSA PRIVATE KEY"
       openssl rsa -in "${WORK}/gen1.pem" -pubout -out "${WORK}/gen1.pub"
-      vault_kv_put_file "${VAULT_KV_BASE}/signing-key-gen1" private_key "${WORK}/gen1.pem"
+      vault_kv_put_file "${VAULT_KV_BASE}/key-1" private_key "${WORK}/gen1.pem"
       python3 "${SCRIPTS}/build-jwks.py" --old "${WORK}/gen1.pub" --old-kid "${KID}" > "${WORK}/jwks.json"
       vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks "${WORK}/jwks.json"
     fi
@@ -225,6 +226,7 @@ data:
     : "${ORIGIN_NS:?falta ORIGIN_NS}"
     : "${CLUSTER:?falta CLUSTER}"
     : "${KEYS_NS:?falta KEYS_NS}"
+    : "${VAULT_KV_CLUSTER:?falta VAULT_KV_CLUSTER}"
     : "${AUTH_POLICY_NAME:?falta AUTH_POLICY_NAME}"
     : "${TOKEN_DURATION:=300}"
     : "${EXTRA_WAIT:=0}"
@@ -235,7 +237,7 @@ data:
     SCRIPTS="${SCRIPTS_DIR:-/scripts}"
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
     source "${SCRIPTS}/vault-lib.sh"
-    VAULT_KV_BASE="ocp/${CLUSTER}/${ORIGIN_NS}"
+    VAULT_KV_BASE="${VAULT_KV_CLUSTER}/${ORIGIN_NS}"
     SECRET_PREFIX="${ORIGIN_NS}-wristband-key-gen"
 
     log() { echo "[$(date -Iseconds)] $*"; }
@@ -254,7 +256,7 @@ data:
           log "borrando ExternalSecret huérfano: ${name}"
           kubectl delete externalsecret "${name}" -n "${KEYS_NS}" --ignore-not-found
           kubectl delete secret "${name}" -n "${KEYS_NS}" --ignore-not-found
-          vault_kv_delete "${VAULT_KV_BASE}/signing-key-gen${name##${SECRET_PREFIX}}" || true
+          vault_kv_delete "${VAULT_KV_BASE}/key-${name##${SECRET_PREFIX}}" || true
         fi
       done
     }
@@ -271,7 +273,7 @@ data:
 
     recover_public_key() {
       local gen="$1"
-      if ! vault_kv_get_field "${VAULT_KV_BASE}/signing-key-gen${gen}" private_key \
+      if ! vault_kv_get_field "${VAULT_KV_BASE}/key-${gen}" private_key \
           > "${WORK}/gen${gen}.pem"; then
         echo "no se pudo recuperar gen${gen} de Vault: sin su pública el JWKS de solape sería falso" >&2
         exit 1
@@ -281,7 +283,7 @@ data:
 
     publish_private_key() {
       local gen="$1"
-      vault_kv_put_file "${VAULT_KV_BASE}/signing-key-gen${gen}" private_key "${WORK}/gen${gen}.pem"
+      vault_kv_put_file "${VAULT_KV_BASE}/key-${gen}" private_key "${WORK}/gen${gen}.pem"
     }
 
     publish_jwks_with_both_keys() {
@@ -364,7 +366,7 @@ data:
     retire_old_key() {
       local old_gen="$1"
       log "retirando clave vieja gen${old_gen}: JWKS, ExternalSecret y Secret"
-      vault_kv_delete "${VAULT_KV_BASE}/signing-key-gen${old_gen}"
+      vault_kv_delete "${VAULT_KV_BASE}/key-${old_gen}"
       kubectl delete externalsecret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
       kubectl delete secret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
     }

@@ -43,7 +43,7 @@ make_render() {  # <site>
     keygen_image: "alpine/k8s:1.30.3", vault_approle_role_id: "role-id",
     vault_approle_secret: "vault-approle-creds", vault_secret_store: "vault-ocp-plataforma",
     local_jwks_url: "http://jwks.example:8080/payments/jwks.json",
-    gateway_namespace: "gateways", cluster_label: "gal-poc-eks-dev", keys_namespace: "kuadrant-system", peer_jwks_url: "http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy: "s2s-validator", ingress_gateway_name: "s2s-ingress",
+    gateway_namespace: "gateways", cluster_label: "gal-poc-eks-dev", keys_namespace: "kuadrant-system", peer_jwks_url: "http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy: "s2s-validator", ingress_gateway_name: "s2s-ingress", vault_kv_mount: "kv/eks", vault_kv_cluster: "gal-poc",
     authpolicy_api_version: "kuadrant.io/v1",
     managed_label: "egress-interceptor/managed", role_label: "egress-interceptor/role",
     original_selector_annotation: "egress-interceptor/original-selector",

@@ -18,7 +18,7 @@ setup() {
     keys_namespace:"kuadrant-system", keygen_image:"alpine/k8s:1.30.3",
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     vault_approle_role_id:"role-id", vault_approle_secret:"vault-approle-creds",
-    vault_secret_store:"vault-ocp", local_jwks_url:""
+    vault_secret_store:"vault-ocp", local_jwks_url:"", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc"
   }' >"$BATS_TEST_TMPDIR/ctx.json"
   gomplate -c .="$BATS_TEST_TMPDIR/ctx.json" \
     -f "$SVC/manifests/signing/cluster-keys/15-keygen-rbac.yaml.tpl" \
@@ -69,18 +69,19 @@ case "$url" in
 esac
 
 ruta="${url#*/v1/}"
+MOUNT="${VAULT_KV_MOUNT:-kv}"
 case "$ruta" in
   auth/approle/login)
     echo '{"auth":{"client_token":"s.token-falso"}}'; exit 0 ;;
-  sys/internal/ui/mounts/kv)
+  sys/internal/ui/mounts/*)
     printf '{"data":{"options":{"version":"%s"}}}\n' "${KV_VERSION:-2}"; exit 0 ;;
 esac
 
 if [ "${KV_VERSION:-2}" = "2" ]; then
-  interna="${ruta#kv/data/}"
-  meta="${ruta#kv/metadata/}"
+  interna="${ruta#$MOUNT/data/}"
+  meta="${ruta#$MOUNT/metadata/}"
 else
-  interna="${ruta#kv/}"
+  interna="${ruta#$MOUNT/}"
   meta="$interna"
 fi
 
@@ -155,20 +156,22 @@ MOCK
 
 init() {
   ORIGIN_NS=payments CLUSTER=eks-kuadrant KEYS_NS=kuadrant-system VAULT_ROLE_ID=role-id \
+    VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
     run bash "$SCRIPTS_DIR/init.sh"
 }
 
 rotate() {
   ORIGIN_NS=payments CLUSTER=eks-kuadrant KEYS_NS=kuadrant-system VAULT_ROLE_ID=role-id \
+    VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
     AUTH_POLICY_NAME=s2s-egress TOKEN_DURATION=0 EXTRA_WAIT="${EXTRA_WAIT:-0}" \
     LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}" \
     run bash "$SCRIPTS_DIR/rotate.sh"
 }
 
 sembrar_gen1() {
-  mkdir -p "$VAULT_KV/ocp/eks-kuadrant/payments/signing-key-gen1"
+  mkdir -p "$VAULT_KV/gal-poc/payments/key-1"
   openssl genrsa -traditional -out "$BATS_TEST_TMPDIR/original.pem" 2048 2>/dev/null
-  cp "$BATS_TEST_TMPDIR/original.pem" "$VAULT_KV/ocp/eks-kuadrant/payments/signing-key-gen1/private_key"
+  cp "$BATS_TEST_TMPDIR/original.pem" "$VAULT_KV/gal-poc/payments/key-1/private_key"
 }
 
 modulo_original() {
@@ -176,17 +179,17 @@ modulo_original() {
     | openssl rsa -pubin -noout -modulus | sed 's/^Modulus=//'
 }
 
-jwks_publicado() { cat "$VAULT_KV/ocp/eks-kuadrant/payments/jwks/jwks"; }
+jwks_publicado() { cat "$VAULT_KV/gal-poc/payments/jwks/jwks"; }
 
 # El JWKS de solape es intermedio: al final de la rotación se republica sólo con la clave nueva.
 jwks_de_solape() {
-  grep -F 'ocp/eks-kuadrant/payments/jwks	' "$VAULT_PUT_HISTORY" | head -1 | cut -f2 | jq -r '.jwks'
+  grep -F 'gal-poc/payments/jwks	' "$VAULT_PUT_HISTORY" | head -1 | cut -f2 | jq -r '.jwks'
 }
 
 @test "el bootstrap genera la clave en PKCS#1: es lo unico que Authorino parsea" {
   init
   [ "$status" -eq 0 ]
-  head -1 "$VAULT_KV/ocp/eks-kuadrant/payments/signing-key-gen1/private_key" \
+  head -1 "$VAULT_KV/gal-poc/payments/key-1/private_key" \
     | grep -q "BEGIN RSA PRIVATE KEY"
 }
 
@@ -236,7 +239,7 @@ jwks_de_solape() {
 @test "la clave nueva tambien sale en PKCS#1" {
   sembrar_gen1
   rotate
-  head -1 "$VAULT_KV/ocp/eks-kuadrant/payments/signing-key-gen2/private_key" \
+  head -1 "$VAULT_KV/gal-poc/payments/key-2/private_key" \
     | grep -q "BEGIN RSA PRIVATE KEY"
 }
 
@@ -257,7 +260,7 @@ jwks_de_solape() {
   rotate
   [ "$status" -ne 0 ]
   [[ "$output" == *"no se pudo recuperar gen1"* ]]
-  [ ! -f "$VAULT_KV/ocp/eks-kuadrant/payments/jwks/jwks" ]
+  [ ! -f "$VAULT_KV/gal-poc/payments/jwks/jwks" ]
 }
 
 @test "si la AuthPolicy no declara clave, ABORTA en vez de rotar a gen1" {
@@ -276,11 +279,11 @@ jwks_de_solape() {
   [ "$output" -eq 0 ]
 }
 
-@test "la limpieza de huerfanos arma la ruta de Vault con el prefijo gen" {
+@test "la limpieza de huerfanos borra por metadata, en el mount del sustrato" {
   sembrar_gen1
   printf 'externalsecret.external-secrets.io/payments-wristband-key-gen9\n' >"$FAKE_EXTERNALSECRETS"
   rotate
-  run grep -c 'DELETE .*/kv/metadata/ocp/eks-kuadrant/payments/signing-key-gen9' "$VAULT_CALLS"
+  run grep -c 'DELETE .*/v1/kv/eks/metadata/gal-poc/payments/key-9' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
 }
 
@@ -295,7 +298,7 @@ jwks_de_solape() {
   sembrar_gen1
   rotate
   [ "$status" -eq 0 ]
-  run grep -c '/v1/kv/data/ocp/eks-kuadrant/payments/signing-key-gen2' "$VAULT_CALLS"
+  run grep -c '/v1/kv/eks/data/gal-poc/payments/key-2' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
 }
 
@@ -305,9 +308,9 @@ jwks_de_solape() {
   KV_VERSION=1 sembrar_gen1
   KV_VERSION=1 rotate
   [ "$status" -eq 0 ]
-  run grep -c '/v1/kv/ocp/eks-kuadrant/payments/signing-key-gen2' "$VAULT_CALLS"
+  run grep -c '/v1/kv/eks/gal-poc/payments/key-2' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
-  run grep -c '/v1/kv/data/' "$VAULT_CALLS"
+  run grep -c '/v1/kv/eks/data/' "$VAULT_CALLS"
   [ "$output" -eq 0 ]
 }
 

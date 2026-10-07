@@ -324,6 +324,8 @@ jq -n \
   --arg peer_jwks_url "$PEER_JWKS_URL" \
   --arg ingress_authpolicy "$INGRESS_AUTHPOLICY" \
   --arg ingress_gateway_name "$INGRESS_GATEWAY_NAME" \
+  --arg vault_kv_mount "$VAULT_KV_MOUNT" \
+  --arg vault_kv_cluster "$VAULT_KV_CLUSTER" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \

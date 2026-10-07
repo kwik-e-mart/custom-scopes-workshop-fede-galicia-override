@@ -17,6 +17,8 @@ spec:
           env:
             - { name: ORIGIN_NS, value: "{{ .namespace }}" }
             - { name: KEYS_NS, value: "{{ .keys_namespace }}" }
+            - { name: VAULT_KV_MOUNT, value: "{{ .vault_kv_mount }}" }
+            - { name: VAULT_KV_CLUSTER, value: "{{ .vault_kv_cluster }}" }
             - { name: CLUSTER, value: "{{ .cluster_label }}" }
             - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
             - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
@@ -54,6 +56,8 @@ spec:
               env:
                 - { name: ORIGIN_NS, value: "{{ .namespace }}" }
                 - { name: KEYS_NS, value: "{{ .keys_namespace }}" }
+                - { name: VAULT_KV_MOUNT, value: "{{ .vault_kv_mount }}" }
+                - { name: VAULT_KV_CLUSTER, value: "{{ .vault_kv_cluster }}" }
                 - { name: CLUSTER, value: "{{ .cluster_label }}" }
                 - { name: AUTH_POLICY_NAME, value: "{{ .gateway_name }}" }
                 - { name: TOKEN_DURATION, value: "300" }
