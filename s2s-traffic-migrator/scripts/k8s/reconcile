@@ -326,7 +326,6 @@ jq -n \
   --arg ingress_gateway_name "$INGRESS_GATEWAY_NAME" \
   --arg vault_kv_mount "$VAULT_KV_MOUNT" \
   --arg vault_kv_cluster "$VAULT_KV_CLUSTER" \
-  --arg vault_kv_version "$VAULT_KV_VERSION" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \

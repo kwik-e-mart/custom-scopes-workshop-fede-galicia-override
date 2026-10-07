@@ -19,7 +19,6 @@ spec:
             - { name: KEYS_NS, value: "{{ .keys_namespace }}" }
             - { name: VAULT_KV_MOUNT, value: "{{ .vault_kv_mount }}" }
             - { name: VAULT_KV_CLUSTER, value: "{{ .vault_kv_cluster }}" }
-            - { name: VAULT_KV_VERSION, value: "{{ .vault_kv_version }}" }
             - { name: CLUSTER, value: "{{ .cluster_label }}" }
             - { name: VAULT_ADDR, value: "{{ .vault_addr }}" }
             - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
@@ -59,7 +58,6 @@ spec:
                 - { name: KEYS_NS, value: "{{ .keys_namespace }}" }
                 - { name: VAULT_KV_MOUNT, value: "{{ .vault_kv_mount }}" }
                 - { name: VAULT_KV_CLUSTER, value: "{{ .vault_kv_cluster }}" }
-                - { name: VAULT_KV_VERSION, value: "{{ .vault_kv_version }}" }
                 - { name: CLUSTER, value: "{{ .cluster_label }}" }
                 - { name: AUTH_POLICY_NAME, value: "{{ .gateway_name }}" }
                 - { name: TOKEN_DURATION, value: "300" }

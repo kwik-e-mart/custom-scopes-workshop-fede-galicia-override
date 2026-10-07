@@ -99,7 +99,7 @@ correr() {
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc VAULT_KV_VERSION= \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -133,7 +133,7 @@ correr_openshift() {  # [interceptions-json]
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc VAULT_KV_VERSION= \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -161,7 +161,7 @@ correr_delete() {
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc VAULT_KV_VERSION= \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \

@@ -17,7 +17,6 @@ configuration:
   KEYS_NAMESPACE: kuadrant-system
   VAULT_KV_MOUNT: ""
   VAULT_KV_CLUSTER: ""
-  VAULT_KV_VERSION: ""
   WRISTBAND_SECRET_NAME: ""
   EGRESS_ISSUER_URL: "https://egress.{namespace}.s2s.local"
   PEER_CA_SECRET: s2s-remote-ca
@@ -62,7 +61,6 @@ steps:
       - { name: KEYS_NAMESPACE, type: environment }
       - { name: VAULT_KV_MOUNT, type: environment }
       - { name: VAULT_KV_CLUSTER, type: environment }
-      - { name: VAULT_KV_VERSION, type: environment }
       - { name: NETWORKING_VAULT_ADDR, type: environment }
       - { name: NETWORKING_VAULT_NAMESPACE, type: environment }
       - { name: NETWORKING_VAULT_SPIFFE_MOUNT, type: environment }

@@ -111,38 +111,17 @@ data:
       fi
     }
 
-    # KV v1 y v2 no comparten ni la ruta ni la forma de la respuesta, y elegir mal se manifiesta
-    # como un 404 que parece "no existe la clave". Se consulta una vez y se cachea.
-    vault_kv_version() {
-      if [ -z "${VAULT_KV_VERSION:-}" ]; then
-        local respuesta
-        if respuesta=$(vault_curl GET "sys/internal/ui/mounts/${VAULT_KV_MOUNT}"); then
-          VAULT_KV_VERSION=$(printf '%s' "$respuesta" | jq -r '.data.options.version // "1"')
-        else
-          echo "[vault] no se pudo leer la version del mount ${VAULT_KV_MOUNT} (la policy del AppRole" >&2
-          echo "[vault] suele no cubrir sys/internal/ui/mounts). Se asume KV v2; si el mount es v1," >&2
-          echo "[vault] declarar VAULT_KV_VERSION=1 en la configuracion del service." >&2
-          VAULT_KV_VERSION=2
-        fi
-        export VAULT_KV_VERSION
-        echo "[vault] mount=${VAULT_KV_MOUNT} KV v${VAULT_KV_VERSION}" >&2
-      fi
-      printf '%s' "${VAULT_KV_VERSION}"
-    }
-
+    # Las rutas son las de KV v2, que es lo que usa el mount del cliente: los datos cuelgan de
+    # <mount>/data/<ruta> y el borrado de <mount>/metadata/<ruta>. No se detecta la version en
+    # runtime a proposito: consultarla pide leer sys/internal/ui/mounts, que es un endpoint con
+    # politica propia que la policy del AppRole no tiene por que cubrir.
     vault_kv_path() {  # <ruta relativa al mount>
-      if [ "$(vault_kv_version)" = "2" ]; then
-        printf '%s/data/%s' "${VAULT_KV_MOUNT}" "$1"
-      else
-        printf '%s/%s' "${VAULT_KV_MOUNT}" "$1"
-      fi
+      printf '%s/data/%s' "${VAULT_KV_MOUNT}" "$1"
     }
 
     vault_kv_get_field() {  # <ruta> <campo>
-      local filtro=".data.data"
-      if [ "$(vault_kv_version)" != "2" ]; then filtro=".data"; fi
       vault_curl GET "$(vault_kv_path "$1")" \
-        | jq -er --arg campo "$2" "${filtro}[\$campo] // empty"
+        | jq -er --arg campo "$2" '.data.data[$campo] // empty'
     }
 
     vault_kv_exists() {  # <ruta>
@@ -151,19 +130,12 @@ data:
 
     vault_kv_put_file() {  # <ruta> <campo> <archivo>
       local cuerpo
-      cuerpo=$(jq -nc --arg k "$2" --rawfile v "$3" '{($k): $v}')
-      if [ "$(vault_kv_version)" = "2" ]; then
-        cuerpo=$(printf '%s' "$cuerpo" | jq -c '{data: .}')
-      fi
+      cuerpo=$(jq -nc --arg k "$2" --rawfile v "$3" '{data: {($k): $v}}')
       vault_curl POST "$(vault_kv_path "$1")" "$cuerpo" >/dev/null
     }
 
     vault_kv_delete() {  # <ruta>
-      if [ "$(vault_kv_version)" = "2" ]; then
-        vault_curl DELETE "${VAULT_KV_MOUNT}/metadata/$1" >/dev/null
-      else
-        vault_curl DELETE "${VAULT_KV_MOUNT}/$1" >/dev/null
-      fi
+      vault_curl DELETE "${VAULT_KV_MOUNT}/metadata/$1" >/dev/null
     }
   init.sh: |
     #!/usr/bin/env bash

@@ -18,7 +18,7 @@ setup() {
     keys_namespace:"kuadrant-system", keygen_image:"alpine/k8s:1.30.3",
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     vault_approle_role_id:"role-id", vault_approle_secret:"vault-approle-creds",
-    vault_secret_store:"vault-ocp", local_jwks_url:"", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", vault_kv_version:""
+    vault_secret_store:"vault-ocp", local_jwks_url:"", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc"
   }' >"$BATS_TEST_TMPDIR/ctx.json"
   gomplate -c .="$BATS_TEST_TMPDIR/ctx.json" \
     -f "$SVC/manifests/signing/cluster-keys/15-keygen-rbac.yaml.tpl" \
@@ -309,16 +309,22 @@ jwks_de_solape() {
   [ "$output" -ge 1 ]
 }
 
-@test "con KV v1 las rutas NO llevan /data y la respuesta se lee de .data" {
-  # Elegir mal la version se manifiesta como un 404 que parece "no existe la clave": si el
-  # recover leyera el campo del lugar equivocado, la rotacion abortaria.
-  KV_VERSION=1 sembrar_gen1
-  KV_VERSION=1 rotate
+@test "no se consulta sys/internal/ui/mounts: su policy es aparte de la del KV" {
+  sembrar_gen1
+  rotate
   [ "$status" -eq 0 ]
-  run grep -c '/v1/kv/eks/gal-poc/payments/key-2' "$VAULT_CALLS"
-  [ "$output" -ge 1 ]
-  run grep -c '/v1/kv/eks/data/' "$VAULT_CALLS"
+  run grep -c 'sys/internal/ui/mounts' "$VAULT_CALLS"
   [ "$output" -eq 0 ]
+}
+
+@test "el borrado va por metadata y la lectura por data" {
+  sembrar_gen1
+  printf 'externalsecret.external-secrets.io/payments-wristband-key-gen9\n' >"$FAKE_EXTERNALSECRETS"
+  rotate
+  run grep -c 'GET .*/v1/kv/eks/data/gal-poc/payments/key-1' "$VAULT_CALLS"
+  [ "$output" -ge 1 ]
+  run grep -c 'DELETE .*/v1/kv/eks/metadata/' "$VAULT_CALLS"
+  [ "$output" -ge 1 ]
 }
 
 @test "el login manda role_id y secret_id al endpoint de AppRole" {
