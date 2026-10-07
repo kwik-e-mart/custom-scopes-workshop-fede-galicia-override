@@ -182,7 +182,7 @@ data:
 
     echo "[init] creando el ExternalSecret ${KID} en ${KEYS_NS}"
     cat <<EOF | kubectl apply -f -
-    apiVersion: external-secrets.io/v1beta1
+    apiVersion: external-secrets.io/v1
     kind: ExternalSecret
     metadata:
       name: ${KID}
@@ -324,7 +324,7 @@ data:
     apply_new_signing_secret() {
       local gen="$1"
       cat <<EOF | kubectl apply -f -
-    apiVersion: external-secrets.io/v1beta1
+    apiVersion: external-secrets.io/v1
     kind: ExternalSecret
     metadata:
       name: ${SECRET_PREFIX}${gen}
