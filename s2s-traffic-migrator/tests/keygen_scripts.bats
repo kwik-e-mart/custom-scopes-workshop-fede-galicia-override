@@ -18,7 +18,7 @@ setup() {
     keys_namespace:"kuadrant-system", keygen_image:"alpine/k8s:1.30.3",
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     vault_approle_role_id:"role-id", vault_approle_secret:"vault-approle-creds",
-    vault_secret_store:"vault-ocp", local_jwks_url:"", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc"
+    vault_secret_store:"vault-ocp", local_jwks_url:"", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", vault_kv_version:""
   }' >"$BATS_TEST_TMPDIR/ctx.json"
   gomplate -c .="$BATS_TEST_TMPDIR/ctx.json" \
     -f "$SVC/manifests/signing/cluster-keys/15-keygen-rbac.yaml.tpl" \
@@ -52,16 +52,23 @@ setup() {
 #!/usr/bin/env bash
 # Modela la HTTP API de Vault sobre un KV en disco. El cuerpo de error se imprime igual que con
 # --fail-with-body, y un 404 sale con 22 como el curl real.
-metodo=GET; cuerpo=""; url=""
+metodo=GET; cuerpo=""; url=""; salida=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -X) metodo="$2"; shift 2 ;;
     --data-binary) cuerpo="$2"; shift 2 ;;
-    -H) shift 2 ;;
+    -o) salida="$2"; shift 2 ;;
+    -H|-w) shift 2 ;;
     http*) url="$1"; shift ;;
     *) shift ;;
   esac
 done
+# El vault_curl real escribe el cuerpo al archivo de -o e imprime SOLO el codigo HTTP.
+emitir() {  # <codigo> [cuerpo]
+  if [ -n "$salida" ]; then printf '%s' "${2:-}" >"$salida"; else printf '%s' "${2:-}"; fi
+  [ -n "$salida" ] && printf '%s' "$1"
+  exit 0
+}
 printf '%s %s\n' "$metodo" "$url" >>"$VAULT_CALLS"
 
 case "$url" in
@@ -72,9 +79,9 @@ ruta="${url#*/v1/}"
 MOUNT="${VAULT_KV_MOUNT:-kv}"
 case "$ruta" in
   auth/approle/login)
-    echo '{"auth":{"client_token":"s.token-falso"}}'; exit 0 ;;
+    emitir 200 '{"auth":{"client_token":"s.token-falso"}}' ;;
   sys/internal/ui/mounts/*)
-    printf '{"data":{"options":{"version":"%s"}}}\n' "${KV_VERSION:-2}"; exit 0 ;;
+    emitir 200 "$(printf '{"data":{"options":{"version":"%s"}}}' "${KV_VERSION:-2}")" ;;
 esac
 
 if [ "${KV_VERSION:-2}" = "2" ]; then
@@ -88,16 +95,16 @@ fi
 case "$metodo" in
   GET)
     if [ ! -d "$VAULT_KV/$interna" ]; then
-      echo '{"errors":[]}'; exit 22
+      emitir 404 '{"errors":[]}'
     fi
     datos=$(for f in "$VAULT_KV/$interna"/*; do
               [ -f "$f" ] || continue
               jq -nc --arg k "$(basename "$f")" --rawfile v "$f" '{($k): $v}'
             done | jq -sc 'add // {}')
     if [ "${KV_VERSION:-2}" = "2" ]; then
-      jq -nc --argjson d "$datos" '{data:{data:$d}}'
+      emitir 200 "$(jq -nc --argjson d "$datos" '{data:{data:$d}}')"
     else
-      jq -nc --argjson d "$datos" '{data:$d}'
+      emitir 200 "$(jq -nc --argjson d "$datos" '{data:$d}')"
     fi ;;
   POST)
     mkdir -p "$VAULT_KV/$interna"
@@ -106,10 +113,10 @@ case "$metodo" in
     for k in $(printf '%s' "$datos" | jq -r 'keys[]'); do
       printf '%s' "$datos" | jq -r --arg k "$k" '.[$k]' >"$VAULT_KV/$interna/$k"
     done
-    echo '{}' ;;
+    emitir 200 '{}' ;;
   DELETE)
     find "$VAULT_KV/$meta" -depth -delete 2>/dev/null || true
-    echo '{}' ;;
+    emitir 200 '{}' ;;
 esac
 exit 0
 MOCK

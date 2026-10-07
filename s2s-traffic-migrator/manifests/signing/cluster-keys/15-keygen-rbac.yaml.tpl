@@ -71,13 +71,25 @@ data:
 
     VAULT_KV_MOUNT="${VAULT_KV_MOUNT:-kv}"
 
+    # El cuerpo NUNCA se loguea en el request: el del login lleva el secret-id.
     vault_curl() {  # <metodo> <ruta sin /v1> [cuerpo json]
-      local metodo="$1" ruta="$2" cuerpo="${3:-}"
-      local -a args=(--silent --show-error --fail-with-body -X "$metodo")
+      local metodo="$1" ruta="$2" cuerpo="${3:-}" codigo
+      local salida="${WORK}/vault-respuesta"
+      local -a args=(--silent --show-error -o "$salida" -w '%{http_code}' -X "$metodo")
       if [ -n "${VAULT_TOKEN:-}" ]; then args+=(-H "X-Vault-Token: ${VAULT_TOKEN}"); fi
       if [ -n "${VAULT_NAMESPACE:-}" ]; then args+=(-H "X-Vault-Namespace: ${VAULT_NAMESPACE}"); fi
       if [ -n "$cuerpo" ]; then args+=(-H "Content-Type: application/json" --data-binary "$cuerpo"); fi
-      curl "${args[@]}" "${VAULT_API}/${ruta}"
+      if ! codigo=$(curl "${args[@]}" "${VAULT_API}/${ruta}"); then
+        echo "[vault] ${metodo} /v1/${ruta} -> SIN RESPUESTA (no se pudo conectar a ${VAULT_API})" >&2
+        return 1
+      fi
+      echo "[vault] ${metodo} /v1/${ruta} -> ${codigo}" >&2
+      case "$codigo" in
+        2*) cat "$salida" ;;
+        *)
+          echo "[vault]   ns=${VAULT_NAMESPACE:-<ninguno>} cuerpo=$(tr -d '\n' <"$salida")" >&2
+          return 1 ;;
+      esac
     }
 
     vault_login() {
@@ -90,6 +102,7 @@ data:
         echo "login a Vault (${VAULT_API}) fallido: ${respuesta}" >&2
         return 1
       fi
+      echo "[vault] login AppRole OK en ${VAULT_API} (namespace=${VAULT_NAMESPACE:-<ninguno>})" >&2
       VAULT_TOKEN=$(printf '%s' "$respuesta" | jq -r '.auth.client_token // empty')
       export VAULT_TOKEN
       if [ -z "${VAULT_TOKEN}" ]; then
@@ -102,9 +115,17 @@ data:
     # como un 404 que parece "no existe la clave". Se consulta una vez y se cachea.
     vault_kv_version() {
       if [ -z "${VAULT_KV_VERSION:-}" ]; then
-        VAULT_KV_VERSION=$(vault_curl GET "sys/internal/ui/mounts/${VAULT_KV_MOUNT}" \
-          | jq -r '.data.options.version // "1"')
+        local respuesta
+        if respuesta=$(vault_curl GET "sys/internal/ui/mounts/${VAULT_KV_MOUNT}"); then
+          VAULT_KV_VERSION=$(printf '%s' "$respuesta" | jq -r '.data.options.version // "1"')
+        else
+          echo "[vault] no se pudo leer la version del mount ${VAULT_KV_MOUNT} (la policy del AppRole" >&2
+          echo "[vault] suele no cubrir sys/internal/ui/mounts). Se asume KV v2; si el mount es v1," >&2
+          echo "[vault] declarar VAULT_KV_VERSION=1 en la configuracion del service." >&2
+          VAULT_KV_VERSION=2
+        fi
         export VAULT_KV_VERSION
+        echo "[vault] mount=${VAULT_KV_MOUNT} KV v${VAULT_KV_VERSION}" >&2
       fi
       printf '%s' "${VAULT_KV_VERSION}"
     }
@@ -161,6 +182,8 @@ data:
     KID="${ORIGIN_NS}-wristband-key-gen1"
     SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=${ORIGIN_NS}"
 
+    echo "[init] ns=${ORIGIN_NS} cluster=${VAULT_KV_CLUSTER} claves en ${KEYS_NS}"
+    echo "[init] buscando una clave existente con ${SELECTOR}"
     if [ -n "$(kubectl get secret -n "${KEYS_NS}" -l "${SELECTOR}" -o name)" ]; then
       echo "${ORIGIN_NS} ya tiene clave de firma en ${KEYS_NS}, no se toca"
       exit 0
@@ -170,17 +193,22 @@ data:
 
     vault_login
 
+    echo "[init] ruta base en Vault: ${VAULT_KV_MOUNT}/.../${VAULT_KV_BASE}"
     if vault_kv_exists "${VAULT_KV_BASE}/key-1"; then
       echo "key-1 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
     else
+      echo "[init] generando el par RSA de la generacion 1"
       openssl genrsa -traditional -out "${WORK}/gen1.pem" 2048
       head -1 "${WORK}/gen1.pem" | grep -q "BEGIN RSA PRIVATE KEY"
       openssl rsa -in "${WORK}/gen1.pem" -pubout -out "${WORK}/gen1.pub"
+      echo "[init] publicando la privada en Vault"
       vault_kv_put_file "${VAULT_KV_BASE}/key-1" private_key "${WORK}/gen1.pem"
       python3 "${SCRIPTS}/build-jwks.py" --old "${WORK}/gen1.pub" --old-kid "${KID}" > "${WORK}/jwks.json"
+      echo "[init] publicando el JWKS inicial"
       vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks "${WORK}/jwks.json"
     fi
 
+    echo "[init] creando el ExternalSecret ${KID} en ${KEYS_NS}"
     cat <<EOF | kubectl apply -f -
     apiVersion: external-secrets.io/v1beta1
     kind: ExternalSecret
@@ -212,6 +240,7 @@ data:
             key: ${VAULT_KV_BASE}/signing-key-gen1
             property: private_key
     EOF
+    echo "[init] esperando a que external-secrets materialice el Secret ${KID}"
     kubectl wait --for=condition=Ready "externalsecret/${KID}" -n "${KEYS_NS}" --timeout=120s
 
     echo "bootstrap de ${ORIGIN_NS} listo: ${KID}"
