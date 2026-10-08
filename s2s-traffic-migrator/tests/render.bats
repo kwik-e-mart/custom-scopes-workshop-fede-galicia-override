@@ -704,3 +704,11 @@ rule() {  # <percent> [service]
     [[ "$r" == *"memory"* ]]
   done
 }
+
+@test "el Role del rotador en kuadrant-system tiene watch: kubectl wait lo necesita" {
+  run render openshift "$(rule 100)"
+  local verbos
+  verbos=$(echo "$output" | yq -N 'select(.kind == "Role" and .metadata.namespace == "kuadrant-system") | .rules[] | select(.resources[] == "externalsecrets") | .verbs | join(",")')
+  [[ "$verbos" == *"watch"* ]]
+  [[ "$verbos" == *"list"* ]]
+}
