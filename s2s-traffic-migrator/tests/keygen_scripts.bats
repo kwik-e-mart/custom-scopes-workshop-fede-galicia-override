@@ -350,3 +350,24 @@ jwks_de_solape() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"VAULT_ADDR"* ]]
 }
+
+# La ruta de Vault aparece en DOS lugares que nadie compara: la que el script escribe y la que el
+# ExternalSecret declara en remoteRef. Si divergen, ESO contesta "Secret does not exist" y el Job
+# muere por timeout, sin que ningun test de forma lo note.
+ruta_escrita() { awk -F'\t' '$1 !~ /\/jwks$/ {print $1; exit}' "$VAULT_PUT_HISTORY"; }
+ruta_leida()   { yq -N '.spec.data[0].remoteRef.key' "$APPLIED_YAML"; }
+
+@test "el bootstrap: el ExternalSecret lee la MISMA ruta que el script escribio" {
+  init
+  [ "$status" -eq 0 ]
+  [ -n "$(ruta_escrita)" ]
+  [ "$(ruta_escrita)" = "$(ruta_leida)" ]
+}
+
+@test "la rotacion: el ExternalSecret lee la MISMA ruta que el script escribio" {
+  sembrar_gen1
+  rotate
+  [ "$status" -eq 0 ]
+  [ "$(ruta_escrita)" = "$(ruta_leida)" ]
+  [ "$(ruta_leida)" = "gal-poc/payments/key-2" ]
+}

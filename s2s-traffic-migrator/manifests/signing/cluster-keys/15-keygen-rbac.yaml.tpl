@@ -209,7 +209,7 @@ data:
       data:
         - secretKey: key.pem
           remoteRef:
-            key: ${VAULT_KV_BASE}/signing-key-gen1
+            key: ${VAULT_KV_BASE}/key-1
             property: private_key
     EOF
     echo "[init] esperando a que external-secrets materialice el Secret ${KID}"
@@ -351,7 +351,7 @@ data:
       data:
         - secretKey: key.pem
           remoteRef:
-            key: ${VAULT_KV_BASE}/signing-key-gen${gen}
+            key: ${VAULT_KV_BASE}/key-${gen}
             property: private_key
     EOF
       kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${KEYS_NS}" --timeout=60s
