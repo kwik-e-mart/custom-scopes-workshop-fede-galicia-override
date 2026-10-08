@@ -692,3 +692,15 @@ rule() {  # <percent> [service]
   bash -n "$cm/init.sh"
   bash -n "$cm/rotate.sh"
 }
+
+@test "el Job y el CronJob del keygen declaran requests y limits" {
+  run render openshift "$(rule 100)"
+  local r
+  for r in "$(doc "$output" Job | yq '.spec.template.spec.containers[0].resources')" \
+           "$(doc "$output" CronJob | yq '.spec.jobTemplate.spec.template.spec.containers[0].resources')"; do
+    [[ "$r" == *"requests"* ]]
+    [[ "$r" == *"limits"* ]]
+    [[ "$r" == *"cpu"* ]]
+    [[ "$r" == *"memory"* ]]
+  done
+}

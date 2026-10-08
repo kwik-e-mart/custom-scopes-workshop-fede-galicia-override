@@ -24,6 +24,9 @@ spec:
             - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
             - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
           command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl openssl > /dev/null && /bin/bash /scripts/init.sh"]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
           volumeMounts:
             - { name: scripts, mountPath: /scripts }
             - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
@@ -67,6 +70,9 @@ spec:
                 - { name: VAULT_NAMESPACE, value: "{{ .vault_namespace }}" }
                 - { name: VAULT_ROLE_ID, value: "{{ .vault_approle_role_id }}" }
               command: ["/bin/bash", "-c", "apk add --no-cache jq python3 py3-cryptography curl openssl > /dev/null && /bin/bash /scripts/rotate.sh"]
+              resources:
+                requests: { cpu: 50m, memory: 128Mi }
+                limits: { cpu: 500m, memory: 512Mi }
               volumeMounts:
                 - { name: scripts, mountPath: /scripts }
                 - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
