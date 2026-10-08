@@ -196,7 +196,7 @@ data:
       refreshInterval: 1m
       secretStoreRef:
         name: {{ .vault_secret_store }}
-        kind: SecretStore
+        kind: ClusterSecretStore
       target:
         name: ${KID}
         template:
@@ -338,7 +338,7 @@ data:
       refreshInterval: 1m
       secretStoreRef:
         name: {{ .vault_secret_store }}
-        kind: SecretStore
+        kind: ClusterSecretStore
       target:
         name: ${SECRET_PREFIX}${gen}
         template:

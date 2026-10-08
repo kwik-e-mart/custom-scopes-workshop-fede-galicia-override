@@ -205,6 +205,8 @@ jwks_de_solape() {
   [ "$(yq -N '.kind' "$APPLIED_YAML")" = "ExternalSecret" ]
   [ "$(yq -N '.metadata.name' "$APPLIED_YAML")" = "payments-wristband-key-gen1" ]
   [ "$(yq -N '.metadata.namespace' "$APPLIED_YAML")" = "kuadrant-system" ]
+  [ "$(yq -N '.apiVersion' "$APPLIED_YAML")" = "external-secrets.io/v1" ]
+  [ "$(yq -N '.spec.secretStoreRef.kind' "$APPLIED_YAML")" = "ClusterSecretStore" ]
 }
 
 @test "el Secret que materializa lleva los labels con los que lo busca el service" {
