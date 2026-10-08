@@ -39,7 +39,7 @@ metadata:
 rules:
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "delete"]

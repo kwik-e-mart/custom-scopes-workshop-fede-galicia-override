@@ -711,4 +711,18 @@ rule() {  # <percent> [service]
   verbos=$(echo "$output" | yq -N 'select(.kind == "Role" and .metadata.namespace == "kuadrant-system") | .rules[] | select(.resources[] == "externalsecrets") | .verbs | join(",")')
   [[ "$verbos" == *"watch"* ]]
   [[ "$verbos" == *"list"* ]]
+  [[ "$verbos" == *"patch"* ]]
+}
+
+@test "el agente puede otorgar todo lo que el Role del rotador pide" {
+  # El API server rechaza por escalada de privilegios la creacion de un Role que otorgue algo que
+  # el creador no tiene. Si el Role del rotador suma un verbo y np-agent-keys no, el apply falla.
+  run render openshift "$(rule 100)"
+  local rotador agente
+  rotador=$(echo "$output" | yq -N 'select(.kind == "Role" and .metadata.namespace == "kuadrant-system") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
+  agente=$(KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools TARGET_NAMESPACES=payments \
+    gomplate -f "${BATS_TEST_DIRNAME}/../../rbac/np-agent-rbac.yaml.tpl" \
+    | yq -N 'select(.kind == "Role" and .metadata.name == "np-agent-keys") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
+  [ -n "$rotador" ]
+  [ -z "$(comm -23 <(echo "$rotador") <(echo "$agente"))" ]
 }

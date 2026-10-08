@@ -103,10 +103,10 @@ metadata: { name: np-agent-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "create", "update", "patch", "delete"]
