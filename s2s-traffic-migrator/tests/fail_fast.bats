@@ -426,3 +426,19 @@ correr_delete() {
   run grep -c 'get job wristband-init-' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
+
+@test "con origen EKS tambien se exige que el validador de ingreso quede Enforced" {
+  # Era el agujero: el wait vivia dentro del if de plataforma, asi que con origen EKS el service
+  # desviaba el trafico sin haber verificado nunca que el ingreso valide el token.
+  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="authpolicy/s2s-validator" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"SIN validar el token"* ]]
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "con origen EKS el validador se espera en el namespace del Gateway" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c -- '-n gateways wait --for=condition=Enforced authpolicy/s2s-validator' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}

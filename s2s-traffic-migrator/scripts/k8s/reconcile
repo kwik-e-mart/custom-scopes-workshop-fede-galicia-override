@@ -503,11 +503,13 @@ if [ "$PLATFORM" != "eks" ]; then
       fi
     done
   done
+fi
 
-  # Y recién con esa route colgando, Kuadrant enforcea el validador del ingreso: una AuthPolicy que
-  # no está en el camino de ninguna route NO se aplica, y el destino aceptaría tráfico sin validar
-  # el wristband. Antes esta route la provisionaba Terraform de forma permanente y el validador
-  # estaba siempre enforceando; ahora que la trae la intercepción, hay que esperarlo explícitamente.
+# Kuadrant NO enforcea una AuthPolicy que no esté en el camino de ninguna route, y no falla
+# ruidosamente: queda Accepted=True y el destino acepta tráfico sin validar el wristband. Se espera
+# siempre que el validador sea nuestro —con cluster-keys lo emite este service—, y no sólo con
+# origen OpenShift como cuando era un prerequisito del layer.
+if [ -n "$VALIDATOR_FILE" ] || [ "$PLATFORM" != "eks" ]; then
   if ! kubectl -n "$GATEWAY_NAMESPACE" wait --for=condition=Enforced \
        "authpolicy/$INGRESS_AUTHPOLICY" --timeout=180s; then
     log error "la AuthPolicy de ingreso '$INGRESS_AUTHPOLICY' no llegó a Enforced=True en $GATEWAY_NAMESPACE."
