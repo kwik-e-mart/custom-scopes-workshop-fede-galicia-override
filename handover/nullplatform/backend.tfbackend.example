@@ -1,0 +1,5 @@
+bucket  = "CHANGE_ME-tfstate-bucket"
+key     = "shared/nullplatform.tfstate"
+region  = "us-east-1"
+profile = "CHANGE_ME-aws-profile"
+encrypt = true
