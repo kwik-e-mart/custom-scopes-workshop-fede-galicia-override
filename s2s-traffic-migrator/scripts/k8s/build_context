@@ -60,6 +60,8 @@ VAULT_APPROLE_SECRET="${VAULT_APPROLE_SECRET:-vault-approle-creds}"
 VAULT_SECRET_STORE="${VAULT_SECRET_STORE:-vault-ocp-plataforma}"
 LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}"
 PEER_JWKS_URL="${PEER_JWKS_URL:-}"
+JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-s2s-jwks}"
+JWKS_IMAGE="${JWKS_IMAGE:-registry.access.redhat.com/ubi9/httpd-24:latest}"
 INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
 KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
 
@@ -176,6 +178,7 @@ EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
 EGRESS_ISSUER=${EGRESS_ISSUER//\{namespace\}/$NAMESPACE}
 LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{namespace\}/$NAMESPACE}
 PEER_JWKS_URL=${PEER_JWKS_URL//\{namespace\}/$NAMESPACE}
+[ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${NAMESPACE}/jwks.json"
 require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
 
 gitops_substrate_hint() {
@@ -293,6 +296,7 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   require_match "$INGRESS_AUTHPOLICY" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "ingress_authpolicy"
   require_match "$CLUSTER_LABEL" '^[a-zA-Z0-9_.-]{1,63}$' "cluster_label"
   require_match "$VAULT_KV_CLUSTER" '^[a-zA-Z0-9_.-]{1,63}$' "vault_kv_cluster"
+  require_match "$JWKS_SERVICE_NAME" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "jwks_service_name"
   require_match "$LOCAL_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "local_ingress_host"
   case "$LOCAL_INGRESS_TLS_MODE" in
     skip-verify|certificate) ;;
@@ -346,7 +350,7 @@ export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_MOUNT VAULT_KV_CLUSTER
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
-export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME
+export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME JWKS_IMAGE
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
 log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \

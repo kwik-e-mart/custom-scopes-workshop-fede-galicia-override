@@ -326,6 +326,8 @@ jq -n \
   --arg ingress_gateway_name "$INGRESS_GATEWAY_NAME" \
   --arg vault_kv_mount "$VAULT_KV_MOUNT" \
   --arg vault_kv_cluster "$VAULT_KV_CLUSTER" \
+  --arg jwks_service "$JWKS_SERVICE_NAME" \
+  --arg jwks_image "$JWKS_IMAGE" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
@@ -390,6 +392,12 @@ keygen_jobs_present() {
     && kubectl -n "$NAMESPACE" get cronjob "wristband-rotate-$NAMESPACE" >/dev/null 2>&1
 }
 
+jwks_endpoint_present() {
+  kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1 \
+    && kubectl -n "$NAMESPACE" get svc "$JWKS_SERVICE_NAME" >/dev/null 2>&1 \
+    && kubectl -n "$NAMESPACE" get externalsecret "$JWKS_SERVICE_NAME" >/dev/null 2>&1
+}
+
 VALIDATOR_FILE=""
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
   KEEP=()
@@ -408,6 +416,15 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && keygen_jobs_present; then
   KEEP=()
   for f in "${MANIFESTS[@]}"; do
     [ "$(basename "$f")" = "16-keygen-jobs.yaml" ] || KEEP+=("$f")
+  done
+  MANIFESTS=("${KEEP[@]}")
+fi
+
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && jwks_endpoint_present; then
+  log info "egress-interceptor: el endpoint de JWKS de $NAMESPACE ya existe, no se reaplica."
+  KEEP=()
+  for f in "${MANIFESTS[@]}"; do
+    [ "$(basename "$f")" = "17-jwks-endpoint.yaml" ] || KEEP+=("$f")
   done
   MANIFESTS=("${KEEP[@]}")
 fi

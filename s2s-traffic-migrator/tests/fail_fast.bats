@@ -77,6 +77,8 @@ case "$*" in
     cat "$FAKE_GRANTS" ;;
   *"get job wristband-init-"*|*"get cronjob wristband-rotate-"*)
     [ -n "${KEYGEN_PRESENTE:-}" ] || exit 1 ;;
+  *"get deploy s2s-jwks"*|*"get svc s2s-jwks"*|*"get externalsecret s2s-jwks"*)
+    [ -n "${JWKS_PRESENTE:-}" ] || exit 1 ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
   *"get httproute"*"-o json"*)
@@ -99,7 +101,7 @@ correr() {
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -133,7 +135,7 @@ correr_openshift() {  # [interceptions-json]
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -161,7 +163,7 @@ correr_delete() {
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
@@ -441,4 +443,16 @@ correr_delete() {
   SIGNING_STRATEGY=cluster-keys run correr
   run grep -c -- '-n gateways wait --for=condition=Enforced authpolicy/s2s-validator' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
+}
+
+@test "la primera vez el endpoint de JWKS SI se aplica" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "si el endpoint de JWKS ya existe, no se vuelve a aplicar" {
+  SIGNING_STRATEGY=cluster-keys JWKS_PRESENTE=1 run correr
+  run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }

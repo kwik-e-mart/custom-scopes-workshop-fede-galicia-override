@@ -31,13 +31,13 @@ render() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"s2s-jwks", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
-    local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
+    local_jwks_url:"http://s2s-jwks.payments.svc.cluster.local:8080/payments/jwks.json",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
@@ -61,13 +61,13 @@ rendered_files() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"s2s-jwks", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-ocp-plataforma",
-    local_jwks_url:"http://jwks.example:8080/payments/jwks.json",
+    local_jwks_url:"http://s2s-jwks.payments.svc.cluster.local:8080/payments/jwks.json",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
@@ -108,7 +108,8 @@ rule() {  # <percent> [service]
   run render openshift "$(rule 100)"
   [[ "$output" != *"openresty"* ]]
   [[ "$output" != *"nginx"* ]]
-  [[ "$output" != *"kind: Deployment"* ]]
+  # El unico Deployment que emitimos es el que sirve el JWKS; ninguno se mete en el camino del dato.
+  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment") | .metadata.name' | grep -vx s2s-jwks | grep -c .)" -eq 0 ]
 }
 
 @test "el Gateway se auto-provisiona como ClusterIP: un gateway de egreso no se expone afuera" {
@@ -532,12 +533,13 @@ rule() {  # <percent> [service]
   # desde que hay una AuthPolicy que la referencia, haya o no tráfico declarado todavía.
   run rendered_files openshift '[]'
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep -c .)" -eq 5 ]
+  [ "$(echo "$output" | grep -c .)" -eq 6 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
   [[ "$output" == *"20-authpolicy.yaml"* ]]
   [[ "$output" == *"15-keygen-rbac.yaml"* ]]
   [[ "$output" == *"16-keygen-jobs.yaml"* ]]
   [[ "$output" == *"25-authpolicy-validator.yaml"* ]]
+  [[ "$output" == *"17-jwks-endpoint.yaml"* ]]
 }
 
 @test "el orden de aplicación pone al Gateway antes de lo que lo referencia" {
@@ -725,4 +727,52 @@ rule() {  # <percent> [service]
     | yq -N 'select(.kind == "Role" and .metadata.name == "np-agent-keys") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
   [ -n "$rotador" ]
   [ -z "$(comm -23 <(echo "$rotador") <(echo "$agente"))" ]
+}
+
+# La URL del JWKS aparece en el validador y el endpoint que la sirve son cuatro objetos distintos.
+# Nadie los compara, y divergir se manifiesta como "no lo firmó ninguna clave conocida" — el mismo
+# modo de falla que tuvimos cuando el remoteRef apuntaba a una ruta de Vault que nadie escribía.
+@test "el jwksUrl del validador apunta EXACTAMENTE al endpoint que emitimos" {
+  run render eks "$(rule 0)"
+  local url svc port ruta
+  url=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication."local-payments".jwt.jwksUrl')
+  svc=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "s2s-jwks") | .metadata.name + "." + .metadata.namespace')
+  port=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "s2s-jwks") | .spec.ports[0].port')
+  ruta=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "s2s-jwks") | .spec.template.spec.volumes[0].projected.sources[0].secret.items[0].path')
+  [ "$url" = "http://${svc}.svc.cluster.local:${port}/${ruta}" ]
+}
+
+@test "el Secret que sirve el endpoint es el que materializa su ExternalSecret" {
+  run render eks "$(rule 0)"
+  local vol target clave item
+  vol=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "s2s-jwks") | .spec.template.spec.volumes[0].projected.sources[0].secret.name')
+  item=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "s2s-jwks") | .spec.template.spec.volumes[0].projected.sources[0].secret.items[0].key')
+  target=$(echo "$output" | yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "s2s-jwks") | .spec.target.name')
+  clave=$(echo "$output" | yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "s2s-jwks") | .spec.data[0].secretKey')
+  [ "$vol" = "$target" ]
+  [ "$item" = "$clave" ]
+}
+
+@test "el ExternalSecret lee la ruta de Vault donde el keygen escribe el JWKS" {
+  run render eks "$(rule 0)"
+  local remoto init
+  remoto=$(echo "$output" | yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "s2s-jwks") | .spec.data[0].remoteRef.key')
+  [ "$remoto" = "gal-poc/payments/jwks" ]
+  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap" and .metadata.name == "wristband-rotate-scripts") | .data."init.sh"')
+  [[ "$init" == *'VAULT_KV_BASE="${VAULT_KV_CLUSTER}/${ORIGIN_NS}"'* ]]
+  [[ "$init" == *'vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks'* ]]
+}
+
+@test "el Service y el Deployment del endpoint se seleccionan entre si" {
+  run render eks "$(rule 0)"
+  local sel lbl
+  sel=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "s2s-jwks") | .spec.selector.app')
+  lbl=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "s2s-jwks") | .spec.selector.matchLabels.app')
+  [ "$sel" = "$lbl" ]
+  [ -n "$sel" ]
+}
+
+@test "el volumen del JWKS es opcional: el pod arranca antes de que exista la clave" {
+  run render eks "$(rule 0)"
+  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "s2s-jwks") | .spec.template.spec.volumes[0].projected.sources[0].secret.optional')" = "true" ]
 }

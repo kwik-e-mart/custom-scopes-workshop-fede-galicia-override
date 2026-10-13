@@ -595,3 +595,35 @@ rule() {  # <service_name tal cual lo escribe el dev>
   run_bc
   [ "$status" -eq 0 ]
 }
+
+# El nombre del Service y la URL que el validador consulta son el mismo dato en dos lugares. Se
+# deriva uno del otro justamente para que no puedan divergir; esto lo fija.
+exportado() {  # <variable>
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+    bash -c "source '$BC' >/dev/null 2>&1; printf '%s' \"\$$1\""
+}
+
+@test "la URL del JWKS se deriva del nombre del Service y del namespace" {
+  [ "$(exportado JWKS_SERVICE_NAME)" = "s2s-jwks" ]
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://s2s-jwks.payments.svc.cluster.local:8080/payments/jwks.json" ]
+}
+
+@test "cambiar el nombre del Service mueve la URL con el" {
+  export JWKS_SERVICE_NAME=otro-jwks
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://otro-jwks.payments.svc.cluster.local:8080/payments/jwks.json" ]
+  unset JWKS_SERVICE_NAME
+}
+
+@test "una LOCAL_JWKS_URL declarada le gana a la derivada" {
+  export LOCAL_JWKS_URL="http://propio:9999/{namespace}/jwks.json"
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://propio:9999/payments/jwks.json" ]
+  unset LOCAL_JWKS_URL
+}
+
+@test "un nombre de Service invalido ABORTA en vez de rendear un Service imposible" {
+  export JWKS_SERVICE_NAME="Mal Nombre"
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  unset JWKS_SERVICE_NAME
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"jwks_service_name"* ]]
+}
