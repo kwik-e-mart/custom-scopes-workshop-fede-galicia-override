@@ -9,8 +9,17 @@ resource "nullplatform_entity_hook_action" "deployment_update" {
   dimensions = var.hook_dimensions
 }
 
+module "channel_api_key" {
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/api_key?ref=v4.5.1"
+
+  type              = "custom"
+  nrn               = var.nrn
+  custom_name       = "DEPLOYMENT-NOTIFICATION-CHANNEL-CONTROL-NULL"
+  custom_role_slugs = ["controlplane:agent", "ops"]
+}
+
 resource "terraform_data" "agent_api_key_trigger" {
-  input = var.agent_api_key
+  input = module.channel_api_key.api_key
 }
 
 resource "nullplatform_notification_channel" "deployment_status" {
@@ -21,7 +30,7 @@ resource "nullplatform_notification_channel" "deployment_status" {
 
   configuration {
     agent {
-      api_key = var.agent_api_key
+      api_key = module.channel_api_key.api_key
       command {
         type = "exec"
         data = {
