@@ -5,6 +5,10 @@ AuthPolicy por Gateway— pero su contenido es por namespace de origen, porque c
 su propia clave y por lo tanto tiene su propio JWKS. El reconcile no lo pisa: si ya existe,
 mergea estas tres claves y deja las de los demás namespaces intactas.
 
+La regla del peer se omite si no hay JWKS del otro sustrato configurado. Authorino falla CERRADO
+para el request entero cuando no puede bajar el JWKS de UNA de sus reglas, así que un peer apagado
+—o que todavía no existe— dejaría al namespace sin poder recibir tráfico local.
+
 El `when` no es decorativo: Authorino evalúa TODAS las reglas de authorization en AND, así que
 sin él el token de este namespace tendría que cumplir también el `src_namespace` de los otros y
 nunca pasaría. Con el `when` sobre el `iss`, cada token evalúa únicamente su propia regla.
@@ -30,6 +34,7 @@ spec:
         credentials:
           customHeader:
             name: x-egress-token
+{{- if .peer_jwks_url }}
       "peer-{{ $ns }}":
         jwt:
           jwksUrl: {{ .peer_jwks_url | quote }}
@@ -37,6 +42,7 @@ spec:
         credentials:
           customHeader:
             name: x-egress-token
+{{- end }}
     authorization:
       "claims-{{ $ns }}":
         when:

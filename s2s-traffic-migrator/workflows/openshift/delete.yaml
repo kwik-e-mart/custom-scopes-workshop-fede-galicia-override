@@ -12,7 +12,7 @@ configuration:
   VAULT_APPROLE_SECRET: vault-approle-creds
   VAULT_SECRET_STORE: vault-ocp-plataforma
   LOCAL_JWKS_URL: ""
-  PEER_JWKS_URL: "http://s2s-crc-jwks.kuadrant-system.svc.cluster.local:8080/{namespace}/jwks.json"
+  PEER_JWKS_URL: ""
   INGRESS_GATEWAY_NAME: s2s-ingress
   KEYS_NAMESPACE: kuadrant-system
   VAULT_KV_MOUNT: ""

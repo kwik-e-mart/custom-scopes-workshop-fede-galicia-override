@@ -31,7 +31,7 @@ render() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"s2s-jwks", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"s2s-jwks", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -61,7 +61,7 @@ rendered_files() {
     namespace:"payments", gateway_name:"s2s-egress", gateway_class:"istio",
     listen_port:8080, token_duration:300, wristband_secret:"payments-wristband-key",
     egress_issuer:"https://egress.payments.s2s.local",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:"http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"s2s-jwks", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"s2s-jwks", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -799,4 +799,21 @@ rule() {  # <percent> [service]
   [ "$(echo "$sni" | grep -c .)" -eq 1 ]
   rutas=$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .spec.rules[0].filters[] | select(.type == "URLRewrite") | .urlRewrite.hostname')
   [ "$(echo "$rutas" | sort -u | grep -c .)" -eq 2 ]
+}
+
+@test "sin PEER_JWKS_URL el validador no emite la regla del peer" {
+  # Authorino falla CERRADO si no puede bajar el JWKS de una sola de sus reglas: un peer apagado
+  # dejaria al namespace sin poder recibir ni siquiera el trafico local.
+  PEER_JWKS="" run render eks "$(rule 100)"
+  local reglas
+  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication | keys | .[]')
+  [[ "$reglas" == *"local-payments"* ]]
+  [[ "$reglas" != *"peer-payments"* ]]
+}
+
+@test "con PEER_JWKS_URL el validador si emite la regla del peer" {
+  run render eks "$(rule 100)"
+  local reglas
+  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication | keys | .[]')
+  [[ "$reglas" == *"peer-payments"* ]]
 }
