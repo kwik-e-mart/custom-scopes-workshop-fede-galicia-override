@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CONTROL_NULL_URL="${CONTROL_NULL_URL:-https://control-null-devo-devops-dev.apps.paas-dev.bancogalicia.com.ar/notification}"
+CONTROL_NULL_URL="https://control-null-devo-devops-dev.apps.paas-dev.bancogalicia.com.ar/notification"
 NP_API_URL="${NP_API_URL:-https://api.nullplatform.com}"
 
 if [ -z "${NP_ACTION_CONTEXT:-}" ]; then
