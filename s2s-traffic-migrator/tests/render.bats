@@ -79,6 +79,11 @@ rendered_files() {
 # doc <render> <kind>: el documento de ese kind, sin comentarios. Se borran a propósito: varios
 # explican qué pasaría con la config equivocada (`LoadBalancer`, `insecureSkipVerify`) y una
 # aserción por substring los leería como si estuvieran configurados.
+rule_multi() {
+  jq -nc --arg f "$FQDN" '[{service_name:"reports", scope:"dev", scope_fqdn:$f, percent:100},
+                           {service_name:"ledger",  scope:"dev", scope_fqdn:("otro-" + $f), percent:100}]'
+}
+
 doc() {  # <render> <kind> [nombre]
   if [ -n "${3:-}" ]; then
     echo "$1" | yq "select(.kind == \"$2\" and .metadata.name == \"$3\") | ... comments=\"\""
@@ -348,7 +353,7 @@ rule() {  # <percent> [service]
   local dr; dr=$(named "$output" DestinationRule s2s-egress-local-ingress)
   [ "$(echo "$dr" | yq '.spec.host')" = "$LOCAL_IN" ]
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
-  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "s2s.galicia-poc.nullapps.io" ]
 }
 
 @test "desde OpenShift no se emite el DestinationRule del ingreso local" {
@@ -614,7 +619,7 @@ rule() {  # <percent> [service]
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "true" ]
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.credentialName // "ausente"')" = "ausente" ]
   [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
-  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "$LOCAL_IN" ]
+  [ "$(echo "$d" | yq '.spec.trafficPolicy.tls.sni')" = "s2s.galicia-poc.nullapps.io" ]
 }
 
 @test "con LOCAL_INGRESS_TLS_MODE=certificate valida contra PEER_CA_SECRET" {
@@ -775,4 +780,23 @@ rule() {  # <percent> [service]
 @test "el volumen del JWKS es opcional: el pod arranca antes de que exista la clave" {
   run render eks "$(rule 0)"
   [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "s2s-jwks") | .spec.template.spec.volumes[0].projected.sources[0].secret.optional')" = "true" ]
+}
+
+@test "el SNI al ingreso local sale del dominio de los scopes, no del host del Gateway" {
+  # El listener del ingreso elige filter chain por SNI. Con el nombre interno del Service no
+  # matchea ninguno y Envoy cierra sin responder, que se lee igual que un firewall.
+  run render eks "$(rule 100)"
+  local sni
+  sni=$(echo "$output" | yq -N 'select(.kind == "DestinationRule" and .metadata.name == "s2s-egress-local-ingress") | .spec.trafficPolicy.tls.sni')
+  [ "$sni" = "s2s.galicia-poc.nullapps.io" ]
+  [[ "$sni" != *"svc.cluster.local"* ]]
+}
+
+@test "dos scopes del mismo dominio comparten SNI: el Host hace la separacion" {
+  run render eks "$(rule_multi)"
+  local sni rutas
+  sni=$(echo "$output" | yq -N 'select(.kind == "DestinationRule" and .metadata.name == "s2s-egress-local-ingress") | .spec.trafficPolicy.tls.sni')
+  [ "$(echo "$sni" | grep -c .)" -eq 1 ]
+  rutas=$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .spec.rules[0].filters[] | select(.type == "URLRewrite") | .urlRewrite.hostname')
+  [ "$(echo "$rutas" | sort -u | grep -c .)" -eq 2 ]
 }

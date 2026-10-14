@@ -345,6 +345,18 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   done < <(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | [.scope, .scope_fqdn] | @tsv')
 fi
 
+if [ "$PLATFORM" = "eks" ]; then
+  SCOPE_DOMAINS=$(printf %s "$INTERCEPTIONS_JSON" \
+    | jq -r '[.[] | .scope_fqdn | sub("^[^.]+\\."; "")] | unique | .[]')
+  if [ "$(printf '%s\n' "$SCOPE_DOMAINS" | grep -c .)" -gt 1 ]; then
+    log error "egress-interceptor: las intercepciones apuntan a scopes de dominios base distintos:"
+    log error "  $(printf '%s' "$SCOPE_DOMAINS" | tr '\n' ' ')"
+    log error "  El SNI hacia el ingreso local es uno solo por namespace y elige el listener del Gateway."
+    log error "  Con dominios mezclados elegiría el equivocado para alguna, y esa falla en silencio."
+    exit 1
+  fi
+fi
+
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
