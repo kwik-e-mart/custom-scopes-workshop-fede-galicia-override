@@ -36,6 +36,7 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |
+| `75-networkpolicy-jwks.yaml` | `NetworkPolicy allow-authorino-jwks`: habilita `kuadrant-system` → el pod `s2s-jwks` del namespace en el 8080. **Sin esto el validador no puede bajar el JWKS** y Authorino falla cerrado con `UNAVAILABLE`, que llega al cliente como un 500 | por namespace emisor | **sólo `cluster-keys`** |
 
 ## Placeholders
 

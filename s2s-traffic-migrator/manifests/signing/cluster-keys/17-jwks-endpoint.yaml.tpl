@@ -8,6 +8,10 @@ Vault, el ExternalSecret lo baja a un Secret, y httpd lo publica.
 Todo vive en el namespace de la app y no en kuadrant-system: ahí cada instancia es dueña de lo
 suyo y dos emisores no pueden pisarse el Deployment ni el Service.
 
+El namespace de la app suele estar cerrado con una NetworkPolicy de sólo-intra-namespace, y
+quien consume este JWKS es Authorino, que vive en otro. Habilitar ese tránsito es prerequisito del
+cluster, no algo que emita este service: ver 75-networkpolicy-jwks.yaml en specs/prerequisites.
+
 El `optional: true` del volumen es lo que permite que el pod arranque antes de que exista la
 clave. Sin eso el Deployment se queda en ContainerCreating hasta que el keygen termine, y como el
 reconcile espera a que el endpoint responda, se traba contra sí mismo.
