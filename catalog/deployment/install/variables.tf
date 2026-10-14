@@ -9,12 +9,6 @@ variable "nrn" {
   description = "NRN (organization=...:account=...) donde se registran el hook y el channel."
 }
 
-variable "agent_api_key" {
-  type        = string
-  sensitive   = true
-  description = "API key que queda embebida en el notification channel para que el agente pueda responderle a la plataforma."
-}
-
 variable "tags_selectors" {
   type        = map(string)
   description = "Selector de tags que decide qué agente atiende las notificaciones."

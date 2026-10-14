@@ -1,5 +1,4 @@
 np_api_key    = "REEMPLAZAR_CON_LA_API_KEY_DEL_PROVIDER"
-agent_api_key = "REEMPLAZAR_CON_LA_API_KEY_DEL_AGENTE"
 nrn           = "organization=REEMPLAZAR:account=REEMPLAZAR"
 
 tags_selectors = {
