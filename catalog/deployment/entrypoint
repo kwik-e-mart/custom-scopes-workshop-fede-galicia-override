@@ -88,16 +88,19 @@ CONTROL_NULL_RESPONSE=$(cat "$response_file")
 
 if [[ "$CONTROL_NULL_CODE" =~ ^2 ]]; then
   STATUS="success"
+  LEVEL="info"
 else
   STATUS="failed"
+  LEVEL="error"
 fi
 
 echo "control-null answered HTTP $CONTROL_NULL_CODE: $CONTROL_NULL_RESPONSE"
 
 payload=$(jq -n \
   --arg status "$STATUS" \
+  --arg level "$LEVEL" \
   --arg message "control-null HTTP $CONTROL_NULL_CODE: $CONTROL_NULL_RESPONSE" \
-  '{status: $status, messages: [$message]}')
+  '{status: $status, messages: [{level: $level, message: $message, timestamp: (now * 1000 | floor)}]}')
 
 echo "Updating hook with status: $STATUS. URL: $CALLBACK_URL"
 
