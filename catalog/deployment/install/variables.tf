@@ -49,9 +49,3 @@ variable "entrypoint_path" {
   default     = "catalog/deployment/entrypoint"
   description = "Ruta del entrypoint dentro del repo."
 }
-
-variable "control_null_url" {
-  type        = string
-  default     = "https://control-null-devo-devops-dev.apps.paas-dev.bancogalicia.com.ar/notification"
-  description = "Endpoint de control-null al que el entrypoint notifica cada deployment."
-}

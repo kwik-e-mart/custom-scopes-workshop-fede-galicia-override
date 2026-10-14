@@ -28,7 +28,6 @@ resource "nullplatform_notification_channel" "deployment_status" {
           cmdline = "${var.base_clone_path}/${var.repository}/${var.entrypoint_path}"
           environment = jsonencode({
             NP_ACTION_CONTEXT = "'$${NOTIFICATION_CONTEXT}'"
-            CONTROL_NULL_URL  = var.control_null_url
           })
         }
       }
