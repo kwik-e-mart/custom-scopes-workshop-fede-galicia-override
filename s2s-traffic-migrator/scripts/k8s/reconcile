@@ -504,15 +504,15 @@ fi
 
 # `Accepted=True` sólo dice que Kuadrant entendió el objeto. Sin esperar `Enforced=True`, el swap
 # manda tráfico por un Gateway que todavía no firma y el destino responde 401.
-if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$GATEWAY_NAME" --timeout=180s; then
-  log error "la AuthPolicy $GATEWAY_NAME no llegó a Enforced=True. El tráfico NO se desvió."
-  log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$GATEWAY_NAME" \
+if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$EGRESS_AUTHPOLICY" --timeout=180s; then
+  log error "la AuthPolicy $EGRESS_AUTHPOLICY no llegó a Enforced=True. El tráfico NO se desvió."
+  log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$EGRESS_AUTHPOLICY" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
   if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
     log error "  Causa típica: el Secret $NETWORKING_VAULT_TOKEN_SECRET no existe en kuadrant-system o está vacío."
     log error "  Lo puebla el CronJob de login a Vault (specs/prerequisites/manifests/55-vault-login-cronjob.yaml)."
   else
-    log error "  Causa típica: el Secret de firma no existe en kuadrant-system, o no está en PKCS#1."
+    log error "  Causa típica: el Secret de firma '$WRISTBAND_SECRET' no existe en $KEYS_NAMESPACE, o no está en PKCS#1."
   fi
   exit 1
 fi
