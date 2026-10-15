@@ -6,7 +6,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: s2s-jwks
+      app: jwks-egress
   policyTypes:
     - Ingress
   ingress:
