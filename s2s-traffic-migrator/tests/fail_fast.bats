@@ -75,6 +75,10 @@ case "$*" in
       exit 1
     fi
     cat "$FAKE_GRANTS" ;;
+  *"get job wristband-init-"*|*"get cronjob wristband-rotate-"*)
+    [ -n "${KEYGEN_PRESENTE:-}" ] || exit 1 ;;
+  *"get deploy s2s-jwks"*|*"get svc s2s-jwks"*|*"get externalsecret s2s-jwks"*)
+    [ -n "${JWKS_PRESENTE:-}" ] || exit 1 ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
   *"get httproute"*"-o json"*)
@@ -94,6 +98,11 @@ correr() {
   WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
+  KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
+  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
+  KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
+  NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
@@ -123,6 +132,11 @@ correr_openshift() {  # [interceptions-json]
   WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
+  KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
+  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
+  KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
+  NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
@@ -146,6 +160,11 @@ correr_delete() {
   WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
+  KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
+  VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
+  KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
+  NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
@@ -360,4 +379,80 @@ correr_delete() {
   export FALLA_GRANTS=1
   run correr
   [[ "$output" == *"from HTTPRoute/payments, to Service/li"* ]]
+}
+
+@test "con cluster-keys espera al Job de la clave ANTES de exigir Enforced" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  local job pol
+  job=$(grep -n 'wait --for=condition=Complete job/wristband-init-payments' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/s2s-egress' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  [ -n "$job" ]
+  [ -n "$pol" ]
+  [ "$job" -lt "$pol" ]
+}
+
+@test "si el Job de la clave no termina, ABORTA y no toca el selector" {
+  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="job/wristband-init" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wristband-init-payments"* ]]
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "con spiffe no espera ningún Job de clave" {
+  run correr
+  run grep -c 'job/wristband-init' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "la primera vez el Job y el CronJob del keygen SÍ se aplican" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "si el Job y el CronJob ya existen, no se vuelven a aplicar" {
+  SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
+  run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "el ConfigMap con los scripts se reaplica aunque el keygen ya exista" {
+  SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
+  run grep -c '15-keygen-rbac.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "con spiffe no se consulta si el keygen existe" {
+  run correr
+  run grep -c 'get job wristband-init-' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "con origen EKS tambien se exige que el validador de ingreso quede Enforced" {
+  # Era el agujero: el wait vivia dentro del if de plataforma, asi que con origen EKS el service
+  # desviaba el trafico sin haber verificado nunca que el ingreso valide el token.
+  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="authpolicy/s2s-validator" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"SIN validar el token"* ]]
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "con origen EKS el validador se espera en el namespace del Gateway" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c -- '-n gateways wait --for=condition=Enforced authpolicy/s2s-validator' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "la primera vez el endpoint de JWKS SI se aplica" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "si el endpoint de JWKS ya existe, no se vuelve a aplicar" {
+  SIGNING_STRATEGY=cluster-keys JWKS_PRESENTE=1 run correr
+  run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }

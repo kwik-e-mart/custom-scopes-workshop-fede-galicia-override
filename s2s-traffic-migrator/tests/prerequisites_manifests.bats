@@ -131,3 +131,4 @@ aud_predicate() {
   [[ "$preds" == *'auth.identity.src_namespace == \"payments\"'* ]]
   [ "$(yq '.spec.rules.authentication.local-payments.overrides' "$out")" = "null" ]
 }
+

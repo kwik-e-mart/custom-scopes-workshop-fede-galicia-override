@@ -54,6 +54,16 @@ NETWORKING_VAULT_NAMESPACE="${NETWORKING_VAULT_NAMESPACE:-}"
 NETWORKING_VAULT_SPIFFE_MOUNT="${NETWORKING_VAULT_SPIFFE_MOUNT:-}"
 NETWORKING_VAULT_SPIFFE_ROLE="${NETWORKING_VAULT_SPIFFE_ROLE:-s2s-egress}"
 NETWORKING_VAULT_TOKEN_SECRET="${NETWORKING_VAULT_TOKEN_SECRET:-s2s-vault-token}"
+KEYGEN_IMAGE="${KEYGEN_IMAGE:-alpine/k8s:1.30.3}"
+VAULT_APPROLE_ROLE_ID="${VAULT_APPROLE_ROLE_ID:-}"
+VAULT_APPROLE_SECRET="${VAULT_APPROLE_SECRET:-vault-approle-creds}"
+VAULT_SECRET_STORE="${VAULT_SECRET_STORE:-vault-ocp-plataforma}"
+LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}"
+PEER_JWKS_URL="${PEER_JWKS_URL:-}"
+JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-s2s-jwks}"
+JWKS_IMAGE="${JWKS_IMAGE:-registry.access.redhat.com/ubi9/httpd-24:latest}"
+INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
+KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
 
 warn_inert() {
   local name="$1" value="$2" default="$3"
@@ -67,8 +77,6 @@ if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
   warn_inert WRISTBAND_SECRET_NAME "${WRISTBAND_SECRET_NAME:-}" '{namespace}-wristband-key'
   warn_inert EGRESS_ISSUER_URL "${EGRESS_ISSUER_URL:-}" 'https://egress.{namespace}.s2s.local'
 else
-  warn_inert NETWORKING_VAULT_ADDR "$NETWORKING_VAULT_ADDR" ""
-  warn_inert NETWORKING_VAULT_NAMESPACE "$NETWORKING_VAULT_NAMESPACE" ""
   warn_inert NETWORKING_VAULT_SPIFFE_MOUNT "$NETWORKING_VAULT_SPIFFE_MOUNT" ""
   warn_inert NETWORKING_VAULT_SPIFFE_ROLE "$NETWORKING_VAULT_SPIFFE_ROLE" s2s-egress
 fi
@@ -93,6 +101,18 @@ export SITE PLATFORM
 # `set -u`, leerlo antes aborta el script con "unbound variable".
 CLUSTER_LABEL="${CLUSTER_LABEL:-$SITE}"
 
+VAULT_KV_CLUSTER="${VAULT_KV_CLUSTER:-}"
+if [ -z "$VAULT_KV_CLUSTER" ]; then
+  VAULT_KV_CLUSTER=$(echo "$CONTEXT" | jq -r '.providers["container-orchestration"].cluster.id // empty' 2>/dev/null || true)
+fi
+VAULT_KV_CLUSTER="${VAULT_KV_CLUSTER:-$CLUSTER_LABEL}"
+
+case "$PLATFORM" in
+  eks) VAULT_KV_SUBSTRATE=eks ;;
+  *)   VAULT_KV_SUBSTRATE=ocp ;;
+esac
+VAULT_KV_MOUNT="${VAULT_KV_MOUNT:-kv/$VAULT_KV_SUBSTRATE}"
+
 # Estos valores se interpolan en YAML que el cluster aplica y en comandos del reconcile.
 require_match() {  # <value> <regex> <field>
   local val="$1" re="$2" name="$3"
@@ -104,14 +124,61 @@ require_match() {  # <value> <regex> <field>
 require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
 [ -n "$SERVICE_ID" ] && require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
-WRISTBAND_SECRET="${WRISTBAND_SECRET_NAME:-}"
-[ -n "$WRISTBAND_SECRET" ] || WRISTBAND_SECRET='{namespace}-wristband-key'
-WRISTBAND_SECRET=${WRISTBAND_SECRET//\{namespace\}/$NAMESPACE}
+WRISTBAND_KEY_SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=$NAMESPACE"
+
+if ! type -t current_wristband_secret >/dev/null 2>&1; then
+current_wristband_secret() {
+  local out gen name best_gen="" best_name=""
+  if ! out=$(kubectl -n "$KEYS_NAMESPACE" get secret -l "$WRISTBAND_KEY_SELECTOR" \
+      -o jsonpath="{range .items[*]}{.metadata.labels['egress-interceptor/key-generation']}{'\t'}{.metadata.name}{'\n'}{end}" 2>&1); then
+    log error "egress-interceptor: no se pudieron listar las claves de firma en '$KEYS_NAMESPACE'." >&2
+    log error "  $out" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r gen name; do
+    [ -n "$name" ] || continue
+    [[ "$gen" =~ ^[0-9]+$ ]] || continue
+    if [ -z "$best_gen" ] || [ "$gen" -gt "$best_gen" ]; then
+      best_gen="$gen"
+      best_name="$name"
+    fi
+  done <<<"$out"
+  [ -n "$best_name" ] || return 2
+  printf '%s' "$best_name"
+}
+fi
+
+resolve_wristband_secret() {
+  if [ -n "${WRISTBAND_SECRET_NAME:-}" ]; then
+    printf '%s' "${WRISTBAND_SECRET_NAME//\{namespace\}/$NAMESPACE}"
+    return 0
+  fi
+  if [ "$SIGNING_STRATEGY" != "cluster-keys" ]; then
+    printf '%s-wristband-key' "$NAMESPACE"
+    return 0
+  fi
+  local found rc=0
+  found=$(current_wristband_secret) || rc=$?
+  case "$rc" in
+    0) printf '%s' "$found" ;;
+    2) printf '%s-wristband-key-gen1' "$NAMESPACE" ;;
+    *) return 1 ;;
+  esac
+}
+
+WRISTBAND_SECRET=$(resolve_wristband_secret) || {
+  log error "egress-interceptor: no se pudo resolver la clave de firma de '$NAMESPACE'. No se aplicó nada."
+  log error "  El agente necesita 'list' sobre secrets en '$KEYS_NAMESPACE' (Role np-agent-keys)."
+  exit 1
+}
 require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
 
 EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
 [ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER='https://egress.{namespace}.s2s.local'
 EGRESS_ISSUER=${EGRESS_ISSUER//\{namespace\}/$NAMESPACE}
+LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{namespace\}/$NAMESPACE}
+PEER_JWKS_URL=${PEER_JWKS_URL//\{namespace\}/$NAMESPACE}
+[ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${NAMESPACE}/jwks.json"
 require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
 
 gitops_substrate_hint() {
@@ -228,6 +295,8 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   require_match "$GATEWAY_NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "gateway_namespace"
   require_match "$INGRESS_AUTHPOLICY" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "ingress_authpolicy"
   require_match "$CLUSTER_LABEL" '^[a-zA-Z0-9_.-]{1,63}$' "cluster_label"
+  require_match "$VAULT_KV_CLUSTER" '^[a-zA-Z0-9_.-]{1,63}$' "vault_kv_cluster"
+  require_match "$JWKS_SERVICE_NAME" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "jwks_service_name"
   require_match "$LOCAL_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "local_ingress_host"
   case "$LOCAL_INGRESS_TLS_MODE" in
     skip-verify|certificate) ;;
@@ -276,11 +345,24 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   done < <(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | [.scope, .scope_fqdn] | @tsv')
 fi
 
+if [ "$PLATFORM" = "eks" ]; then
+  SCOPE_DOMAINS=$(printf %s "$INTERCEPTIONS_JSON" \
+    | jq -r '[.[] | .scope_fqdn | sub("^[^.]+\\."; "")] | unique | .[]')
+  if [ "$(printf '%s\n' "$SCOPE_DOMAINS" | grep -c .)" -gt 1 ]; then
+    log error "egress-interceptor: las intercepciones apuntan a scopes de dominios base distintos:"
+    log error "  $(printf '%s' "$SCOPE_DOMAINS" | tr '\n' ' ')"
+    log error "  El SNI hacia el ingreso local es uno solo por namespace y elige el listener del Gateway."
+    log error "  Con dominios mezclados elegiría el equivocado para alguna, y esa falla en silencio."
+    exit 1
+  fi
+fi
+
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
-export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY
+export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_MOUNT VAULT_KV_CLUSTER
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
+export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME JWKS_IMAGE
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
 log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \
