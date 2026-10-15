@@ -1,0 +1,117 @@
+#!/bin/bash
+
+set -euo pipefail
+
+CONTROL_NULL_URL="https://control-null-devo-devops-dev.apps.paas-dev.bancogalicia.com.ar/notification"
+NP_API_URL="${NP_API_URL:-https://api.nullplatform.com}"
+
+if [ -z "${NP_ACTION_CONTEXT:-}" ]; then
+  echo "NP_ACTION_CONTEXT is not set. Exiting." >&2
+  exit 1
+fi
+
+CLEAN_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
+export NP_ACTION_CONTEXT="$CLEAN_CONTEXT"
+
+CONTEXT=$(echo "$CLEAN_CONTEXT" | jq -c '.notification')
+export CONTEXT
+
+TOKEN=$(np token create --body "{\"api_key\": \"$NP_API_KEY\"}" --format json | jq -r .access_token)
+CALLBACK_URL=$(echo "$CONTEXT" | jq -r .callback_url)
+
+resolve_user() {
+  local user_id="$1"
+  local user
+
+  if [ -z "$user_id" ] || [ "$user_id" = "null" ]; then
+    echo "null"
+    return
+  fi
+
+  if ! user=$(curl -sf "$NP_API_URL/user/$user_id" -H "Authorization: Bearer $TOKEN"); then
+    echo "$user_id"
+    return
+  fi
+
+  echo "$user" | jq -c --argjson id "$user_id" \
+    '([.firstName, .lastName] | map(select(. != null and . != "")) | join(" ")) as $name
+     | if $name != "" then $name else (.email // $id) end'
+}
+
+CREATED_BY=$(resolve_user "$(echo "$CONTEXT" | jq -r '.deployment.created_by // empty')")
+UPDATED_BY=$(resolve_user "$(echo "$CONTEXT" | jq -r '.deployment.updated_by // empty')")
+
+control_null_body=$(echo "$CONTEXT" | jq -c \
+  --argjson created_by "$CREATED_BY" \
+  --argjson updated_by "$UPDATED_BY" \
+  '{
+    action: .entity,
+    id: .deployment.id,
+    status: .deployment.status,
+    created_at: .deployment.created_at,
+    updated_at: .deployment.updated_at,
+    results: {
+      status_in_scope: .deployment.status_in_scope,
+      strategy: .deployment.strategy,
+      created_by: $created_by,
+      updated_by: $updated_by,
+      release: { semver: .release.semver },
+      build: { commit: .build.commit.id },
+      status_started_at: .deployment.status_started_at
+    },
+    tags: {
+      organization_id: (.tags.organization_id | tonumber),
+      organization: .tags.organization_slug,
+      account_id: (.tags.account_id | tonumber),
+      account: .tags.account_slug,
+      account_name: .tags.account_name,
+      namespace_id: (.tags.namespace_id | tonumber),
+      namespace: .tags.namespace_slug,
+      application_id: (.tags.application_id | tonumber),
+      application: .tags.application_slug,
+      scope_id: (.tags.scope_id | tonumber),
+      scope: .tags.scope_slug
+    },
+    entity_nrn: .nrn
+  }')
+
+echo "Notifying control-null for deployment $(echo "$CONTEXT" | jq -r .deployment.id). URL: $CONTROL_NULL_URL"
+
+response_file=$(mktemp)
+trap 'rm -f "$response_file"' EXIT
+
+CONTROL_NULL_CODE=$(curl -s -o "$response_file" -w "%{http_code}" -X POST "$CONTROL_NULL_URL" \
+    -H "Content-Type: application/json" \
+    --data-binary "$control_null_body") || CONTROL_NULL_CODE="000"
+
+CONTROL_NULL_RESPONSE=$(cat "$response_file")
+
+if [[ "$CONTROL_NULL_CODE" =~ ^2 ]]; then
+  STATUS="success"
+  LEVEL="info"
+else
+  STATUS="failed"
+  LEVEL="error"
+fi
+
+echo "control-null answered HTTP $CONTROL_NULL_CODE: $CONTROL_NULL_RESPONSE"
+
+payload=$(jq -n \
+  --arg status "$STATUS" \
+  --arg level "$LEVEL" \
+  --arg message "control-null HTTP $CONTROL_NULL_CODE: $CONTROL_NULL_RESPONSE" \
+  '{status: $status, messages: [{level: $level, message: $message, timestamp: (now * 1000 | floor)}]}')
+
+echo "Updating hook with status: $STATUS. URL: $CALLBACK_URL"
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary "$payload") || HTTP_CODE="000"
+
+if [[ ! "$HTTP_CODE" =~ ^2 ]]; then
+  echo "✗ Failed to update hook (HTTP $HTTP_CODE)" >&2
+  exit 1
+fi
+
+echo "✓ Successfully updated hook (HTTP $HTTP_CODE)"
