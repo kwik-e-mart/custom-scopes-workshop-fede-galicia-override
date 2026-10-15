@@ -25,6 +25,8 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: {{ .ingress_gateway_name | quote }}
+  when:
+    - predicate: '"x-np-origin" in request.headers'
   rules:
     authentication:
       "local-{{ $ns }}":

@@ -169,7 +169,7 @@ reconcile_ingress_validator() {  # <archivo rendeado>
     return
   fi
   parche=$(kubectl create -f "$archivo" --dry-run=client -o json \
-    | jq -c '{spec:{rules:{authentication:.spec.rules.authentication, authorization:.spec.rules.authorization}}}') \
+    | jq -c '{spec:{when:.spec.when, rules:{authentication:.spec.rules.authentication, authorization:.spec.rules.authorization}}}') \
     || return 1
   log info "egress-interceptor: $INGRESS_AUTHPOLICY ya existe, se mergean sólo las reglas de $NAMESPACE."
   kubectl -n "$GATEWAY_NAMESPACE" patch "authpolicy/$INGRESS_AUTHPOLICY" --type=merge -p "$parche"

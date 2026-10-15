@@ -817,3 +817,34 @@ rule() {  # <percent> [service]
   reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication | keys | .[]')
   [[ "$reglas" == *"peer-payments"* ]]
 }
+
+predicado_validador() {
+  echo "$1" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.when[0].predicate // ""'
+}
+
+@test "el validador solo se evalua sobre el trafico que trae el marcador de egreso" {
+  run render eks "$(rule 0)"
+  [ -n "$(predicado_validador "$output")" ]
+}
+
+@test "el predicado es la sintaxis CEL exacta que Authorino acepta" {
+  run render eks "$(rule 0)"
+  [ "$(predicado_validador "$output")" = '"x-np-origin" in request.headers' ]
+}
+
+@test "el predicado no usa las formas CEL que rompen el negocio o apagan la policy" {
+  run render eks "$(rule 0)"
+  local pred
+  pred=$(predicado_validador "$output")
+  [ -n "$pred" ]
+  [[ "$pred" != *'request.headers["'* ]] || false
+  [[ "$pred" != *"has("* ]]
+}
+
+@test "el predicado nombra el mismo header que setea la route de egreso" {
+  run render eks "$(rule 0)"
+  local header
+  header=$(echo "$output" | yq -N 'select(.kind == "HTTPRoute" and .metadata.name == "s2s-egress-reports") | .spec.rules[0].filters[] | select(.type == "RequestHeaderModifier") | .requestHeaderModifier.set[].name' | grep -i '^x-np-origin$')
+  [ -n "$header" ]
+  [ "$(predicado_validador "$output")" = "\"$(echo "$header" | tr '[:upper:]' '[:lower:]')\" in request.headers" ]
+}
