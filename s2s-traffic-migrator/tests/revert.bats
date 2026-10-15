@@ -15,7 +15,7 @@ setup() {
   export -f log
 
   NAMESPACE=payments
-  GATEWAY_SELECTOR='{"gateway.networking.k8s.io/gateway-name":"s2s-egress"}'
+  GATEWAY_SELECTOR='{"gateway.networking.k8s.io/gateway-name":"egress-gw"}'
   ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
 
   # Estado del Service simulado, en archivos: el mock corre en otro proceso.

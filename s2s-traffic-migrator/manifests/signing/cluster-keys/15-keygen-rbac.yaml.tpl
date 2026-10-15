@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: wristband-rotator
+  name: rotador
   namespace: {{ .namespace }}
   labels:
     nullplatform: "true"
@@ -9,7 +9,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: wristband-rotator
+  name: rotador
   namespace: {{ .namespace }}
   labels:
     nullplatform: "true"
@@ -21,18 +21,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: wristband-rotator
+  name: rotador
   namespace: {{ .namespace }}
   labels:
     nullplatform: "true"
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: wristband-rotator }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: rotador }
 subjects:
-  - { kind: ServiceAccount, name: wristband-rotator, namespace: {{ .namespace }} }
+  - { kind: ServiceAccount, name: rotador, namespace: {{ .namespace }} }
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: wristband-rotator-{{ .namespace }}
+  name: rotador-{{ .namespace }}
   namespace: {{ .keys_namespace }}
   labels:
     nullplatform: "true"
@@ -47,18 +47,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: wristband-rotator-{{ .namespace }}
+  name: rotador-{{ .namespace }}
   namespace: {{ .keys_namespace }}
   labels:
     nullplatform: "true"
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: wristband-rotator-{{ .namespace }} }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: rotador-{{ .namespace }} }
 subjects:
-  - { kind: ServiceAccount, name: wristband-rotator, namespace: {{ .namespace }} }
+  - { kind: ServiceAccount, name: rotador, namespace: {{ .namespace }} }
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wristband-rotate-scripts
+  name: rotador-script
   namespace: {{ .namespace }}
   labels:
     nullplatform: "true"
@@ -151,12 +151,14 @@ data:
     SCRIPTS="${SCRIPTS_DIR:-/scripts}"
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
     VAULT_KV_BASE="${VAULT_KV_CLUSTER}/${ORIGIN_NS}"
-    KID="${ORIGIN_NS}-wristband-key-gen1"
-    SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=${ORIGIN_NS}"
+    KID="wristband-key-${ORIGIN_NS}-g0"
+    PREFIJO="wristband-key-${ORIGIN_NS}-"
 
     echo "[init] ns=${ORIGIN_NS} cluster=${VAULT_KV_CLUSTER} claves en ${KEYS_NS}"
-    echo "[init] buscando una clave existente con ${SELECTOR}"
-    if [ -n "$(kubectl get secret -n "${KEYS_NS}" -l "${SELECTOR}" -o name)" ]; then
+    echo "[init] buscando una clave existente con el prefijo ${PREFIJO}"
+    # Por prefijo de nombre y no por label: las claves que crea el chart del namespace no llevan
+    # ninguna label nuestra, y regenerar sobre una existente pisaría el JWKS ya publicado.
+    if kubectl get secret -n "${KEYS_NS}" -o name | grep -q "^secret/${PREFIJO}"; then
       echo "${ORIGIN_NS} ya tiene clave de firma en ${KEYS_NS}, no se toca"
       exit 0
     fi
@@ -166,16 +168,16 @@ data:
     vault_login
 
     echo "[init] ruta base en Vault: ${VAULT_KV_MOUNT}/.../${VAULT_KV_BASE}"
-    if vault_kv_exists "${VAULT_KV_BASE}/key-1"; then
-      echo "key-1 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
+    if vault_kv_exists "${VAULT_KV_BASE}/key-g0"; then
+      echo "key-g0 de ${ORIGIN_NS} ya está en Vault, se reutiliza"
     else
-      echo "[init] generando el par RSA de la generacion 1"
-      openssl genrsa -traditional -out "${WORK}/gen1.pem" 2048
-      head -1 "${WORK}/gen1.pem" | grep -q "BEGIN RSA PRIVATE KEY"
-      openssl rsa -in "${WORK}/gen1.pem" -pubout -out "${WORK}/gen1.pub"
+      echo "[init] generando el par RSA de la generacion 0"
+      openssl genrsa -traditional -out "${WORK}/gen0.pem" 2048
+      head -1 "${WORK}/gen0.pem" | grep -q "BEGIN RSA PRIVATE KEY"
+      openssl rsa -in "${WORK}/gen0.pem" -pubout -out "${WORK}/gen0.pub"
       echo "[init] publicando la privada en Vault"
-      vault_kv_put_file "${VAULT_KV_BASE}/key-1" private_key "${WORK}/gen1.pem"
-      python3 "${SCRIPTS}/build-jwks.py" --old "${WORK}/gen1.pub" --old-kid "${KID}" > "${WORK}/jwks.json"
+      vault_kv_put_file "${VAULT_KV_BASE}/key-g0" key.pem "${WORK}/gen0.pem"
+      python3 "${SCRIPTS}/build-jwks.py" --old "${WORK}/gen0.pub" --old-kid "${KID}" > "${WORK}/jwks.json"
       echo "[init] publicando el JWKS inicial"
       vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks "${WORK}/jwks.json"
     fi
@@ -191,7 +193,7 @@ data:
         nullplatform: "true"
         egress-interceptor/wristband-key: "true"
         egress-interceptor/origin-namespace: ${ORIGIN_NS}
-        egress-interceptor/key-generation: "1"
+        egress-interceptor/key-generation: "0"
     spec:
       refreshInterval: 1m
       secretStoreRef:
@@ -205,12 +207,12 @@ data:
               nullplatform: "true"
               egress-interceptor/wristband-key: "true"
               egress-interceptor/origin-namespace: ${ORIGIN_NS}
-              egress-interceptor/key-generation: "1"
+              egress-interceptor/key-generation: "0"
       data:
         - secretKey: key.pem
           remoteRef:
-            key: ${VAULT_KV_BASE}/key-1
-            property: private_key
+            key: ${VAULT_KV_BASE}/key-g0
+            property: key.pem
     EOF
     echo "[init] esperando a que external-secrets materialice el Secret ${KID}"
     kubectl wait --for=condition=Ready "externalsecret/${KID}" -n "${KEYS_NS}" --timeout=120s
@@ -239,7 +241,7 @@ data:
     SECRET_ID_FILE="${VAULT_SECRET_ID_FILE:-/var/run/secrets/vault/secret-id}"
     source "${SCRIPTS}/vault-lib.sh"
     VAULT_KV_BASE="${VAULT_KV_CLUSTER}/${ORIGIN_NS}"
-    SECRET_PREFIX="${ORIGIN_NS}-wristband-key-gen"
+    SECRET_PREFIX="wristband-key-${ORIGIN_NS}-g"
 
     log() { echo "[$(date -Iseconds)] $*"; }
 
@@ -274,7 +276,7 @@ data:
 
     recover_public_key() {
       local gen="$1"
-      if ! vault_kv_get_field "${VAULT_KV_BASE}/key-${gen}" private_key \
+      if ! vault_kv_get_field "${VAULT_KV_BASE}/key-g${gen}" key.pem \
           > "${WORK}/gen${gen}.pem"; then
         echo "no se pudo recuperar gen${gen} de Vault: sin su pública el JWKS de solape sería falso" >&2
         exit 1
@@ -284,7 +286,7 @@ data:
 
     publish_private_key() {
       local gen="$1"
-      vault_kv_put_file "${VAULT_KV_BASE}/key-${gen}" private_key "${WORK}/gen${gen}.pem"
+      vault_kv_put_file "${VAULT_KV_BASE}/key-g${gen}" key.pem "${WORK}/gen${gen}.pem"
     }
 
     publish_jwks_with_both_keys() {
@@ -351,8 +353,8 @@ data:
       data:
         - secretKey: key.pem
           remoteRef:
-            key: ${VAULT_KV_BASE}/key-${gen}
-            property: private_key
+            key: ${VAULT_KV_BASE}/key-g${gen}
+            property: key.pem
     EOF
       kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${KEYS_NS}" --timeout=60s
     }
@@ -367,7 +369,7 @@ data:
     retire_old_key() {
       local old_gen="$1"
       log "retirando clave vieja gen${old_gen}: JWKS, ExternalSecret y Secret"
-      vault_kv_delete "${VAULT_KV_BASE}/key-${old_gen}"
+      vault_kv_delete "${VAULT_KV_BASE}/key-g${old_gen}"
       kubectl delete externalsecret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
       kubectl delete secret "${SECRET_PREFIX}${old_gen}" -n "${KEYS_NS}" --ignore-not-found
     }

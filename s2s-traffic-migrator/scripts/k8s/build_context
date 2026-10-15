@@ -20,7 +20,7 @@ NAMESPACE="${NAMESPACE:-nullplatform}"
 
 PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
 LISTEN_PORT="${LISTEN_PORT:-8080}"
-TOKEN_DURATION="${TOKEN_DURATION:-300}"
+TOKEN_DURATION="${TOKEN_DURATION:-60}"
 GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
 # El ingreso del sustrato opuesto. Es configuración del service y NO un campo del form: el dev
 # declara identidades de nullplatform, nunca direcciones de transporte.
@@ -34,10 +34,10 @@ LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_SERVICE_NAMESPACE%%.*}"
 # Namespace del Gateway de ingreso. Es `gateways` y no `istio-system` porque el template de
 # HTTPRoute de los scopes de nullplatform hardcodea ese namespace en su parentRef.
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
-# La AuthPolicy que valida el wristband en el ingreso de ESTE cluster. El service no la crea —es
-# del layer— pero sí espera a que quede Enforced después de colgarle su route de ingreso: Kuadrant
-# no aplica una policy que no esté en el camino de ninguna route, y sin ese wait el destino
-# aceptaría tráfico del otro sustrato sin validar el token.
+# La AuthPolicy que valida el wristband en el ingreso de ESTE cluster. La emite este service y
+# espera a que quede Enforced después de colgarle su route de ingreso: Kuadrant no aplica una
+# policy que no esté en el camino de ninguna route, y sin ese wait el destino aceptaría tráfico
+# del otro sustrato sin validar el token.
 INGRESS_AUTHPOLICY="${INGRESS_AUTHPOLICY:-s2s-validator}"
 
 SIGNING_STRATEGY="${S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY-cluster-keys}"
@@ -57,13 +57,28 @@ NETWORKING_VAULT_TOKEN_SECRET="${NETWORKING_VAULT_TOKEN_SECRET:-s2s-vault-token}
 KEYGEN_IMAGE="${KEYGEN_IMAGE:-alpine/k8s:1.30.3}"
 VAULT_APPROLE_ROLE_ID="${VAULT_APPROLE_ROLE_ID:-}"
 VAULT_APPROLE_SECRET="${VAULT_APPROLE_SECRET:-vault-approle-creds}"
-VAULT_SECRET_STORE="${VAULT_SECRET_STORE:-vault-ocp-plataforma}"
+VAULT_SECRET_STORE="${VAULT_SECRET_STORE:-vault-eks-plataforma}"
 LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}"
 PEER_JWKS_URL="${PEER_JWKS_URL:-}"
-JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-s2s-jwks}"
+JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-jwks-egress}"
 JWKS_IMAGE="${JWKS_IMAGE:-registry.access.redhat.com/ubi9/httpd-24:latest}"
 INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
+# La AuthPolicy que firma el wristband a la salida. La crea el chart del namespace y su
+# `signingKeyRefs` es la fuente de verdad de cuál es la clave vigente.
+EGRESS_AUTHPOLICY="${EGRESS_AUTHPOLICY:-sign}"
 KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
+# Dominio del `iss` del wristband. El chart arma `https://egress.<cluster>.<issuerDomain>` y el
+# validador compara el claim contra ese valor exacto, así que los dos lados tienen que coincidir.
+ISSUER_DOMAIN="${ISSUER_DOMAIN:-bancogalicia.com.ar}"
+# Los objetos del alta de namespace los crea el chart del cliente. En true los emitimos nosotros,
+# con los mismos nombres, para el namespace donde el chart no corrió o quedó a medias.
+NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}"
+case "$NAMESPACE_SETUP_ENABLED" in
+  true|false) ;;
+  *)
+    log error "egress-interceptor: NAMESPACE_SETUP_ENABLED='${NAMESPACE_SETUP_ENABLED}' no es válido. Valores: true | false"
+    exit 1 ;;
+esac
 
 warn_inert() {
   local name="$1" value="$2" default="$3"
@@ -73,9 +88,9 @@ warn_inert() {
 }
 
 if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
-  warn_inert TOKEN_DURATION "${TOKEN_DURATION:-}" 300
-  warn_inert WRISTBAND_SECRET_NAME "${WRISTBAND_SECRET_NAME:-}" '{namespace}-wristband-key'
-  warn_inert EGRESS_ISSUER_URL "${EGRESS_ISSUER_URL:-}" 'https://egress.{namespace}.s2s.local'
+  warn_inert TOKEN_DURATION "${TOKEN_DURATION:-}" 60
+  warn_inert WRISTBAND_SECRET_NAME "${WRISTBAND_SECRET_NAME:-}" 'wristband-key-{namespace}-g0'
+  warn_inert EGRESS_ISSUER_URL "${EGRESS_ISSUER_URL:-}" "https://egress.{cluster}.${ISSUER_DOMAIN}"
 else
   warn_inert NETWORKING_VAULT_SPIFFE_MOUNT "$NETWORKING_VAULT_SPIFFE_MOUNT" ""
   warn_inert NETWORKING_VAULT_SPIFFE_ROLE "$NETWORKING_VAULT_SPIFFE_ROLE" s2s-egress
@@ -124,27 +139,26 @@ require_match() {  # <value> <regex> <field>
 require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
 [ -n "$SERVICE_ID" ] && require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
 
-WRISTBAND_KEY_SELECTOR="egress-interceptor/wristband-key=true,egress-interceptor/origin-namespace=$NAMESPACE"
-
+# Cuál es la clave vigente lo dice la AuthPolicy de firma, no el nombre del Secret: el rotador
+# parchea ahí `signingKeyRefs` en cada rotación y el nombre que pone lleva un timestamp, que no se
+# puede derivar. Buscar el Secret por label tampoco sirve, porque los que crea el chart del
+# namespace no llevan ninguna.
+# Devuelve 0 con el nombre, 2 si todavía no hay AuthPolicy o no tiene clave, 1 si la API falló.
 if ! type -t current_wristband_secret >/dev/null 2>&1; then
 current_wristband_secret() {
-  local out gen name best_gen="" best_name=""
-  if ! out=$(kubectl -n "$KEYS_NAMESPACE" get secret -l "$WRISTBAND_KEY_SELECTOR" \
-      -o jsonpath="{range .items[*]}{.metadata.labels['egress-interceptor/key-generation']}{'\t'}{.metadata.name}{'\n'}{end}" 2>&1); then
-    log error "egress-interceptor: no se pudieron listar las claves de firma en '$KEYS_NAMESPACE'." >&2
-    log error "  $out" >&2
-    return 1
+  local out
+  if ! out=$(kubectl -n "$NAMESPACE" get authpolicy "$EGRESS_AUTHPOLICY" \
+      -o jsonpath='{.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name}' 2>&1); then
+    case "$out" in
+      *NotFound*|*not\ found*) return 2 ;;
+      *)
+        log error "egress-interceptor: no se pudo leer la AuthPolicy '$EGRESS_AUTHPOLICY' de '$NAMESPACE'." >&2
+        log error "  $out" >&2
+        return 1 ;;
+    esac
   fi
-  while IFS=$'\t' read -r gen name; do
-    [ -n "$name" ] || continue
-    [[ "$gen" =~ ^[0-9]+$ ]] || continue
-    if [ -z "$best_gen" ] || [ "$gen" -gt "$best_gen" ]; then
-      best_gen="$gen"
-      best_name="$name"
-    fi
-  done <<<"$out"
-  [ -n "$best_name" ] || return 2
-  printf '%s' "$best_name"
+  [ -n "$out" ] || return 2
+  printf '%s' "$out"
 }
 fi
 
@@ -161,7 +175,7 @@ resolve_wristband_secret() {
   found=$(current_wristband_secret) || rc=$?
   case "$rc" in
     0) printf '%s' "$found" ;;
-    2) printf '%s-wristband-key-gen1' "$NAMESPACE" ;;
+    2) printf 'wristband-key-%s-g0' "$NAMESPACE" ;;
     *) return 1 ;;
   esac
 }
@@ -173,12 +187,17 @@ WRISTBAND_SECRET=$(resolve_wristband_secret) || {
 }
 require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristband_secret_name"
 
+require_match "$VAULT_KV_CLUSTER" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "vault_kv_cluster"
+
 EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
-[ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER='https://egress.{namespace}.s2s.local'
+[ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER="https://egress.{cluster}.${ISSUER_DOMAIN}"
 EGRESS_ISSUER=${EGRESS_ISSUER//\{namespace\}/$NAMESPACE}
+EGRESS_ISSUER=${EGRESS_ISSUER//\{cluster\}/$VAULT_KV_CLUSTER}
 LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{namespace\}/$NAMESPACE}
+LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{cluster\}/$VAULT_KV_CLUSTER}
 PEER_JWKS_URL=${PEER_JWKS_URL//\{namespace\}/$NAMESPACE}
-[ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${NAMESPACE}/jwks.json"
+PEER_JWKS_URL=${PEER_JWKS_URL//\{cluster\}/$VAULT_KV_CLUSTER}
+[ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${VAULT_KV_CLUSTER}/${NAMESPACE}/jwks.json"
 require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
 
 gitops_substrate_hint() {
@@ -363,6 +382,7 @@ export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_M
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_MOUNT VAULT_KV_CLUSTER
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
 export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME JWKS_IMAGE
+export EGRESS_AUTHPOLICY ISSUER_DOMAIN NAMESPACE_SETUP_ENABLED
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
 log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \

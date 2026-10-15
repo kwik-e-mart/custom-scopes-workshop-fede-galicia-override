@@ -1,5 +1,7 @@
 {{- $ns := .namespace -}}
 {{- $name := .jwks_service -}}
+{{- $cluster := .vault_kv_cluster -}}
+{{- $jwks := printf "jwks-%s-%s" $cluster $ns -}}
 {{- /*
 Sirve por HTTP el JWKS de este namespace, que es lo que el validador de ingreso consulta para
 verificar la firma del wristband. Cierra el ciclo que abre el keygen: el Job escribe el JWKS en
@@ -34,7 +36,7 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: {{ $name | quote }}
+  name: {{ $jwks | quote }}
   namespace: {{ $ns | quote }}
   labels:
     nullplatform: "true"
@@ -44,12 +46,12 @@ spec:
     name: {{ .vault_secret_store | quote }}
     kind: ClusterSecretStore
   target:
-    name: {{ $name | quote }}
+    name: {{ $jwks | quote }}
     creationPolicy: Owner
   data:
     - secretKey: jwks.json
       remoteRef:
-        key: {{ printf "%s/%s/jwks" .vault_kv_cluster $ns | quote }}
+        key: {{ printf "%s/%s/jwks" $cluster $ns | quote }}
         property: jwks
 ---
 apiVersion: apps/v1
@@ -60,7 +62,7 @@ metadata:
   labels:
     nullplatform: "true"
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: {{ $name | quote }}
@@ -95,8 +97,8 @@ spec:
           projected:
             sources:
               - secret:
-                  name: {{ $name | quote }}
+                  name: {{ $jwks | quote }}
                   optional: true
                   items:
                     - key: jwks.json
-                      path: {{ printf "%s/jwks.json" $ns | quote }}
+                      path: {{ printf "%s/%s/jwks.json" $cluster $ns | quote }}

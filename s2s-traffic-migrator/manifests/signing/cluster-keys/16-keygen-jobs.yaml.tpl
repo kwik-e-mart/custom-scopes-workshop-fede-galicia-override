@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: wristband-init-{{ .namespace }}
+  name: rotar-{{ .namespace }}-init
   namespace: {{ .namespace }}
   labels:
     nullplatform: "true"
@@ -9,7 +9,7 @@ spec:
   backoffLimit: 1
   template:
     spec:
-      serviceAccountName: wristband-rotator
+      serviceAccountName: rotador
       restartPolicy: Never
       containers:
         - name: init
@@ -32,14 +32,14 @@ spec:
             - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
       volumes:
         - name: scripts
-          configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
+          configMap: { name: rotador-script, defaultMode: 0755 }
         - name: vault-secret-id
           secret: { secretName: {{ .vault_approle_secret }} }
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: wristband-rotate-{{ .namespace }}
+  name: rotar-{{ .namespace }}
   namespace: {{ .namespace }}
   labels:
     nullplatform: "true"
@@ -51,7 +51,7 @@ spec:
       backoffLimit: 0
       template:
         spec:
-          serviceAccountName: wristband-rotator
+          serviceAccountName: rotador
           restartPolicy: Never
           containers:
             - name: rotate
@@ -78,6 +78,6 @@ spec:
                 - { name: vault-secret-id, mountPath: /var/run/secrets/vault, readOnly: true }
           volumes:
             - name: scripts
-              configMap: { name: wristband-rotate-scripts, defaultMode: 0755 }
+              configMap: { name: rotador-script, defaultMode: 0755 }
             - name: vault-secret-id
               secret: { secretName: {{ .vault_approle_secret }} }

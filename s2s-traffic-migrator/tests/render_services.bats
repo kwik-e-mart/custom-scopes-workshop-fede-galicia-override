@@ -14,7 +14,7 @@ setup() {
 
 contexto() {  # <platform> <interceptions-json>
   jq -n --arg platform "$1" --argjson interceptions "$2" '{
-    namespace: "payments", gateway_name: "s2s-egress", listen_port: 8080,
+    namespace: "payments", gateway_name: "egress-gw", listen_port: 8080,
     managed_label: "egress-interceptor/managed", role_label: "egress-interceptor/role",
     original_selector_annotation: "egress-interceptor/original-selector",
     platform: $platform, interceptions: $interceptions
@@ -94,7 +94,7 @@ sin_service_previo() {  # <service>
 @test "el Service que captura apunta al Gateway y conserva los ports originales" {
   local captura
   captura=$(svc "$(render openshift "[$(regla reports)]")" reports)
-  [ "$(echo "$captura" | yq '.spec.selector["gateway.networking.k8s.io/gateway-name"]')" = "s2s-egress" ]
+  [ "$(echo "$captura" | yq '.spec.selector["gateway.networking.k8s.io/gateway-name"]')" = "egress-gw" ]
   [ "$(echo "$captura" | yq '.spec.selector | length')" = "1" ]
   [ "$(echo "$captura" | yq '.spec.ports | length')" = "2" ]
   [ "$(echo "$captura" | yq '.spec.ports[0].port')" = "8080" ]
