@@ -819,3 +819,14 @@ rule() {  # <percent> [service]
   reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication | keys | .[]')
   [[ "$reglas" == *"peer-payments"* ]]
 }
+
+@test "el property del ExternalSecret de la clave escapa el punto de key.pem" {
+  run render eks "$(rule 0)"
+  local init rot
+  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap" and .metadata.name == "rotador-script") | .data."init.sh"')
+  rot=$(echo "$output" | yq -N 'select(.kind == "ConfigMap" and .metadata.name == "rotador-script") | .data."rotate.sh"')
+  [[ "$init" == *'property: key\\.pem'* ]] || false
+  [[ "$rot" == *'property: key\\.pem'* ]] || false
+  [[ "$init" != *'property: key.pem'* ]] || false
+  [[ "$rot" != *'property: key.pem'* ]]
+}

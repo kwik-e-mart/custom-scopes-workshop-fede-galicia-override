@@ -423,7 +423,7 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "
   KEEP=()
   for f in "${MANIFESTS[@]}"; do
     case "$(basename "$f")" in
-      15-keygen-rbac.yaml|16-keygen-jobs.yaml|17-jwks-endpoint.yaml|20-authpolicy.yaml) ;;
+      10-gateway.yaml|15-keygen-rbac.yaml|16-keygen-jobs.yaml|17-jwks-endpoint.yaml|20-authpolicy.yaml) ;;
       *) KEEP+=("$f") ;;
     esac
   done

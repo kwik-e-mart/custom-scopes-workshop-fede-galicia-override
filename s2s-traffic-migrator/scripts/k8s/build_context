@@ -66,7 +66,10 @@ INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
 # La AuthPolicy que firma el wristband a la salida. La crea el chart del namespace y su
 # `signingKeyRefs` es la fuente de verdad de cuál es la clave vigente.
 EGRESS_AUTHPOLICY="${EGRESS_AUTHPOLICY:-sign}"
-KEYS_NAMESPACE="${KEYS_NAMESPACE:-kuadrant-system}"
+# Dónde vive el Secret de la clave de firma. El chart del namespace lo crea en el namespace de la
+# app, así que el default es ése y no hace falta declararlo. Queda configurable para el cluster
+# que todavía centralice las claves en kuadrant-system.
+KEYS_NAMESPACE="${KEYS_NAMESPACE:-$NAMESPACE}"
 # Dominio del `iss` del wristband. El chart arma `https://egress.<cluster>.<issuerDomain>` y el
 # validador compara el claim contra ese valor exacto, así que los dos lados tienen que coincidir.
 ISSUER_DOMAIN="${ISSUER_DOMAIN:-bancogalicia.com.ar}"

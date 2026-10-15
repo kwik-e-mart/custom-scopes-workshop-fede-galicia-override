@@ -626,3 +626,15 @@ exportado() {  # <variable>
   [ "$status" -ne 0 ]
   [[ "$output" == *"jwks_service_name"* ]]
 }
+
+@test "KEYS_NAMESPACE sale del namespace de la app, sin declararlo" {
+  run_bc
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | grep '^KEYS_NAMESPACE=' | sed 's/^KEYS_NAMESPACE=//')" = "payments" ]
+}
+
+@test "KEYS_NAMESPACE declarado le gana al namespace de la app" {
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" KEYS_NAMESPACE=kuadrant-system run bash "$BC"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | grep '^KEYS_NAMESPACE=' | sed 's/^KEYS_NAMESPACE=//')" = "kuadrant-system" ]
+}
