@@ -381,8 +381,16 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
 # Devuelve vacío si todavía no existe: el scope puede no estar desplegado.
 if ! type -t route_del_scope >/dev/null 2>&1; then
 route_del_scope() {  # <fqdn>
+  # El hostname no alcanza para elegir: un mismo FQDN puede estar servido por varias routes, y en
+  # la práctica sobreviven las que cuelgan de un Gateway que ya no existe. La que vale es la que
+  # cuelga del Gateway de ingreso configurado, que es por donde entra el tráfico que validamos.
   kubectl -n "$NAMESPACE" get httproute -o json 2>/dev/null \
-    | jq -r --arg f "$1" '[.items[] | select((.spec.hostnames // []) | index($f)) | .metadata.name] | first // empty'
+    | jq -r --arg f "$1" --arg gw "$INGRESS_GATEWAY_NAME" --arg gwns "$GATEWAY_NAMESPACE" '
+        [ .items[]
+          | select((.spec.hostnames // []) | index($f))
+          | select([ .spec.parentRefs[]?
+                     | select(.name == $gw and ((.namespace // $gwns) == $gwns)) ] | length > 0)
+          | .metadata.name ] | first // empty'
 }
 fi
 
