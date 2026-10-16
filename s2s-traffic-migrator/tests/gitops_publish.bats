@@ -32,18 +32,18 @@ make_render() {  # <site>
   CTX="$BATS_TEST_TMPDIR/ctx.json"
   MDIR="$BATS_TEST_TMPDIR/manifests"
   jq -n --arg platform "$platform" --argjson interceptions "$2" '{
-    namespace: "payments", gateway_name: "s2s-egress", gateway_class: "istio",
-    listen_port: 8080, token_duration: 300, wristband_secret: "payments-wristband-key",
-    egress_issuer: "https://egress.payments.s2s.local",
+    namespace: "payments", gateway_name: "egress-gw", gateway_class: "istio",
+    listen_port: 8080, token_duration: 60, wristband_secret: "wristband-key-payments-g0",
+    egress_issuer: "https://egress.gal-poc.bancogalicia.com.ar",
     peer_ca_secret: "s2s-remote-ca", peer_gateway_host: "peer.example.io",
     local_ingress_host: "s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service: "s2s-ingress-istio", local_ingress_service_namespace: "gateways",
     local_ingress_tls_mode: "skip-verify",
     vault_addr: "https://vault.example:8200", vault_namespace: "admin/ocp",
     keygen_image: "alpine/k8s:1.30.3", vault_approle_role_id: "role-id",
-    vault_approle_secret: "vault-approle-creds", vault_secret_store: "vault-ocp-plataforma",
+    vault_approle_secret: "vault-approle-creds", vault_secret_store: "vault-eks-plataforma",
     local_jwks_url: "http://jwks.example:8080/payments/jwks.json",
-    gateway_namespace: "gateways", cluster_label: "gal-poc-eks-dev", keys_namespace: "kuadrant-system", peer_jwks_url: "http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy: "s2s-validator", ingress_gateway_name: "s2s-ingress", vault_kv_mount: "kv/eks", vault_kv_cluster: "gal-poc", jwks_service: "s2s-jwks", jwks_image: "httpd:test",
+    gateway_namespace: "gateways", cluster_label: "gal-poc-eks-dev", keys_namespace: "kuadrant-system", peer_jwks_url: "http://peer-jwks:8080/payments/jwks.json", ingress_authpolicy: "s2s-validator", ingress_gateway_name: "s2s-ingress", vault_kv_mount: "kv/eks", vault_kv_cluster: "gal-poc", jwks_service: "jwks-egress", jwks_image: "httpd:test", egress_authpolicy: "sign", issuer_domain: "bancogalicia.com.ar", namespace_setup_enabled: "false",
     authpolicy_api_version: "kuadrant.io/v1",
     managed_label: "egress-interceptor/managed", role_label: "egress-interceptor/role",
     original_selector_annotation: "egress-interceptor/original-selector",
@@ -259,7 +259,7 @@ HOOK
   [ -f "$BATS_TEST_TMPDIR/tree/reports/50-httproute-egress.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/checkout/50-httproute-egress.yaml" ]
   run objetos "$BATS_TEST_TMPDIR/tree/reports/50-httproute-egress.yaml"
-  [ "$output" = "HTTPRoute/payments/s2s-egress-reports" ]
+  [ "$output" = "HTTPRoute/payments/egress-gw-reports" ]
 }
 
 @test "la hoja de un servicio NO trae la route de otro" {
@@ -299,7 +299,7 @@ HOOK
   make_render openshift-crc "$(una_regla)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   local captura="$BATS_TEST_TMPDIR/tree/reports/90-service-capture.yaml"
-  [ "$(yq -r '.spec.selector["gateway.networking.k8s.io/gateway-name"]' "$captura")" = "s2s-egress" ]
+  [ "$(yq -r '.spec.selector["gateway.networking.k8s.io/gateway-name"]' "$captura")" = "egress-gw" ]
   [ "$(yq -r '.metadata.annotations["egress-interceptor/original-selector"]' "$captura")" = '{"app":"reports"}' ]
 }
 

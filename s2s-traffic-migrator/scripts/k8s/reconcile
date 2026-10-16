@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/manifests_lib"
 source "$HERE/gitops_lib"
 
-GATEWAY_NAME="s2s-egress"
+GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
@@ -328,6 +328,9 @@ jq -n \
   --arg vault_kv_cluster "$VAULT_KV_CLUSTER" \
   --arg jwks_service "$JWKS_SERVICE_NAME" \
   --arg jwks_image "$JWKS_IMAGE" \
+  --arg egress_authpolicy "$EGRESS_AUTHPOLICY" \
+  --arg issuer_domain "$ISSUER_DOMAIN" \
+  --arg namespace_setup_enabled "$NAMESPACE_SETUP_ENABLED" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
@@ -388,8 +391,8 @@ if [ "${#MANIFESTS[@]}" -eq 0 ]; then
 fi
 
 keygen_jobs_present() {
-  kubectl -n "$NAMESPACE" get job "wristband-init-$NAMESPACE" >/dev/null 2>&1 \
-    && kubectl -n "$NAMESPACE" get cronjob "wristband-rotate-$NAMESPACE" >/dev/null 2>&1
+  kubectl -n "$NAMESPACE" get job "rotar-$NAMESPACE-init" >/dev/null 2>&1 \
+    && kubectl -n "$NAMESPACE" get cronjob "rotar-$NAMESPACE" >/dev/null 2>&1
 }
 
 jwks_endpoint_present() {
@@ -407,6 +410,22 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
     else
       KEEP+=("$f")
     fi
+  done
+  MANIFESTS=("${KEEP[@]}")
+fi
+
+# El alta de namespace —RBAC y scripts del rotador, Job y CronJob, endpoint de JWKS y la
+# AuthPolicy que firma— la hace el chart del cliente, una vez por namespace. Acá se emite sólo con
+# el flag en true, para el namespace donde el chart no corrió o quedó a medias. Los nombres son
+# los mismos que usa el chart, así que lo que creemos no compite: o ya está, o lo reemplaza.
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
+  log info "egress-interceptor: NAMESPACE_SETUP_ENABLED=false, el alta de $NAMESPACE la hace el chart."
+  KEEP=()
+  for f in "${MANIFESTS[@]}"; do
+    case "$(basename "$f")" in
+      10-gateway.yaml|15-keygen-rbac.yaml|16-keygen-jobs.yaml|17-jwks-endpoint.yaml|20-authpolicy.yaml) ;;
+      *) KEEP+=("$f") ;;
+    esac
   done
   MANIFESTS=("${KEEP[@]}")
 fi
@@ -465,25 +484,62 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
   die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
 fi
 
+# Lo que la AuthPolicy necesita es el Secret de la clave, no el Job. Con el alta de namespace
+# delegada al chart el Job no es nuestro ni vive acá, así que se espera el Secret; sólo cuando lo
+# emitimos nosotros se espera al Job, que da un error mucho mejor.
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/wristband-init-$NAMESPACE" --timeout=180s; then
-    log error "el Job wristband-init-$NAMESPACE no terminó: sin él no hay clave de firma y la AuthPolicy nunca va a enforcear."
-    log error "$(kubectl -n "$NAMESPACE" logs "job/wristband-init-$NAMESPACE" --tail=20 2>&1)"
+  if [ "$NAMESPACE_SETUP_ENABLED" = "true" ]; then
+    if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/rotar-$NAMESPACE-init" --timeout=180s; then
+      log error "el Job rotar-$NAMESPACE-init no terminó: sin él no hay clave de firma y la AuthPolicy nunca va a enforcear."
+      log error "$(kubectl -n "$NAMESPACE" logs "job/rotar-$NAMESPACE-init" --tail=20 2>&1)"
+      exit 1
+    fi
+  elif ! kubectl -n "$KEYS_NAMESPACE" get secret "$WRISTBAND_SECRET" >/dev/null 2>&1; then
+    log error "no existe el Secret de firma '$WRISTBAND_SECRET' en '$KEYS_NAMESPACE': la AuthPolicy nunca va a enforcear."
+    log error "  Ese objeto lo crea el chart del namespace. Verificá que haya corrido para '$NAMESPACE'."
+    log error "  Para crearlo desde acá, corré el service con NAMESPACE_SETUP_ENABLED=true."
+    exit 1
+  fi
+fi
+
+# El `kid` del wristband ES el nombre del Secret de firma: Authorino lo deriva de ahí. Si el JWKS
+# publicado no trae una clave con ese kid, el token se firma bien y el destino igual responde 401
+# con "no lo firmó ninguna clave conocida", que no dice dónde mirar. Se chequea acá, que es donde
+# los dos nombres están a la vista.
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ -n "$LOCAL_JWKS_URL" ]; then
+  RESPUESTA=$(kubectl -n "$NAMESPACE" exec "deploy/$JWKS_SERVICE_NAME" -- \
+    curl -sf --max-time 10 "$LOCAL_JWKS_URL" 2>/dev/null) || RESPUESTA=""
+  KIDS=$(printf '%s' "$RESPUESTA" | jq -r '.keys[]?.kid' 2>/dev/null) || KIDS=""
+  if [ -z "$KIDS" ]; then
+    log error "el endpoint de JWKS no publica ninguna clave en la URL que va a consultar el validador."
+    log error "  URL: $LOCAL_JWKS_URL"
+    log error "  Paths que sí sirve:"
+    log error "$(kubectl -n "$NAMESPACE" exec "deploy/$JWKS_SERVICE_NAME" -- find /var/www/html -name jwks.json 2>&1 | sed 's/^/    /')"
+    log error "  Authorino va a recibir un 404 y el destino responde 401 'no lo firmó ninguna clave conocida'."
+    log error "  El chart publica un path por cada origen de validator.sources: falta el de este namespace."
+    exit 1
+  fi
+  if ! printf '%s\n' "$KIDS" | grep -qx "$WRISTBAND_SECRET"; then
+    log error "el JWKS que sirve $JWKS_SERVICE_NAME no publica la clave con la que se firma."
+    log error "  firma con kid: $WRISTBAND_SECRET"
+    log error "  el JWKS trae:  $(printf '%s' "$KIDS" | tr '\n' ' ')"
+    log error "  El destino va a responder 401 'no lo firmó ninguna clave conocida'."
+    log error "  Revisá que el JWKS de Vault ($VAULT_KV_CLUSTER/$NAMESPACE/jwks) corresponda a esa clave."
     exit 1
   fi
 fi
 
 # `Accepted=True` sólo dice que Kuadrant entendió el objeto. Sin esperar `Enforced=True`, el swap
 # manda tráfico por un Gateway que todavía no firma y el destino responde 401.
-if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$GATEWAY_NAME" --timeout=180s; then
-  log error "la AuthPolicy $GATEWAY_NAME no llegó a Enforced=True. El tráfico NO se desvió."
-  log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$GATEWAY_NAME" \
+if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$EGRESS_AUTHPOLICY" --timeout=180s; then
+  log error "la AuthPolicy $EGRESS_AUTHPOLICY no llegó a Enforced=True. El tráfico NO se desvió."
+  log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$EGRESS_AUTHPOLICY" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
   if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
     log error "  Causa típica: el Secret $NETWORKING_VAULT_TOKEN_SECRET no existe en kuadrant-system o está vacío."
     log error "  Lo puebla el CronJob de login a Vault (specs/prerequisites/manifests/55-vault-login-cronjob.yaml)."
   else
-    log error "  Causa típica: el Secret de firma no existe en kuadrant-system, o no está en PKCS#1."
+    log error "  Causa típica: el Secret de firma '$WRISTBAND_SECRET' no existe en $KEYS_NAMESPACE, o no está en PKCS#1."
   fi
   exit 1
 fi

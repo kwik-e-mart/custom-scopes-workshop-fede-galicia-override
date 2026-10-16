@@ -5,7 +5,7 @@
 apiVersion: {{ .authpolicy_api_version | quote }}
 kind: AuthPolicy
 metadata:
-  name: {{ $gw | quote }}
+  name: {{ .egress_authpolicy | quote }}
   namespace: {{ $ns | quote }}
   labels:
     {{ .managed_label }}: "true"
@@ -29,6 +29,8 @@ spec:
               customClaims:
                 "src_namespace":
                   value: {{ $ns | quote }}
+                "src_cluster":
+                  value: {{ .vault_kv_cluster | quote }}
               signingKeyRefs:
                 # RS256 con la clave en PKCS#1 es la única combinación que cierra: el verificador
                 # está fijado a RS256 y el firmador no parsea PKCS#8. Cualquiera de las dos mal

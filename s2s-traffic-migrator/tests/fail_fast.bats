@@ -75,9 +75,19 @@ case "$*" in
       exit 1
     fi
     cat "$FAKE_GRANTS" ;;
-  *"get job wristband-init-"*|*"get cronjob wristband-rotate-"*)
+  *"get job rotar-"*|*"get cronjob rotar-"*)
     [ -n "${KEYGEN_PRESENTE:-}" ] || exit 1 ;;
-  *"get deploy s2s-jwks"*|*"get svc s2s-jwks"*|*"get externalsecret s2s-jwks"*)
+  *"exec deploy/jwks-egress"*)
+    # El mock devuelve el JWKS que pida el test; sin JWKS_KIDS no publica nada y el chequeo se saltea.
+    # Por default el endpoint está sano y publica la clave vigente: un JWKS roto es lo excepcional
+    # y el test que lo quiere pasa JWKS_KIDS="" explícito.
+    KIDS="${JWKS_KIDS-wristband-key-payments-g0}"
+    if [ -n "$KIDS" ]; then
+      printf '%s' "$KIDS" | tr ' ' '\n' | jq -R '{kid: .}' | jq -s '{keys: .}'
+    fi ;;
+  *"get secret wristband-key-"*)
+    [ -z "${FALTA_CLAVE:-}" ] || exit 1 ;;
+  *"get deploy jwks-egress"*|*"get svc jwks-egress"*|*"get externalsecret jwks-egress"*)
     [ -n "${JWKS_PRESENTE:-}" ] || exit 1 ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
@@ -94,16 +104,18 @@ MOCK
 correr() {
   ARGS=apply \
   NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
-  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
-  WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
+  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
+  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=jwks-egress JWKS_IMAGE=httpd:test \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
+  NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
@@ -128,16 +140,18 @@ correr_openshift() {  # [interceptions-json]
   fi
   ARGS=apply \
   NAMESPACE=payments SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
-  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
-  WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
+  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
+  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=jwks-egress JWKS_IMAGE=httpd:test \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
+  NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
@@ -156,16 +170,18 @@ correr_openshift() {  # [interceptions-json]
 correr_delete() {
   ARGS=delete \
   NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
-  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=300 \
-  WRISTBAND_SECRET=payments-wristband-key EGRESS_ISSUER=https://egress.payments.s2s.local PEER_CA_SECRET=s2s-remote-ca \
+  GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
+  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
-  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=s2s-jwks JWKS_IMAGE=httpd:test \
+  INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=jwks-egress JWKS_IMAGE=httpd:test \
   NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
+  EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
+  NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
@@ -180,7 +196,7 @@ correr_delete() {
 }
 
 @test "si el Gateway no llega a Programmed, ABORTA y no toca el selector" {
-  FALLA_WAIT="gateway/s2s-egress" run correr
+  FALLA_WAIT="gateway/egress-gw" run correr
   [ "$status" -ne 0 ]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
@@ -188,13 +204,13 @@ correr_delete() {
 
 @test "si el Gateway no llega a Programmed, tampoco anota el Service" {
   # Anotar y no desviar dejaría al Service marcado como interceptado sin estarlo.
-  FALLA_WAIT="gateway/s2s-egress" run correr
+  FALLA_WAIT="gateway/egress-gw" run correr
   run grep -c ' annotate svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
 @test "el mensaje de error nombra el Gateway y sugiere dónde mirar" {
-  FALLA_WAIT="gateway/s2s-egress" run correr
+  FALLA_WAIT="gateway/egress-gw" run correr
   [[ "$output" == *"Programmed"* ]]
   [[ "$output" == *"multus"* ]]
 }
@@ -207,7 +223,7 @@ correr_delete() {
 }
 
 @test "si la AuthPolicy de egreso no enforcea, ABORTA" {
-  FALLA_WAIT="authpolicy/s2s-egress" run correr
+  FALLA_WAIT="authpolicy/sign" run correr
   [ "$status" -ne 0 ]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
@@ -382,31 +398,31 @@ correr_delete() {
 }
 
 @test "con cluster-keys espera al Job de la clave ANTES de exigir Enforced" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
   local job pol
-  job=$(grep -n 'wait --for=condition=Complete job/wristband-init-payments' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
-  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/s2s-egress' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  job=$(grep -n 'wait --for=condition=Complete job/rotar-payments-init' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/sign' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
   [ -n "$job" ]
   [ -n "$pol" ]
   [ "$job" -lt "$pol" ]
 }
 
 @test "si el Job de la clave no termina, ABORTA y no toca el selector" {
-  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="job/wristband-init" run correr
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys FALLA_WAIT="job/rotar-" run correr
   [ "$status" -ne 0 ]
-  [[ "$output" == *"wristband-init-payments"* ]]
+  [[ "$output" == *"rotar-payments-init"* ]]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
 @test "con spiffe no espera ningún Job de clave" {
   run correr
-  run grep -c 'job/wristband-init' "$KUBECTL_CALLS"
+  run grep -c "job/rotar-" "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
 @test "la primera vez el Job y el CronJob del keygen SÍ se aplican" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
   run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
 }
@@ -418,14 +434,14 @@ correr_delete() {
 }
 
 @test "el ConfigMap con los scripts se reaplica aunque el keygen ya exista" {
-  SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
   run grep -c '15-keygen-rbac.yaml' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
 }
 
 @test "con spiffe no se consulta si el keygen existe" {
   run correr
-  run grep -c 'get job wristband-init-' "$KUBECTL_CALLS"
+  run grep -c "get job rotar-" "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
@@ -446,7 +462,7 @@ correr_delete() {
 }
 
 @test "la primera vez el endpoint de JWKS SI se aplica" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
   run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
 }
@@ -455,4 +471,52 @@ correr_delete() {
   SIGNING_STRATEGY=cluster-keys JWKS_PRESENTE=1 run correr
   run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
+}
+
+@test "con el flag en false el alta del namespace NO se aplica: la hace el chart" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  for m in 15-keygen-rbac.yaml 16-keygen-jobs.yaml 17-jwks-endpoint.yaml 20-authpolicy.yaml; do
+    run grep -c "$m" "$KUBECTL_CALLS"
+    [ "$output" -eq 0 ] || false
+  done
+}
+
+@test "con el flag en false el validador y las routes SI se siguen aplicando" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c '25-authpolicy-validator.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ] || false
+  run grep -c '50-httproute-egress.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "con el flag en false y sin la clave de firma, ABORTA nombrando al chart" {
+  SIGNING_STRATEGY=cluster-keys FALTA_CLAVE=1 run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"chart"* ]] || false
+  [[ "$output" == *"NAMESPACE_SETUP_ENABLED=true"* ]]
+}
+
+@test "con el flag en true no se exige la clave: el Job la crea en esta misma corrida" {
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys FALTA_CLAVE=1 run correr
+  [ "$status" -eq 0 ]
+}
+
+@test "si el JWKS no publica la clave con la que se firma, ABORTA nombrando los dos kids" {
+  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="otro-kid" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wristband-key-payments-g0"* ]] || false
+  [[ "$output" == *"otro-kid"* ]] || false
+  [[ "$output" == *"401"* ]]
+}
+
+@test "con el kid correcto en el JWKS el apply sigue" {
+  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="wristband-key-payments-g0" run correr
+  [ "$status" -eq 0 ]
+}
+
+@test "si la URL del JWKS no publica nada, ABORTA mostrando los paths que si existen" {
+  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no publica ninguna clave"* ]] || false
+  [[ "$output" == *"Paths que sí sirve"* ]]
 }

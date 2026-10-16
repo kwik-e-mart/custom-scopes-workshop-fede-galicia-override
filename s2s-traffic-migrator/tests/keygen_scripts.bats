@@ -14,7 +14,7 @@ setup() {
   mkdir -p "$SCRIPTS_DIR" "$WORK_DIR" "$BATS_TEST_TMPDIR/bin"
 
   jq -n '{
-    namespace:"payments", gateway_name:"s2s-egress", cluster_label:"eks-kuadrant",
+    namespace:"payments", gateway_name:"egress-gw", cluster_label:"eks-kuadrant",
     keys_namespace:"kuadrant-system", keygen_image:"alpine/k8s:1.30.3",
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     vault_approle_role_id:"role-id", vault_approle_secret:"vault-approle-creds",
@@ -43,7 +43,7 @@ setup() {
   mkdir -p "$VAULT_KV"
   : >"$VAULT_CALLS"; : >"$VAULT_PUT_HISTORY"; : >"$KUBECTL_CALLS"; : >"$APPLIED_YAML"
   : >"$FAKE_EXTERNALSECRETS"; : >"$FAKE_KEY_SECRETS"; : >"$FAKE_JWKS_SERVED"
-  printf 'payments-wristband-key-gen1' >"$FAKE_CURRENT_KEY"
+  printf 'wristband-key-payments-g0' >"$FAKE_CURRENT_KEY"
 
   export VAULT_SECRET_ID_FILE="$BATS_TEST_TMPDIR/secret-id"
   printf 'un-secret-id' >"$VAULT_SECRET_ID_FILE"
@@ -170,15 +170,15 @@ init() {
 rotate() {
   ORIGIN_NS=payments CLUSTER=eks-kuadrant KEYS_NS=kuadrant-system VAULT_ROLE_ID=role-id \
     VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc \
-    AUTH_POLICY_NAME=s2s-egress TOKEN_DURATION=0 EXTRA_WAIT="${EXTRA_WAIT:-0}" \
+    AUTH_POLICY_NAME=egress-gw TOKEN_DURATION=0 EXTRA_WAIT="${EXTRA_WAIT:-0}" \
     LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}" \
     run bash "$SCRIPTS_DIR/rotate.sh"
 }
 
-sembrar_gen1() {
-  mkdir -p "$VAULT_KV/gal-poc/payments/key-1"
+sembrar_g0() {
+  mkdir -p "$VAULT_KV/gal-poc/payments/key-g0"
   openssl genrsa -traditional -out "$BATS_TEST_TMPDIR/original.pem" 2048 2>/dev/null
-  cp "$BATS_TEST_TMPDIR/original.pem" "$VAULT_KV/gal-poc/payments/key-1/private_key"
+  cp "$BATS_TEST_TMPDIR/original.pem" "$VAULT_KV/gal-poc/payments/key-g0/key.pem"
 }
 
 modulo_original() {
@@ -196,14 +196,14 @@ jwks_de_solape() {
 @test "el bootstrap genera la clave en PKCS#1: es lo unico que Authorino parsea" {
   init
   [ "$status" -eq 0 ]
-  head -1 "$VAULT_KV/gal-poc/payments/key-1/private_key" \
+  head -1 "$VAULT_KV/gal-poc/payments/key-g0/key.pem" \
     | grep -q "BEGIN RSA PRIVATE KEY"
 }
 
 @test "el bootstrap crea el ExternalSecret en el namespace de las claves" {
   init
   [ "$(yq -N '.kind' "$APPLIED_YAML")" = "ExternalSecret" ]
-  [ "$(yq -N '.metadata.name' "$APPLIED_YAML")" = "payments-wristband-key-gen1" ]
+  [ "$(yq -N '.metadata.name' "$APPLIED_YAML")" = "wristband-key-payments-g0" ]
   [ "$(yq -N '.metadata.namespace' "$APPLIED_YAML")" = "kuadrant-system" ]
   [ "$(yq -N '.apiVersion' "$APPLIED_YAML")" = "external-secrets.io/v1" ]
   [ "$(yq -N '.spec.secretStoreRef.kind' "$APPLIED_YAML")" = "ClusterSecretStore" ]
@@ -215,12 +215,12 @@ jwks_de_solape() {
   labels=$(yq -N '.spec.target.template.metadata.labels' "$APPLIED_YAML")
   [[ "$labels" == *'egress-interceptor/wristband-key: "true"'* ]]
   [[ "$labels" == *'egress-interceptor/origin-namespace: payments'* ]]
-  [[ "$labels" == *'egress-interceptor/key-generation: "1"'* ]]
+  [[ "$labels" == *'egress-interceptor/key-generation: "0"'* ]]
   [[ "$labels" == *'nullplatform: "true"'* ]]
 }
 
 @test "si el namespace ya tiene clave, el bootstrap no toca Vault" {
-  printf 'secret/payments-wristband-key-gen3\n' >"$FAKE_KEY_SECRETS"
+  printf 'secret/wristband-key-payments-g0-gen3\n' >"$FAKE_KEY_SECRETS"
   init
   [ "$status" -eq 0 ]
   run grep -c 'POST' "$VAULT_CALLS"
@@ -228,38 +228,38 @@ jwks_de_solape() {
 }
 
 @test "la rotacion publica en el JWKS la clave vieja REAL, no una recien generada" {
-  sembrar_gen1
+  sembrar_g0
   rotate
   [ "$status" -eq 0 ]
   local esperado
   esperado=$(modulo_original)
   [ -n "$esperado" ]
-  [ "$(jwks_de_solape | jq -r '.keys[] | select(.kid == "payments-wristband-key-gen1") | .n')" = "$esperado" ]
+  [ "$(jwks_de_solape | jq -r '.keys[] | select(.kid == "wristband-key-payments-g0") | .n')" = "$esperado" ]
 }
 
 @test "el JWKS de solape lleva las dos generaciones, y el final solo la nueva" {
-  sembrar_gen1
+  sembrar_g0
   rotate
   [ "$(jwks_de_solape | jq -r '.keys | length')" -eq 2 ]
-  [ "$(jwks_de_solape | jq -r '[.keys[].kid] | sort | join(",")')" = "payments-wristband-key-gen1,payments-wristband-key-gen2" ]
-  [ "$(jwks_publicado | jq -r '[.keys[].kid] | join(",")')" = "payments-wristband-key-gen2" ]
+  [ "$(jwks_de_solape | jq -r '[.keys[].kid] | sort | join(",")')" = "wristband-key-payments-g0,wristband-key-payments-g1" ]
+  [ "$(jwks_publicado | jq -r '[.keys[].kid] | join(",")')" = "wristband-key-payments-g1" ]
 }
 
 @test "la clave nueva tambien sale en PKCS#1" {
-  sembrar_gen1
+  sembrar_g0
   rotate
-  head -1 "$VAULT_KV/gal-poc/payments/key-2/private_key" \
+  head -1 "$VAULT_KV/gal-poc/payments/key-g1/key.pem" \
     | grep -q "BEGIN RSA PRIVATE KEY"
 }
 
 @test "la rotacion apunta la AuthPolicy a la generacion siguiente" {
-  sembrar_gen1
+  sembrar_g0
   rotate
-  [ "$(cat "$FAKE_CURRENT_KEY")" = "payments-wristband-key-gen2" ]
+  [ "$(cat "$FAKE_CURRENT_KEY")" = "wristband-key-payments-g1" ]
 }
 
 @test "con EXTRA_WAIT=0 la rotacion llega hasta el final" {
-  sembrar_gen1
+  sembrar_g0
   EXTRA_WAIT=0 rotate
   [ "$status" -eq 0 ]
   [[ "$output" == *"completa"* ]]
@@ -268,11 +268,11 @@ jwks_de_solape() {
 @test "si no se puede recuperar la clave vieja de Vault, ABORTA sin publicar un JWKS falso" {
   rotate
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no se pudo recuperar gen1"* ]]
+  [[ "$output" == *"no se pudo recuperar gen0"* ]]
   [ ! -f "$VAULT_KV/gal-poc/payments/jwks/jwks" ]
 }
 
-@test "si la AuthPolicy no declara clave, ABORTA en vez de rotar a gen1" {
+@test "si la AuthPolicy no declara clave, ABORTA en vez de rotar a g0" {
   : >"$FAKE_CURRENT_KEY"
   rotate
   [ "$status" -ne 0 ]
@@ -280,7 +280,7 @@ jwks_de_solape() {
 }
 
 @test "si la clave vigente no sigue el patron de generaciones, ABORTA" {
-  printf 'payments-wristband-key' >"$FAKE_CURRENT_KEY"
+  printf 'clave-vieja-sin-patron' >"$FAKE_CURRENT_KEY"
   rotate
   [ "$status" -ne 0 ]
   [[ "$output" == *"no se rota a ciegas"* ]]
@@ -289,8 +289,8 @@ jwks_de_solape() {
 }
 
 @test "la limpieza de huerfanos borra por metadata, en el mount del sustrato" {
-  sembrar_gen1
-  printf 'externalsecret.external-secrets.io/payments-wristband-key-gen9\n' >"$FAKE_EXTERNALSECRETS"
+  sembrar_g0
+  printf 'externalsecret.external-secrets.io/wristband-key-payments-g9\n' >"$FAKE_EXTERNALSECRETS"
   rotate
   run grep -c 'DELETE .*/v1/kv/eks/metadata/gal-poc/payments/key-9' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
@@ -304,15 +304,15 @@ jwks_de_solape() {
 }
 
 @test "con KV v2 las rutas de datos llevan /data" {
-  sembrar_gen1
+  sembrar_g0
   rotate
   [ "$status" -eq 0 ]
-  run grep -c '/v1/kv/eks/data/gal-poc/payments/key-2' "$VAULT_CALLS"
+  run grep -c '/v1/kv/eks/data/gal-poc/payments/key-g1' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
 }
 
 @test "no se consulta sys/internal/ui/mounts: su policy es aparte de la del KV" {
-  sembrar_gen1
+  sembrar_g0
   rotate
   [ "$status" -eq 0 ]
   run grep -c 'sys/internal/ui/mounts' "$VAULT_CALLS"
@@ -320,17 +320,17 @@ jwks_de_solape() {
 }
 
 @test "el borrado va por metadata y la lectura por data" {
-  sembrar_gen1
-  printf 'externalsecret.external-secrets.io/payments-wristband-key-gen9\n' >"$FAKE_EXTERNALSECRETS"
+  sembrar_g0
+  printf 'externalsecret.external-secrets.io/wristband-key-payments-g9\n' >"$FAKE_EXTERNALSECRETS"
   rotate
-  run grep -c 'GET .*/v1/kv/eks/data/gal-poc/payments/key-1' "$VAULT_CALLS"
+  run grep -c 'GET .*/v1/kv/eks/data/gal-poc/payments/key-g0' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
   run grep -c 'DELETE .*/v1/kv/eks/metadata/' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
 }
 
 @test "el login manda role_id y secret_id al endpoint de AppRole" {
-  sembrar_gen1
+  sembrar_g0
   rotate
   run grep -c 'POST .*/v1/auth/approle/login' "$VAULT_CALLS"
   [ "$output" -ge 1 ]
@@ -339,7 +339,7 @@ jwks_de_solape() {
 @test "con la clave ya presente el bootstrap termina bien SIN VAULT_ADDR" {
   # La lib se sourcea despues del early exit: si valida al sourcearse, el Job explota en un
   # cluster sin Vault aunque no tenga nada que pedirle.
-  printf 'secret/payments-wristband-key-gen1\n' >"$FAKE_KEY_SECRETS"
+  printf 'secret/wristband-key-payments-g0\n' >"$FAKE_KEY_SECRETS"
   VAULT_ADDR="" init
   [ "$status" -eq 0 ]
   [[ "$output" == *"ya tiene clave de firma"* ]]
@@ -365,9 +365,9 @@ ruta_leida()   { yq -N '.spec.data[0].remoteRef.key' "$APPLIED_YAML"; }
 }
 
 @test "la rotacion: el ExternalSecret lee la MISMA ruta que el script escribio" {
-  sembrar_gen1
+  sembrar_g0
   rotate
   [ "$status" -eq 0 ]
   [ "$(ruta_escrita)" = "$(ruta_leida)" ]
-  [ "$(ruta_leida)" = "gal-poc/payments/key-2" ]
+  [ "$(ruta_leida)" = "gal-poc/payments/key-g1" ]
 }

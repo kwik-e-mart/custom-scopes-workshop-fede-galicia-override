@@ -8,7 +8,7 @@ SERVICE_ID=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.id //
 
 RESOLVED=$(echo "${INTERCEPTIONS_JSON:-[]}" | jq -c '[.[] | {
   service_name: .service_name,
-  fqdn: (.target_fqdn // .target_scope),
+  fqdn: .scope_fqdn,
   percent: .percent
 }]')
 np service patch --id "$SERVICE_ID" --body "{\"attributes\":{\"resolved\":$RESOLVED}}"
