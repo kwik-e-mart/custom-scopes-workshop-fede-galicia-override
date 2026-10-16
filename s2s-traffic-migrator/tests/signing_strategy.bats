@@ -84,7 +84,7 @@ render_ctx() {
     vault_token_secret:"s2s-vault-token",
     platform:"openshift",
     interceptions:[{service_name:"reports", scope:"dev", scope_fqdn:"reports-dev.example.io",
-                    percent:50, original:{selector:{app:"reports"},ports:[{port:8080,targetPort:8080}]}}]
+                    percent:50, ingress_route:"k-8-s-reports-internal", original:{selector:{app:"reports"},ports:[{port:8080,targetPort:8080}]}}]
   }' >"$BATS_TEST_TMPDIR/render-ctx.json"
 }
 
@@ -373,11 +373,11 @@ doc() {  # <render> <kind> [nombre]
 @test "con cluster-keys el service emite TAMBIEN el validador de ingreso; con spiffe no" {
   run render cluster-keys
   [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 2 ]
-  [ -n "$(doc "$output" AuthPolicy s2s-validator)" ]
+  [ -n "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ]
 
   run render spiffe
   [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 1 ]
-  [ -z "$(doc "$output" AuthPolicy s2s-validator)" ]
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ]
 }
 
 @test "una estrategia sin directorio de manifiestos ABORTA en vez de aplicar el resto" {
