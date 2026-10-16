@@ -627,14 +627,13 @@ exportado() {  # <variable>
   [[ "$output" == *"jwks_service_name"* ]]
 }
 
-@test "KEYS_NAMESPACE sale del namespace de la app, sin declararlo" {
-  run_bc
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep '^KEYS_NAMESPACE=' | sed 's/^KEYS_NAMESPACE=//')" = "payments" ]
+@test "la clave de firma se busca donde la lee Authorino, no en el namespace de la app" {
+  [ "$(exportado KEYS_NAMESPACE)" = "kuadrant-system" ]
 }
 
-@test "KEYS_NAMESPACE declarado le gana al namespace de la app" {
-  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" KEYS_NAMESPACE=kuadrant-system run bash "$BC"
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep '^KEYS_NAMESPACE=' | sed 's/^KEYS_NAMESPACE=//')" = "kuadrant-system" ]
+@test "el namespace de las claves no lo puede pisar el entorno" {
+  local v
+  v=$(CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" KEYS_NAMESPACE=payments \
+    bash -c "source '$BC' >/dev/null 2>&1; printf '%s' \"\$KEYS_NAMESPACE\"")
+  [ "$v" = "kuadrant-system" ]
 }

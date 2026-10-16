@@ -830,3 +830,32 @@ rule() {  # <percent> [service]
   [[ "$init" != *'property: key.pem'* ]] || false
   [[ "$rot" != *'property: key.pem'* ]]
 }
+
+@test "el workflow no fija ningun valor que el script ya resuelve distinto" {
+  local wf="${BATS_TEST_DIRNAME}/../workflows/openshift/create.yaml"
+  local bc="${BATS_TEST_DIRNAME}/../scripts/k8s/build_context"
+  local nombre valor defecto
+  while IFS= read -r nombre; do
+    valor=$(grep -E "^  ${nombre}: " "$wf" | head -1 | sed -E "s/^  ${nombre}: //; s/^\"//; s/\"$//")
+    [ -n "$valor" ] || continue
+    defecto=$(grep -E "^${nombre}=\"\\\$\{${nombre}:-" "$bc" | head -1 | sed -E "s/^${nombre}=\"\\\$\{${nombre}:-//; s/\}\"$//")
+    [ -n "$defecto" ] || continue
+    [ "$valor" = "$defecto" ] || {
+      echo "el workflow fija ${nombre}='${valor}' pero el default del script es '${defecto}'" >&2
+      false
+    }
+  done < <(grep -oE "^  [A-Z_]+:" "$wf" | tr -d ' :')
+}
+
+@test "ningun manifiesto nombra objetos que hoy crea el chart con otro nombre" {
+  local dir="${BATS_TEST_DIRNAME}/../manifests" viejos
+  viejos=$(grep -rn "s2s-egress\|s2s-jwks\|wristband-rotator\|wristband-init-\|wristband-rotate-\|vault-ocp-plataforma" "$dir" \
+    | grep -v "spiffe_role\|vault_spiffe_role" || true)
+  [ -z "$viejos" ] || { echo "$viejos" >&2; false; }
+}
+
+@test "el reconcile espera la AuthPolicy de firma por su nombre, no por el del Gateway" {
+  local rec="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile"
+  grep -q 'authpolicy/\$EGRESS_AUTHPOLICY' "$rec"
+  ! grep -q 'authpolicy/\$GATEWAY_NAME' "$rec"
+}

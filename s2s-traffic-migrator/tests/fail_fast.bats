@@ -215,7 +215,7 @@ correr_delete() {
 }
 
 @test "si la AuthPolicy de egreso no enforcea, ABORTA" {
-  FALLA_WAIT="authpolicy/egress-gw" run correr
+  FALLA_WAIT="authpolicy/sign" run correr
   [ "$status" -ne 0 ]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
@@ -393,7 +393,7 @@ correr_delete() {
   NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
   local job pol
   job=$(grep -n 'wait --for=condition=Complete job/rotar-payments-init' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
-  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/egress-gw' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
+  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/sign' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
   [ -n "$job" ]
   [ -n "$pol" ]
   [ "$job" -lt "$pol" ]
