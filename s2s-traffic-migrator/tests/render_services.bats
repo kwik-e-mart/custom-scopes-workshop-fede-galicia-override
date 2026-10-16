@@ -41,7 +41,7 @@ svc() { echo "$1" | yq "select(.kind == \"Service\" and .metadata.name == \"$2\"
 
 regla() {  # <service>
   jq -nc --arg s "$1" '{
-    service_name: $s, scope: "eks", scope_fqdn: "\($s).example.io", percent: 50,
+    service_name: $s, scope: "eks", scope_fqdn: "\($s).example.io", percent: 50, ingress_route:"k-8-s-reports-internal",
     original: {
       selector: {app: $s, tier: "api"},
       ports: [{name: "http", port: 8080, targetPort: "web", protocol: "TCP", appProtocol: "http"},
@@ -52,7 +52,7 @@ regla() {  # <service>
 
 sin_service_previo() {  # <service>
   jq -nc --arg s "$1" '{
-    service_name: $s, scope: "eks", scope_fqdn: "\($s).example.io", percent: 50,
+    service_name: $s, scope: "eks", scope_fqdn: "\($s).example.io", percent: 50, ingress_route:"k-8-s-reports-internal",
     original: {selector: {}, ports: []}
   }'
 }
