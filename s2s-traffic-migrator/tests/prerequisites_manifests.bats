@@ -24,7 +24,7 @@ sustituir() {  # <archivo>
       -e 's|__NETWORKING_VAULT_NAMESPACE__|admin/spiffe|g' \
       -e 's|__NETWORKING_VAULT_SPIFFE_MOUNT__|spiffe|g' \
       -e 's|__NETWORKING_VAULT_ISSUER__|https://vault.example.io:8200|g' \
-      -e 's|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://td.example/s2s-egress|g' \
+      -e 's|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://td.example/egress-gw|g' \
       -e 's|__S2S_INGRESS_AUDIENCE__|kuadrant.peer.example.io|g' \
       "$1"
 }
@@ -131,3 +131,4 @@ aud_predicate() {
   [[ "$preds" == *'auth.identity.src_namespace == \"payments\"'* ]]
   [ "$(yq '.spec.rules.authentication.local-payments.overrides' "$out")" = "null" ]
 }
+

@@ -3,7 +3,7 @@
 apiVersion: {{ .authpolicy_api_version | quote }}
 kind: AuthPolicy
 metadata:
-  name: {{ $gw | quote }}
+  name: {{ .egress_authpolicy | quote }}
   namespace: {{ $ns | quote }}
   labels:
     {{ .managed_label }}: "true"

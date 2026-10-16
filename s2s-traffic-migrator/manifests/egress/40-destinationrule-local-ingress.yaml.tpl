@@ -1,4 +1,5 @@
 {{- if and .interceptions (eq .platform "eks") }}
+{{- $base := (index .interceptions 0).scope_fqdn | regexp.Replace "^[^.]+\\." "" -}}
 # Sólo con origen EKS. Allá la rama NO migrada tampoco va a un Service del destino: entra por el
 # ingreso de este mismo cluster, así que también necesita originar TLS.
 apiVersion: networking.istio.io/v1
@@ -30,5 +31,5 @@ spec:
 {{- else }}
       insecureSkipVerify: true
 {{- end }}
-      sni: {{ .local_ingress_host | quote }}
+      sni: {{ printf "s2s.%s" $base | quote }}
 {{- end }}

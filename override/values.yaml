@@ -1,5 +1,5 @@
 configuration:
-#  TRAFFIC_CONTAINER_IMAGE: "136650373784.dkr.ecr.us-east-1.amazonaws.com/ecr-public/nullplatform/k8s-traffic-manager:latest"
+  TRAFFIC_CONTAINER_IMAGE: "136650373784.dkr.ecr.us-east-1.amazonaws.com/ecr-public/nullplatform/k8s-traffic-manager:latest"
   IMAGE_PULL_SECRETS:
     ENABLED: false
   APPLICATION_USER: 1001

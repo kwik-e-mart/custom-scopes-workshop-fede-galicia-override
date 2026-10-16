@@ -31,10 +31,12 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `35-peer-jwks-service.yaml` | `Service` `ExternalName` al JWKS del cluster opuesto | cluster | **sólo `cluster-keys`**, y sólo con tráfico cruzado: es lo que hace que la `jwksUrl` del peer resuelva desde este cluster |
 | `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `cluster-keys`** |
 | `45-authpolicy-validator-spiffe.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `spiffe`**. Mismo nombre de objeto que `40-`: se aplica uno o el otro, nunca los dos |
-| `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system` | por namespace emisor | **sólo `cluster-keys`** |
+| `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system`. Alternativa manual a lo que emite el service; si se usa, fijar `WRISTBAND_SECRET_NAME` para que el descubrimiento por label no lo pise | por namespace emisor | **sólo `cluster-keys`** |
+| `15-keygen-rbac.yaml` + `16-keygen-jobs.yaml` | **Los emite el service, no son prerequisito.** SA + Roles + `ConfigMap` con `init.sh` y `rotate.sh`, y el `Job` de bootstrap + `CronJob` de rotación semanal. La clave vive en Vault y llega a `kuadrant-system` por `ExternalSecret` con el nombre `<ns>-wristband-key-gen<N>`; el `kid` es ese nombre. Reemplaza a `50-` | por namespace emisor | **sólo `cluster-keys`** |
 | `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |
+| `75-networkpolicy-jwks.yaml` | `NetworkPolicy allow-authorino-jwks`: habilita `kuadrant-system` → el pod `s2s-jwks` del namespace en el 8080. **Sin esto el validador no puede bajar el JWKS** y Authorino falla cerrado con `UNAVAILABLE`, que llega al cliente como un 500 | por namespace emisor | **sólo `cluster-keys`** |
 
 ## Placeholders
 
@@ -60,6 +62,13 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__NETWORKING_VAULT_AUTH_ROLE__` | role de ese mount, bindeado a la SA de Authorino | `s2s-authorino-egress` |
 | `__NETWORKING_VAULT_TOKEN_SECRET__` | Secret de `kuadrant-system` donde el CronJob deja el `client_token` | `s2s-vault-token` |
 | `__VAULT_LOGIN_IMAGE__` | imagen del CronJob de login. Necesita `curl`, `jq` y `kubectl` | una imagen interna pineada por digest |
+| `__KEYGEN_IMAGE__` | imagen del Job de keygen. Necesita `bash`, `curl`, `jq`, `kubectl` y poder instalar `openssl` | `alpine/k8s:1.31.2` |
+| `__CLUSTER_LABEL__` | identifica al cluster dentro del KV: las claves cuelgan de `<mount>/<cluster>/<namespace>/` | `arqc-delta-136` |
+| `__VAULT_SECRET_STORE__` | `SecretStore` de external-secrets que apunta a ese Vault | `vault-ocp-plataforma` |
+| `__EGRESS_AUTHPOLICY__` | la `AuthPolicy` de firma del namespace, que el modo `rotate` parchea | `s2s-egress` |
+| `__LOCAL_JWKS_URL__` | URL del JWKS de este cluster, que `rotate` consulta para saber si el `kid` nuevo se propagó | `http://jwks.rot-dest.svc.cluster.local:8080/<ns>/jwks.json` |
+| `__VAULT_APPROLE_ROLE_ID__` | `role_id` del AppRole con el que el Job se loguea a Vault | — |
+| `__VAULT_APPROLE_SECRET__` | Secret de `kuadrant-system` con el `secret-id` del AppRole, en la clave `secret-id` | `vault-approle-secret-id` |
 
 `__LOCAL_JWKS_NAME__` y `__PEER_JWKS_NAME__` **tienen que ser distintos**: cada cluster resuelve el
 endpoint del peer en su propio `kuadrant-system`, así que un nombre compartido colisiona con el

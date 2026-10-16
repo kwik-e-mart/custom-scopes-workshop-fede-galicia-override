@@ -50,6 +50,31 @@ done
 printf %s "$NP_MOCK_SCOPES" | jq -c '{results: .}' | jq -c "$QUERY"
 MOCK
   chmod +x "$BATS_TEST_TMPDIR/bin/np"
+  export FAKE_SIGNING_KEY="$BATS_TEST_TMPDIR/signing-key.txt"
+  : >"$FAKE_SIGNING_KEY"
+  export AUTHPOLICY_ESTADO=""
+  export KUBECTL_CALLS="$BATS_TEST_TMPDIR/kubectl-calls.log"
+  : >"$KUBECTL_CALLS"
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+case "${AUTHPOLICY_ESTADO:-}" in
+  notfound)
+    echo 'Error from server (NotFound): authpolicies.kuadrant.io "sign" not found' >&2
+    exit 1 ;;
+  forbidden)
+    echo 'Error from server (Forbidden): authpolicies.kuadrant.io is forbidden: User "system:serviceaccount:nullplatform-tools:np-agent" cannot get resource "authpolicies" in API group "kuadrant.io" in the namespace "payments"' >&2
+    exit 1 ;;
+esac
+# El mock responde por campo pedido, como el kubectl real: el jsonpath de la llamada decide.
+case "$*" in
+  *signingKeyRefs*) cat "$FAKE_SIGNING_KEY" ;;
+  *customClaims.src_cluster*) printf '%s' "${FAKE_SRC_CLUSTER-gal-poc}" ;;
+  *wristband.issuer*) printf '%s' "${FAKE_ISSUER-https://egress.gal-poc.bancogalicia.com.ar}" ;;
+  *) cat "$FAKE_SIGNING_KEY" ;;
+esac
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
@@ -171,11 +196,73 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   # Es el invariante que sostiene la identidad en el ingreso, donde cada clave tiene su propia
   # regla. Un nombre fijo haría que todos los namespaces firmaran con la misma clave.
   run_bc
-  [[ "$output" == *"key=payments-wristband-key"* ]]
+  [[ "$output" == *"key=wristband-key-payments-g0"* ]]
 
   NS_PROVIDER=other
   run_bc
-  [[ "$output" == *"key=other-wristband-key"* ]]
+  [[ "$output" == *"key=wristband-key-other-g0"* ]]
+}
+
+@test "sin AuthPolicy de firma todavía, el nombre es el de la generación inicial" {
+  AUTHPOLICY_ESTADO=notfound run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=wristband-key-payments-g0"* ]]
+}
+
+@test "la clave vigente sale de la AuthPolicy de firma, aunque no siga ningún patrón" {
+  # El rotador le pone un nombre con timestamp que no se puede derivar: si esto se adivinara,
+  # la AuthPolicy quedaría apuntando a un Secret que no existe y el tráfico se cae.
+  printf 'wristband-key-payments-20260115030000' >"$FAKE_SIGNING_KEY"
+  run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=wristband-key-payments-20260115030000"* ]]
+}
+
+@test "una AuthPolicy sin clave declarada cae al nombre de la generación inicial" {
+  : >"$FAKE_SIGNING_KEY"
+  run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=wristband-key-payments-g0"* ]]
+}
+
+@test "la consulta es a la AuthPolicy de firma, en el namespace de la app" {
+  run_bc
+  run grep -c -- "-n payments get authpolicy sign" "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "lo que se lee es el signingKeyRefs del wristband, no cualquier campo" {
+  run_bc
+  run grep -c "wristband.signingKeyRefs\[0\].name" "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "un error de API que no es NotFound ABORTA en vez de inventar un nombre" {
+  # Un Forbidden tratado como 'todavía no hay' repuntaría la AuthPolicy de un namespace que ya
+  # rotó, a una clave que no existe, y el tráfico se cae sin que nadie toque nada.
+  AUTHPOLICY_ESTADO=forbidden run_bc
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"key=wristband-key-payments-g0"* ]]
+}
+
+@test "el error de RBAC nombra la AuthPolicy y el namespace donde falló" {
+  AUTHPOLICY_ESTADO=forbidden run_bc
+  [[ "$output" == *"sign"* ]]
+  [[ "$output" == *"payments"* ]]
+}
+
+@test "WRISTBAND_SECRET_NAME explícito le gana a lo que haya en el cluster" {
+  printf 'wristband-key-payments-g7' >"$FAKE_SIGNING_KEY"
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" WRISTBAND_SECRET_NAME='{namespace}-fija' run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"key=payments-fija"* ]]
+}
+
+@test "con spiffe no se consulta el cluster: no hay clave que descubrir" {
+  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe run_bc
+  [ "$status" -eq 0 ]
+  run grep -c "get authpolicy" "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }
 
 @test "WRISTBAND_SECRET_NAME de la configuración del workflow sustituye {namespace}" {
@@ -512,4 +599,47 @@ rule() {  # <service_name tal cual lo escribe el dev>
 @test "sin declararlo, el modo es skip-verify" {
   run_bc
   [ "$status" -eq 0 ]
+}
+
+# El nombre del Service y la URL que el validador consulta son el mismo dato en dos lugares. Se
+# deriva uno del otro justamente para que no puedan divergir; esto lo fija.
+exportado() {  # <variable>
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+    bash -c "source '$BC' >/dev/null 2>&1; printf '%s' \"\$$1\""
+}
+
+@test "la URL del JWKS se deriva del nombre del Service y del namespace" {
+  [ "$(exportado JWKS_SERVICE_NAME)" = "jwks-egress" ]
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json" ]
+}
+
+@test "cambiar el nombre del Service mueve la URL con el" {
+  export JWKS_SERVICE_NAME=otro-jwks
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://otro-jwks.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json" ]
+  unset JWKS_SERVICE_NAME
+}
+
+@test "una LOCAL_JWKS_URL declarada le gana a la derivada" {
+  export LOCAL_JWKS_URL="http://propio:9999/{namespace}/jwks.json"
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://propio:9999/payments/jwks.json" ]
+  unset LOCAL_JWKS_URL
+}
+
+@test "un nombre de Service invalido ABORTA en vez de rendear un Service imposible" {
+  export JWKS_SERVICE_NAME="Mal Nombre"
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  unset JWKS_SERVICE_NAME
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"jwks_service_name"* ]]
+}
+
+@test "la clave de firma se busca donde la lee Authorino, no en el namespace de la app" {
+  [ "$(exportado KEYS_NAMESPACE)" = "kuadrant-system" ]
+}
+
+@test "el namespace de las claves no lo puede pisar el entorno" {
+  local v
+  v=$(CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" KEYS_NAMESPACE=payments \
+    bash -c "source '$BC' >/dev/null 2>&1; printf '%s' \"\$KEYS_NAMESPACE\"")
+  [ "$v" = "kuadrant-system" ]
 }
