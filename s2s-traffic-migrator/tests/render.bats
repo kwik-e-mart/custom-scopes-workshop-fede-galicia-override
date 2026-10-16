@@ -859,3 +859,11 @@ rule() {  # <percent> [service]
   grep -q 'authpolicy/\$EGRESS_AUTHPOLICY' "$rec"
   ! grep -q 'authpolicy/\$GATEWAY_NAME' "$rec"
 }
+
+@test "los outputs resuelven el fqdn con el campo que emite build_context" {
+  local script="${BATS_TEST_DIRNAME}/../scripts/k8s/write_service_outputs"
+  local campo
+  campo=$(grep -oE 'fqdn: \.[a-z_]+' "$script" | sed 's/fqdn: \.//')
+  [ -n "$campo" ]
+  INTERCEPTIONS_JSON=$(rule 100) jq -e --arg c "$campo" '.[0] | has($c)' <<<"$(rule 100)" >/dev/null
+}
