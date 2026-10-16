@@ -77,6 +77,14 @@ case "$*" in
     cat "$FAKE_GRANTS" ;;
   *"get job rotar-"*|*"get cronjob rotar-"*)
     [ -n "${KEYGEN_PRESENTE:-}" ] || exit 1 ;;
+  *"exec deploy/jwks-egress"*)
+    # El mock devuelve el JWKS que pida el test; sin JWKS_KIDS no publica nada y el chequeo se saltea.
+    # Por default el endpoint está sano y publica la clave vigente: un JWKS roto es lo excepcional
+    # y el test que lo quiere pasa JWKS_KIDS="" explícito.
+    KIDS="${JWKS_KIDS-wristband-key-payments-g0}"
+    if [ -n "$KIDS" ]; then
+      printf '%s' "$KIDS" | tr ' ' '\n' | jq -R '{kid: .}' | jq -s '{keys: .}'
+    fi ;;
   *"get secret wristband-key-"*)
     [ -z "${FALTA_CLAVE:-}" ] || exit 1 ;;
   *"get deploy jwks-egress"*|*"get svc jwks-egress"*|*"get externalsecret jwks-egress"*)
@@ -491,4 +499,24 @@ correr_delete() {
 @test "con el flag en true no se exige la clave: el Job la crea en esta misma corrida" {
   NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys FALTA_CLAVE=1 run correr
   [ "$status" -eq 0 ]
+}
+
+@test "si el JWKS no publica la clave con la que se firma, ABORTA nombrando los dos kids" {
+  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="otro-kid" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wristband-key-payments-g0"* ]] || false
+  [[ "$output" == *"otro-kid"* ]] || false
+  [[ "$output" == *"401"* ]]
+}
+
+@test "con el kid correcto en el JWKS el apply sigue" {
+  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="wristband-key-payments-g0" run correr
+  [ "$status" -eq 0 ]
+}
+
+@test "si la URL del JWKS no publica nada, ABORTA mostrando los paths que si existen" {
+  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="" run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no publica ninguna clave"* ]] || false
+  [[ "$output" == *"Paths que sí sirve"* ]]
 }

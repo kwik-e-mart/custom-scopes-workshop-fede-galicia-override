@@ -66,7 +66,13 @@ case "${AUTHPOLICY_ESTADO:-}" in
     echo 'Error from server (Forbidden): authpolicies.kuadrant.io is forbidden: User "system:serviceaccount:nullplatform-tools:np-agent" cannot get resource "authpolicies" in API group "kuadrant.io" in the namespace "payments"' >&2
     exit 1 ;;
 esac
-cat "$FAKE_SIGNING_KEY"
+# El mock responde por campo pedido, como el kubectl real: el jsonpath de la llamada decide.
+case "$*" in
+  *signingKeyRefs*) cat "$FAKE_SIGNING_KEY" ;;
+  *customClaims.src_cluster*) printf '%s' "${FAKE_SRC_CLUSTER-gal-poc}" ;;
+  *wristband.issuer*) printf '%s' "${FAKE_ISSUER-https://egress.gal-poc.bancogalicia.com.ar}" ;;
+  *) cat "$FAKE_SIGNING_KEY" ;;
+esac
 MOCK
   chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
@@ -604,12 +610,12 @@ exportado() {  # <variable>
 
 @test "la URL del JWKS se deriva del nombre del Service y del namespace" {
   [ "$(exportado JWKS_SERVICE_NAME)" = "jwks-egress" ]
-  [ "$(exportado LOCAL_JWKS_URL)" = "http://jwks-egress.payments.svc.cluster.local:8080/openshift-crc/payments/jwks.json" ]
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json" ]
 }
 
 @test "cambiar el nombre del Service mueve la URL con el" {
   export JWKS_SERVICE_NAME=otro-jwks
-  [ "$(exportado LOCAL_JWKS_URL)" = "http://otro-jwks.payments.svc.cluster.local:8080/openshift-crc/payments/jwks.json" ]
+  [ "$(exportado LOCAL_JWKS_URL)" = "http://otro-jwks.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json" ]
   unset JWKS_SERVICE_NAME
 }
 

@@ -146,6 +146,28 @@ require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
 # puede derivar. Buscar el Secret por label tampoco sirve, porque los que crea el chart del
 # namespace no llevan ninguna.
 # Devuelve 0 con el nombre, 2 si todavía no hay AuthPolicy o no tiene clave, 1 si la API falló.
+# Lo mismo vale para el `iss` y para el cluster que nombran los claims: los arma el chart desde su
+# propio values, y el validador los compara carácter por carácter. Derivarlos de nuestras variables
+# es pedir que cuatro valores coincidan en dos lugares distintos; cuando no coinciden el único
+# síntoma es un 401 sin pista. Se leen del mismo objeto que firma.
+if ! type -t signing_policy_field >/dev/null 2>&1; then
+signing_policy_field() {  # <jsonpath relativo al wristband>
+  local out
+  if ! out=$(kubectl -n "$NAMESPACE" get authpolicy "$EGRESS_AUTHPOLICY" \
+      -o jsonpath="{.spec.rules.response.success.headers.x-egress-token.wristband.$1}" 2>&1); then
+    case "$out" in
+      *NotFound*|*not\ found*) return 2 ;;
+      *)
+        log error "egress-interceptor: no se pudo leer la AuthPolicy '$EGRESS_AUTHPOLICY' de '$NAMESPACE'." >&2
+        log error "  $out" >&2
+        return 1 ;;
+    esac
+  fi
+  [ -n "$out" ] || return 2
+  printf '%s' "$out"
+}
+fi
+
 if ! type -t current_wristband_secret >/dev/null 2>&1; then
 current_wristband_secret() {
   local out
@@ -191,15 +213,28 @@ require_match "$WRISTBAND_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "wristb
 
 require_match "$VAULT_KV_CLUSTER" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "vault_kv_cluster"
 
+# El cluster que nombran los claims y el path del JWKS: el del chart, no el nuestro. Sólo se cae al
+# VAULT_KV_CLUSTER cuando todavía no hay AuthPolicy que leer.
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
+  CLAIM_CLUSTER=$(signing_policy_field 'customClaims.src_cluster.value') || CLAIM_CLUSTER=""
+else
+  CLAIM_CLUSTER=""
+fi
+[ -n "$CLAIM_CLUSTER" ] || CLAIM_CLUSTER="$VAULT_KV_CLUSTER"
+require_match "$CLAIM_CLUSTER" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "claim_cluster"
+
 EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
+if [ -z "$EGRESS_ISSUER" ] && [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
+  EGRESS_ISSUER=$(signing_policy_field 'issuer') || EGRESS_ISSUER=""
+fi
 [ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER="https://egress.{cluster}.${ISSUER_DOMAIN}"
 EGRESS_ISSUER=${EGRESS_ISSUER//\{namespace\}/$NAMESPACE}
-EGRESS_ISSUER=${EGRESS_ISSUER//\{cluster\}/$VAULT_KV_CLUSTER}
+EGRESS_ISSUER=${EGRESS_ISSUER//\{cluster\}/$CLAIM_CLUSTER}
 LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{namespace\}/$NAMESPACE}
-LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{cluster\}/$VAULT_KV_CLUSTER}
+LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{cluster\}/$CLAIM_CLUSTER}
 PEER_JWKS_URL=${PEER_JWKS_URL//\{namespace\}/$NAMESPACE}
-PEER_JWKS_URL=${PEER_JWKS_URL//\{cluster\}/$VAULT_KV_CLUSTER}
-[ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${VAULT_KV_CLUSTER}/${NAMESPACE}/jwks.json"
+PEER_JWKS_URL=${PEER_JWKS_URL//\{cluster\}/$CLAIM_CLUSTER}
+[ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${CLAIM_CLUSTER}/${NAMESPACE}/jwks.json"
 require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
 
 gitops_substrate_hint() {
