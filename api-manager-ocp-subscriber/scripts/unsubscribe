@@ -8,7 +8,8 @@ ACTION_SETTLED=0
 trap close_on_unexpected_exit EXIT
 
 unsubscribe() {
-  NOTIFICATION=$(read_notification)
+  load_notification
+
   local action_id subscription_id owns
   action_id=$(notification_field '.id')
   subscription_id=$(notification_field '.service.attributes.subscription_id')
@@ -24,6 +25,14 @@ unsubscribe() {
   if [ -z "$action_id" ]; then
     fail "subscriber: la notificación no trae el id de la acción."
   fi
+  require_provider_namespace
+
+  lookup_subscription_owner "$subscription_id"
+  if [ -z "$SUBSCRIPTION_OWNER" ]; then
+    close_action success "La suscripción $subscription_id ya no existe en APIM."
+    return
+  fi
+  require_owned_by_namespace "$subscription_id" "$PROVIDER_NAMESPACE"
 
   log info "subscriber: dando de baja $subscription_id."
   apim_request DELETE "/v1/subscriptions/$subscription_id" "" "$action_id"

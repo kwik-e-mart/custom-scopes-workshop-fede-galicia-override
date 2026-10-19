@@ -11,6 +11,9 @@ for name in API_SUBSCRIBER_URL API_SUBSCRIBER_TOKEN; do
     fail_external "el agente no tiene configurada la variable $name."
   fi
 done
+if [[ "$API_SUBSCRIBER_URL" != https://* ]]; then
+  fail_external "API_SUBSCRIBER_URL tiene que ser https."
+fi
 
 context=$(printf %s "${NP_ACTION_CONTEXT-}" | sed "s/^'//;s/'$//")
 action=$(printf %s "$context" | jq -r '.notification.action // .action // empty' 2>/dev/null) || action=""
@@ -21,14 +24,15 @@ fi
 response_file=$(mktemp)
 trap 'rm -f "$response_file"' EXIT
 
-code=$(curl -sS -o "$response_file" -w '%{http_code}' -X GET "$API_SUBSCRIBER_URL/v1/plans" \
-  -H "Authorization: Bearer $API_SUBSCRIBER_TOKEN" -H "Accept: application/json") || code="000"
+code=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" \
+  | curl -sS --config - --connect-timeout 10 --max-time 30 -o "$response_file" -w '%{http_code}' \
+    -X GET "$API_SUBSCRIBER_URL/v1/plans" -H "Accept: application/json") || code="000"
 
 if [[ ! "$code" =~ ^2 ]]; then
-  fail_external "GET /v1/plans respondió HTTP $code: $(cat "$response_file")"
+  fail_external "GET /v1/plans respondió HTTP $code: $(head -c 300 "$response_file" | tr -d '\000-\011\013-\037\177')"
 fi
 
-plans=$(jq -ce 'if (.items | type) == "array" then {plans: .items} else error("sin items") end' "$response_file" 2>/dev/null) \
+plans=$(jq -ce 'if (.items | type) == "array" then {plans: (.items | map({id} + (if .maxTps != null then {maxTps} else {} end)))} else error("sin items") end' "$response_file" 2>/dev/null) \
   || fail_external "GET /v1/plans no devolvió una lista de planes en items."
 
 printf '%s\n' "$plans"
