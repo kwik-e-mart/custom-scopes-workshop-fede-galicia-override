@@ -328,9 +328,13 @@ class App:
     def namespace_rejection(self, namespace):
         if namespace.startswith("kube-") or namespace in ("default", self.settings.get("own_namespace")):
             return f"El namespace {namespace} no se puede suscribir desde el mock."
+        if not self.settings.get("create_secret", True):
+            return None
         allowed = self.settings.get("allowed_namespaces") or []
         if allowed and namespace not in allowed:
             return f"El namespace {namespace} no está en los namespaces permitidos del mock."
+        if not allowed and not self.settings.get("allow_all_namespaces", False):
+            return "El mock no tiene namespaces permitidos configurados para crear la credencial."
         return None
 
     def create_subscription(self, body, key, outbox):
@@ -655,6 +659,7 @@ def main():
         "create_secret": os.environ.get("CREATE_CREDENTIAL_SECRET", "true") == "true",
         "own_namespace": namespace,
         "allowed_namespaces": [item for item in os.environ.get("ALLOWED_NAMESPACES", "").split(",") if item],
+        "allow_all_namespaces": os.environ.get("ALLOW_ALL_NAMESPACES", "false") == "true",
         "max_history": int(os.environ.get("MAX_HISTORY", "200")),
     }
     app = App(store, k8s, notifier, timer_scheduler, settings)
