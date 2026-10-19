@@ -60,7 +60,7 @@ acción queda abierta.
 
 ```bash
 helm upgrade --install apim-mock mocks/apim-mock/chart -n apim-mock --create-namespace \
-  --set image.repository=<repo de la imagen> \
+  --set image.repository=docker.io/federicomalehnullplatform/apim-mock \
   --set mock.token=<el API_SUBSCRIBER_TOKEN del agente> \
   --set npApiKey.existingSecret=<secret con NP_API_KEY> \
   --set 'credentialSecrets.namespaces={<namespace de la app>}' \
@@ -82,10 +82,12 @@ Para dejar la credencial donde vive la app, el chart da permiso de **crear** (no
 ## Imagen
 
 ```bash
-IMAGE_REPO=public.ecr.aws/<alias>/apim-mock mocks/apim-mock/scripts/publish
+docker login -u federicomalehnullplatform
+mocks/apim-mock/scripts/publish
 ```
 
-El tag sale de `appVersion` del chart (o `TAG=…`).
+Publica `docker.io/federicomalehnullplatform/apim-mock:<appVersion del chart>` para `linux/amd64`. `IMAGE_REPO=…`
+y `TAG=…` cambian el destino; un `IMAGE_REPO` de `public.ecr.aws` hace el login de ECR público solo.
 
 ## Tests
 
