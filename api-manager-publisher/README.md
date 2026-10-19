@@ -1,97 +1,64 @@
 # API Manager Publisher (service nullplatform)
 
-Deja que una aplicación exponga rutas HTTP hacia aplicaciones de **otros** namespaces del cluster,
-sin tocar código y sin que nadie copie ni pegue una credencial.
+Publica la API de una aplicación en APIM (Kuadrant) a través del **API Publisher** de APIM, y deja que otras
+aplicaciones se suscriban a ella con un link. El service no genera manifiestos ni toca el cluster: APIM los
+genera a partir del OpenAPI del repo, los commitea, espera a Argo CD y registra la API.
 
-## El problema que resuelve
+Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBLISHER.md).
 
-Por default, un `Service` de Kubernetes en el namespace `payments` no es alcanzable desde el
-namespace `reports`: la network policy base del cluster corta el tráfico cross-namespace. Api
-Manager es la manera declarativa de abrir un agujero **controlado** en esa barrera: sólo los paths
-que la aplicación declara quedan expuestos, bajo los dominios que ella elige, y sólo a quien tenga
-una credencial válida para consumirlos. Todo lo que no se declara sigue siendo inalcanzable.
+## Cómo se usa
 
-## Qué declara el desarrollador
+- **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (la regla de APIM
+  apunta al dominio de ese scope, no a un despliegue), la referencia del repo (`branch` / `tag` / `commit`,
+  por default `main`), el legajo y, opcional, el rate limit (`window` + `hits_per_window`). La acción queda en
+  curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
+  `manifest_path`.
+- **Actualizar = republicar** con otra referencia o rate limit (APIM sobrescribe la misma ruta).
+- **Borrar**: APIM todavía no tiene endpoint de baja. La acción cierra bien y avisa que la API sigue
+  publicada; la baja se pide a APIM por fuera.
+- **Linkear una app = suscribirla.** El link pide el RITM aprobado y el plan, y usa el mismo flujo que
+  [`api-manager-ocp-subscriber`](../api-manager-ocp-subscriber) con el callback del link. El unlink da de baja
+  la suscripción solo si ese link la creó.
 
-Al instanciar el service sobre una aplicación, el formulario pide:
+Qué se manda a APIM y de dónde sale:
 
-- **Dominios** (`hosts`): por lo menos uno. Otras apps van a consumir la tuya por acá.
-- **Rutas expuestas** (`routes`): por lo menos una, cada una con:
-  - **Path** (`/`, `/api`, `/api/v1/users`, `/items/{id}`, `/files/*` — el `*` final marca prefijo,
-    cualquier otro path es exacto),
-  - **Verbos** (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`),
-  - **Scope**: qué scope de la propia aplicación atiende esa ruta.
-
-El backend nunca se escribe a mano. El service resuelve, a partir del scope declarado, cuál es el
-dominio interno de esa release y arma el `HTTPRoute` contra ese backend — ninguna URL interna se
-tipea en el formulario. Si el scope elegido no está activo o todavía no tiene una release desplegada
-(`domain: "To be defined"`), la instanciación falla antes de tocar el cluster.
-
-## Cómo la consume otra aplicación
-
-La aplicación consumidora se **linkea** a este service (link `connect`). En ese momento se le emite
-una credencial propia (una key opaca, no un JWT ni nada que se pueda decodificar) y la recibe como
-variable de entorno `${service.slug}_API_KEY`, inyectada como secret parameter — nunca en texto plano en
-ningún lado que un humano tenga que copiar. Ese `${service.slug}_API_KEY` va en el header `x-api-key` de
-cada request hacia la app expuesta. Borrar el link revoca el acceso de inmediato: no hay expiración
-que esperar.
-
-Comportamiento que ve la app consumidora:
-
-| Situación | Código |
+| Campo | Origen |
 |---|---|
-| Sin el header `x-api-key` | 401 |
-| Header con una key que no existe | 401 |
-| Header con una key válida pero emitida para **otra** aplicación | 403 |
-| Path no declarado por la app expuesta | 404 |
-| Todo lo anterior en orden | 200 |
+| `organization`, `repository` | `repository_url` de la aplicación |
+| `branch` / `tag` / `commit` | formulario |
+| `environment` | dimensión `environment` del service (`int`, `qas`, `prd`; `dev` no se publica) |
+| `tenant` | `b2c` fijo por ahora |
+| `cluster` | nombre del cluster del provider, o `APIM_CLUSTER_NAME` |
+| `metadata.name`, `labels.app` | nombre del repo |
+| `metadata.namespace` | namespace del provider |
+| `metadata.parentRefs` | `APIM_PUBLISH_PARENT_REFS` (hasta que exista la API de scheduler) |
+| `metadata.backend` | dominio del scope elegido (`networking.istio.io/Hostname`, puerto 443) |
+| `callbackUrl` | la acción de nullplatform |
 
-## Compartir un dominio está permitido
+## Configuración del agente
 
-Dos aplicaciones distintas pueden publicar bajo el mismo dominio (por ejemplo, las dos bajo
-`api.expuesta.com`) siempre que sus paths no se pisen. Lo que se rechaza, al crear o actualizar, es
-declarar el mismo par `(dominio, path)` que ya declaró otra aplicación — la unidad de colisión es el
-par, no el dominio solo. Esto sorprende la primera vez: no hace falta "ser dueño" de un dominio para
-exponer algo bajo él.
+| Variable | Uso |
+|---|---|
+| `APIM_PUBLISHER_URL`, `APIM_PUBLISHER_TOKEN` | API Publisher (https) |
+| `APIM_PUBLISH_PARENT_REFS` | JSON con los Gateways, por ejemplo `[{"name":"s2s-ingress","namespace":"gateways"}]` |
+| `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
+| `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
+| `APIM_CA_CERT` | opcional: PEM de la CA con la que validar a APIM (si usa una CA privada) |
 
 ## Instalación
 
-`specs/` tiene dos layers de Terraform con alcance y momento de aplicación distintos.
-
-| | alcance | cuándo |
-|---|---|---|
-| `specs/prerequisites/` | **por cluster** | una vez por cada cluster donde va a correr el service |
-| `specs/install/` | **por organización** | una sola vez, registra el service y su notification channel |
-
-### `specs/prerequisites/`
-
-Instala Gateway API (opcional — algunas distros ya lo traen) y Kuadrant (con el CR `Kuadrant`, que
-levanta Authorino). Sin ese CR las `AuthPolicy` quedan aceptadas y **nunca enforceadas**.
-
-```bash
-cd specs/prerequisites
-cp terraform.tfvars.example terraform.tfvars   # completar kube_context
-tofu init && tofu apply
-```
-
-Este layer **no** crea con Terraform el Gateway de ingreso (`s2s-ingress`, en el namespace
-`gateways`) contra el que este service cuelga sus `HTTPRoute`, ni la clave de firma del wristband.
-Eso va como **manifiestos explícitos** en
-[`specs/prerequisites/manifests/`](./specs/prerequisites/manifests), con los placeholders y el orden
-de aplicación en [`specs/prerequisites/README.md`](./specs/prerequisites/README.md).
-
-### `specs/install/`
-
-Registra el service specification leyendo las specs de este mismo repo (`git_provider = "local"`) y
-le asocia el notification channel.
-
 ```bash
 cd specs/install
-cp terraform.tfvars.example terraform.tfvars   # completar nrn y las dos api keys
+cp terraform.tfvars.example terraform.tfvars   # np_api_key, nrn y tags_selectors
 tofu init && tofu apply
 ```
 
-`tags_selectors` decide qué agente atiende las notificaciones de este service.
+## Migración desde la versión anterior
+
+La versión anterior publicaba por su cuenta (HTTPRoute, AuthPolicy y una API key por link en
+`kuadrant-system`). Esta versión no tiene ese código, así que **no revoca esas keys ni borra esos recursos**.
+Antes de instalarla en un cluster que usó la anterior, borrá las instancias viejas con la versión vieja, o
+limpiá a mano los Secrets `api-manager-*` de `kuadrant-system` y los HTTPRoute/AuthPolicy `api-manager-*`.
 
 ## Tests
 
@@ -99,21 +66,4 @@ tofu init && tofu apply
 PATH=/opt/homebrew/bin:$PATH bats tests/
 ```
 
-Requiere localmente **bash >= 4**, **gomplate** y **coreutils** (por el `timeout` que usa uno de
-los tests — macOS no lo trae de fábrica y sin él ese test cuelga la suite en vez de fallar rápido).
-
-## Dos cosas para mirar en los objetos del cluster
-
-- La `AuthPolicy` puede reportar `Accepted=True` sin estar enforceando nada. La señal que importa es
-  `Enforced=True`.
-- Las `HTTPRoute` de este service reportan `ResolvedRefs=False (BackendNotFound)` **estando bien**:
-  usan `backendRefs` de `kind: Hostname` (una extensión de Istio), que Istio no marca como resuelta.
-  No es un síntoma de nada roto.
-
-## Procedencia
-
-Basado en [`nullplatform/services-endpoint-exposer`](https://github.com/nullplatform/services-endpoint-exposer),
-adaptado. Una diferencia importante: el upstream declara el link `connect` y trae su
-`specs/links/connect.json.tpl`, pero no incluye ningún `workflows/istio/link.yaml` — sólo
-create/update/delete/read. La emisión de la credencial al linkear (`mint_key`) y su revocación al
-unlink (`revoke_key`) no vienen del upstream: se escribieron acá.
+Requiere bash >= 4, jq y yq. Los tests reusan los mocks de `api-manager-ocp-subscriber/tests/helpers.bash`.
