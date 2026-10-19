@@ -63,6 +63,7 @@ helm upgrade --install apim-mock mocks/apim-mock/chart -n apim-mock --create-nam
   --set image.repository=<repo de la imagen> \
   --set mock.token=<el API_SUBSCRIBER_TOKEN del agente> \
   --set npApiKey.existingSecret=<secret con NP_API_KEY> \
+  --set 'credentialSecrets.namespaces={<namespace de la app>}' \
   --set 'httpRoute.parentRefs[0].name=<gateway>' \
   --set 'httpRoute.parentRefs[0].namespace=<namespace del gateway>' \
   --set 'httpRoute.hostnames[0]=<hostname>'
@@ -74,8 +75,8 @@ Después, en el agente: `API_SUBSCRIBER_URL=https://<hostname>` y `API_SUBSCRIBE
 Secret del chart.
 
 Para dejar la credencial donde vive la app, el chart da permiso de **crear** (no leer) Secrets:
-- `credentialSecrets.namespaces: [ns-a, ns-b]` crea un Role por namespace y el mock rechaza los demás;
-- sin lista, usa un ClusterRole: solo para clusters de prueba;
+- `credentialSecrets.namespaces: [ns-a, ns-b]` (obligatorio) crea un Role por namespace y el mock rechaza los demás;
+- `credentialSecrets.allowAllNamespaces=true` usa un ClusterRole en lugar de la lista: solo para clusters de prueba;
 - `credentialSecrets.create=false` lo apaga y el alta termina igual sin Secret.
 
 ## Imagen

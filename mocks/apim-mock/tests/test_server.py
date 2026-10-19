@@ -63,7 +63,8 @@ def make_app(**config):
     notifier = FakeNotifier()
     scheduler = ManualScheduler()
     settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar",
-                "create_secret": True, "own_namespace": "apim-mock", "allowed_namespaces": [], "max_history": 200}
+                "create_secret": True, "own_namespace": "apim-mock", "allowed_namespaces": [], "allow_all_namespaces": True,
+                "max_history": 200}
     settings.update(config)
     app = server.App(server.MemoryStore(), k8s, notifier, scheduler, settings)
     return app, k8s, notifier, scheduler
@@ -245,6 +246,12 @@ class SubscriberTest(unittest.TestCase):
             status, _ = subscribe(app, ns=ns, key=f"k-{ns}")
             self.assertEqual(status, 422, ns)
 
+    def test_sin_lista_y_sin_permitir_todos_rechaza_el_alta(self):
+        app, _, _, _ = make_app(allow_all_namespaces=False)
+        status, body = subscribe(app)
+        self.assertEqual(status, 422)
+        self.assertIn("permitidos", body["detail"])
+
     def test_con_namespaces_permitidos_rechaza_los_demas(self):
         app, _, _, _ = make_app(allowed_namespaces=["sigla-x-qa"])
         self.assertEqual(subscribe(app, key="k1")[0], 202)
@@ -309,7 +316,8 @@ class SubscriberTest(unittest.TestCase):
 
     def test_al_reiniciar_reprograma_las_operaciones_pendientes(self):
         k8s = FakeK8s()
-        settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar", "create_secret": True}
+        settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar", "create_secret": True,
+                    "allow_all_namespaces": True}
         first = server.App(server.ConfigMapStore(k8s, "apim-mock", "apim-mock-state"), k8s, FakeNotifier(), ManualScheduler(), settings)
         subscribe(first)
         call(first, "POST", PUBLISH, publish_body())
@@ -582,7 +590,7 @@ class StateTest(unittest.TestCase):
     def test_el_estado_sobrevive_a_un_reinicio_del_mock(self):
         k8s = FakeK8s()
         scheduler = ManualScheduler()
-        settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar"}
+        settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar", "allow_all_namespaces": True}
         first = server.App(server.ConfigMapStore(k8s, "apim-mock", "apim-mock-state"), k8s, FakeNotifier(), scheduler, settings)
         subscribe(first)
         scheduler.run_all()

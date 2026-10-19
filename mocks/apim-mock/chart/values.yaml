@@ -18,6 +18,7 @@ npApiKey:
 credentialSecrets:
   create: true
   namespaces: []
+  allowAllNamespaces: false
 
 service:
   port: 80

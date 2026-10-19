@@ -9,7 +9,8 @@ setup() {
     --set "httpRoute.parentRefs[0].name=s2s-ingress"
     --set "httpRoute.parentRefs[0].namespace=gateways"
     --set "httpRoute.hostnames[0]=apim-mock.test.local"
-    --set mock.token=tok-123)
+    --set mock.token=tok-123
+    --set "credentialSecrets.namespaces={sigla-x-qa}")
 }
 
 render() {
@@ -23,23 +24,23 @@ kinds() {
 @test "renderiza deployment, service, httproute y el rbac, sin ingress" {
   run kinds
   [ "$status" -eq 0 ]
-  [ "$output" = "ClusterRole ClusterRoleBinding Deployment HTTPRoute Role RoleBinding Secret Service ServiceAccount " ]
+  [ "$output" = "Deployment HTTPRoute Role Role RoleBinding RoleBinding Secret Service ServiceAccount " ]
 }
 
 @test "falla sin parentRefs del HTTPRoute" {
-  run helm template mock "$CHART" --set mock.token=t --set image.repository=x --set "httpRoute.hostnames[0]=h"
+  run helm template mock "$CHART" --set mock.token=t --set "credentialSecrets.namespaces={a}" --set image.repository=x --set "httpRoute.hostnames[0]=h"
   [ "$status" -ne 0 ]
   [[ "$output" == *parentRefs* ]]
 }
 
 @test "falla sin hostnames del HTTPRoute" {
-  run helm template mock "$CHART" --set mock.token=t --set image.repository=x --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n"
+  run helm template mock "$CHART" --set mock.token=t --set "credentialSecrets.namespaces={a}" --set image.repository=x --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n"
   [ "$status" -ne 0 ]
   [[ "$output" == *hostnames* ]]
 }
 
 @test "falla sin el repositorio de la imagen" {
-  run helm template mock "$CHART" --set mock.token=t --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n" --set "httpRoute.hostnames[0]=h"
+  run helm template mock "$CHART" --set mock.token=t --set "credentialSecrets.namespaces={a}" --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n" --set "httpRoute.hostnames[0]=h"
   [ "$status" -ne 0 ]
   [[ "$output" == *image.repository* ]]
 }
@@ -69,7 +70,7 @@ kinds() {
 }
 
 @test "el clusterrole solo puede crear secrets" {
-  run render
+  run render --set "credentialSecrets.namespaces=null" --set credentialSecrets.allowAllNamespaces=true
   [ "$(yq -N -o=json -I=0 'select(.kind == "ClusterRole") | .rules' <<<"$output")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["create"]}]' ]
 }
 
@@ -124,4 +125,17 @@ kinds() {
 @test "el pod corre con el perfil seccomp por default" {
   run render
   [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.securityContext.seccompProfile.type' <<<"$output")" = "RuntimeDefault" ]
+}
+
+@test "sin namespaces permitidos y sin pedir todos, el chart falla" {
+  run helm template mock "$CHART" --set mock.token=t --set image.repository=x --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n" --set "httpRoute.hostnames[0]=h"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *credentialSecrets.namespaces* ]]
+}
+
+@test "pedir todos los namespaces es explicito y el mock lo sabe" {
+  run render --set "credentialSecrets.namespaces=null" --set credentialSecrets.allowAllNamespaces=true
+  [ "$status" -eq 0 ]
+  [ "$(yq -N 'select(.kind == "ClusterRole") | .metadata.name' <<<"$output")" = "mock-apim-mock-credentials" ]
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_ALL_NAMESPACES") | .value' <<<"$output")" = "true" ]
 }
