@@ -49,11 +49,22 @@ cierre la acción de nullplatform con el formato del mini doc de avisos
 ## Pedidos a APIM que salen de la implementación
 
 - `callbackUrl` en el publish, con el formato del mini doc de avisos (el usuario ya lo pidió).
-- Aceptar un backend `kind: Hostname` (`networking.istio.io`): la regla tiene que apuntar al dominio del scope,
-  no a un Service de un despliegue.
 - Endpoint de baja por `apiId`.
 - En el API Subscriber: aceptar el `apiId` en el pedido de suscripción y rechazar el RITM si es de otra API.
   Sin eso, un link a la API X con un RITM aprobado para la API Y suscribe a Y.
+
+## Decisión vigente (2026-10-19)
+
+Se integra como dice el documento de APIM: APIM genera su propio HTTPRoute y el publish le manda en
+`metadata.backend` el **Service del despliegue activo** del scope (el backend con más peso de las rutas del
+scope). Pendiente de definir con APIM: cómo se sincroniza ese backend cuando el scope despliega una versión
+nueva (blue/green cambia el Service).
+
+Alternativas evaluadas y descartadas por ahora:
+- Volver a entrar al Gateway con `URLRewrite` al dominio del scope: no se aprueba y, con s2s activo, el
+  validador de la ruta del scope rechaza al consumidor (401 `x-egress-token`), probado en `gal-kuadrant-poc`.
+- Colgar las políticas de la ruta del scope (abajo): funciona, pero exige `merge`, `when` y llevar las
+  operaciones del swagger a la autorización.
 
 ## Propuesta: colgar las políticas de la ruta del scope (probado el 2026-10-19)
 
