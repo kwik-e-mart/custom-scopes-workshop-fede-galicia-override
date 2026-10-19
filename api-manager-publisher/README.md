@@ -47,7 +47,7 @@ Qué se manda a APIM y de dónde sale:
 | `APIM_PUBLISHER_URL`, `APIM_PUBLISHER_TOKEN` | API Publisher (https) |
 | `APIM_PUBLISH_PARENT_REFS` | Gateways: `namespace/nombre[:listener]` separados por coma (por ejemplo `gateways/s2s-ingress`) o una lista JSON |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
-| `APIM_PUBLISH_ENVIRONMENT` | opcional: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope (para probar con scopes de dev) |
+| `APIM_PUBLISH_ENVIRONMENT` | **solo para pruebas**: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope en todo lo que publique ese agente. Nunca en un agente productivo: un scope de dev quedaría publicado como `prd` |
 | `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
 | `APIM_CA_CERT` | opcional: CA con la que validar a APIM si usa una privada, en PEM o en base64 |
 
