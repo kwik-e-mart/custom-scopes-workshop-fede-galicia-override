@@ -90,3 +90,18 @@ queue_owner() {
   [ "$(np_last_update_flag --status)" = "failed" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"Plan inválido"* ]]
 }
+
+@test "si APIM falla al verificar el dueño, cierra failed sin PATCH" {
+  queue_response 500 '{"title":"Internal Server Error"}'
+  run_step
+  [ "$(grep -c '^PATCH ' "$CURL_CALLS_LOG")" = "0" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}
+
+@test "sin el id de la accion falla sin llamar a APIM" {
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{service:{id:"svc-1",attributes:{subscription_id:"sub-greeting--sigla-x-qa"}},parameters:{plan_id:"bronze"}}}')
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_update_count)" = "1" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}

@@ -111,3 +111,19 @@ queue_owner() {
   [ "$(np_update_count)" = "2" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
+
+@test "si APIM falla al verificar el dueño, cierra failed sin DELETE" {
+  queue_response 500 '{"title":"Internal Server Error"}'
+  run_step
+  [ "$status" -ne 0 ]
+  [ "$(grep -c '^DELETE ' "$CURL_CALLS_LOG")" = "0" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 500"* ]] || false
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}
+
+@test "si APIM no informa el namespace de la suscripcion, cierra failed sin DELETE" {
+  queue_response 200 '{"id":"sub-greeting--sigla-x-qa"}'
+  run_step
+  [ "$(grep -c '^DELETE ' "$CURL_CALLS_LOG")" = "0" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}
