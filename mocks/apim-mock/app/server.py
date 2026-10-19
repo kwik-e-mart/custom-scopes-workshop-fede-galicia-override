@@ -7,6 +7,7 @@ import ssl
 import sys
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PLANS = [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}]
 ENVIRONMENTS = ["dev", "int", "qas", "prd"]
 LEGAJO_PATTERN = re.compile(r"^l[0-9]{7}$")
+NAMESPACE_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 FINAL_FAILED_STATES = ("RolledBack", "Failed")
 GENERATED_FILES = ["httproute.yaml", "ratelimitpolicy.yaml", "authpolicy.yaml", "apiproduct.yaml"]
 
@@ -120,9 +122,16 @@ class Notifier:
         self.api_key = api_key
         self.http = http
 
+    def allowed(self, callback_url):
+        target = urllib.parse.urlparse(callback_url)
+        return target.scheme == "https" and target.netloc == urllib.parse.urlparse(self.np_api_url).netloc
+
     def notify(self, callback_url, message, level="info", status=None):
         if not callback_url or not self.api_key:
             log(f"apim-mock: aviso sin enviar (callbackUrl o NP_API_KEY vacíos): {message}")
+            return
+        if not self.allowed(callback_url):
+            log(f"apim-mock: aviso sin enviar: {callback_url} no es https en {urllib.parse.urlparse(self.np_api_url).netloc}")
             return
         body = {"messages": [{"level": level, "message": message}]}
         if status:
@@ -251,6 +260,8 @@ class App:
             return problem(400, "Bad Request", f"Faltan campos obligatorios: {', '.join(missing)}.")
         ritm = body["approvalRef"]
         namespace = body["consumerNamespace"]
+        if not NAMESPACE_PATTERN.match(namespace):
+            return problem(400, "Bad Request", f"consumerNamespace no es un nombre DNS-1123: {namespace}.")
         digits = re.sub(r"[^0-9]", "", ritm) or "0"
         api_id = f"api-{digits}"
         subscription_id = f"sub-{api_id}--{namespace}"

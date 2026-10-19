@@ -1,0 +1,33 @@
+image:
+  repository: ""
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+mock:
+  token: ""
+  tenant: b2c
+  callbackDelaySeconds: 5
+  publishDomain: bancogalicia.com.ar
+  npApiUrl: https://api.nullplatform.com
+
+npApiKey:
+  existingSecret: ""
+  key: NP_API_KEY
+  value: ""
+
+credentialSecrets:
+  create: true
+
+service:
+  port: 80
+
+httpRoute:
+  parentRefs: []
+  hostnames: []
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
