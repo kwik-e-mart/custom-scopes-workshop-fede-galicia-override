@@ -193,9 +193,10 @@ PR aparte en `nullplatform/tofu-modules`, con su test; el install de este servic
 
 ```
 api-manager-ocp-subscriber/
-  entrypoint/{entrypoint,service,link,external}
-  workflows/{create-subscription,change-plan,delete-subscription,link,unlink}.yaml
-  scripts/{subscriber_lib,subscribe,change_plan,unsubscribe,list_plans}
+  entrypoint/{entrypoint,service,link}      acciones y links
+  entrypoint/external                       external context: planes por stdout
+  workflows/{create,update,delete}.yaml     uno por type de acción; el handler link no corre workflow
+  scripts/{subscriber_lib,subscribe,change_plan,unsubscribe}
   specs/service-spec.json.tpl
   specs/actions/{create-subscription,change-plan,delete-subscription}.json.tpl
   specs/links/connect.json.tpl
