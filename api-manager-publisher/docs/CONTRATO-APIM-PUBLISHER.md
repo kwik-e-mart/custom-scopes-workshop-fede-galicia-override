@@ -46,6 +46,15 @@ cierre la acción de nullplatform con el formato del mini doc de avisos
   endpoint nuevo, con el `apiId`).
 - **Delete**: un endpoint de baja que reciba solo el `apiId`.
 
+## Pedidos a APIM que salen de la implementación
+
+- `callbackUrl` en el publish, con el formato del mini doc de avisos (el usuario ya lo pidió).
+- Aceptar un backend `kind: Hostname` (`networking.istio.io`): la regla tiene que apuntar al dominio del scope,
+  no a un Service de un despliegue.
+- Endpoint de baja por `apiId`.
+- En el API Subscriber: aceptar el `apiId` en el pedido de suscripción y rechazar el RITM si es de otra API.
+  Sin eso, un link a la API X con un RITM aprobado para la API Y suscribe a Y.
+
 ## Para discutir cuando hagamos la publicación en el service
 
 - Cómo tener aprobaciones para QA / producción (lo preguntaron en la reunión).
