@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+close_failed() {
+  np service action update --status failed \
+    --messages "$(jq -nc --arg m "$1" '[{level: "error", message: $m}]')" || true
+  echo "$1" >&2
+  exit 1
+}
+
+case "${SERVICE_ACTION_TYPE-}" in
+  create|update|delete) ;;
+  *) close_failed "subscriber: acción no soportada: type='${SERVICE_ACTION_TYPE-}' slug='${SERVICE_ACTION-}'." ;;
+esac
+
+WORKFLOW_PATH="$SERVICE_PATH/workflows/$SERVICE_ACTION_TYPE.yaml"
+
+if ! np service workflow exec --workflow "$WORKFLOW_PATH" --build-context --include-secrets; then
+  close_failed "subscriber: el workflow $SERVICE_ACTION_TYPE falló antes de cerrar la acción; revisá el log del agente."
+fi
