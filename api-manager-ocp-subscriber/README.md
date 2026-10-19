@@ -36,12 +36,11 @@ El agente que atiende este service (el que elige `tags_selectors`) tiene que ten
 | `API_SUBSCRIBER_URL` | Base del API Subscriber, sin `/v1` |
 | `API_SUBSCRIBER_TOKEN` | Credencial de nullplatform para el API Subscriber |
 
-Sin alguna de las dos, la acción falla nombrando la que falta y el desplegable de planes queda vacío.
+Sin alguna de las dos, la acción falla nombrando la que falta.
 
 ## Instalación
 
-`specs/install/` registra el service y crea dos notification channels: uno para las acciones del
-service y otro para el external context que llena el desplegable de planes (`GET /v1/plans`).
+`specs/install/` registra el service y crea el notification channel de sus acciones.
 
 ```bash
 cd specs/install
@@ -49,8 +48,10 @@ cp terraform.tfvars.example terraform.tfvars   # completar np_api_key, nrn y tag
 tofu init && tofu apply
 ```
 
-El módulo `service_definition` apunta a la rama `feat/service-definition-action-external` de
-`nullplatform/tofu-modules` hasta que salga el release que pasa `external` a las action specifications.
+Por ahora los planes del formulario (`bronze`, `gold`, `no-limits`) están fijos en
+`specs/actions/*.json.tpl`. Cuando haya acceso a `GET /v1/plans`, se vuelven a leer en vivo con external
+context: el handler `entrypoint/external` ya está escrito y probado; falta declarar `external` en las
+acciones y crear su channel, con el release de `tofu-modules` que pasa `external` a las action specifications.
 
 ## Tests
 

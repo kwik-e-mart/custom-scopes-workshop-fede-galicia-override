@@ -2,27 +2,14 @@
   "name": "Create subscription",
   "type": "create",
   "retryable": false,
-  "external": {
-    "action": "list-apim-plans",
-    "output_schema": {
-      "type": "object",
-      "required": ["plans"],
-      "properties": {
-        "plans": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["id"],
-            "properties": { "id": { "type": "string" }, "maxTps": { "type": "number" } }
-          }
-        }
-      }
-    }
-  },
   "parameters": {
     "schema": {
       "type": "object",
-      "required": ["api_name", "approval_ref", "plan_id"],
+      "required": [
+        "api_name",
+        "approval_ref",
+        "plan_id"
+      ],
       "properties": {
         "api_name": {
           "type": "string",
@@ -39,9 +26,20 @@
           "type": "string",
           "title": "Plan",
           "description": "TPS máximo para tu namespace sobre esta API.",
-          "additionalKeywords": {
-            "oneOf": ".external.plans | map({const: .id, title: (.id + \" (\" + (if .maxTps then (.maxTps | tostring) + \" TPS\" else \"sin límite\" end) + \")\")})"
-          }
+          "oneOf": [
+            {
+              "const": "bronze",
+              "title": "bronze (5 TPS)"
+            },
+            {
+              "const": "gold",
+              "title": "gold (20 TPS)"
+            },
+            {
+              "const": "no-limits",
+              "title": "no-limits (sin límite)"
+            }
+          ]
         }
       }
     },
@@ -51,10 +49,18 @@
     "schema": {
       "type": "object",
       "properties": {
-        "subscription_id": { "type": "string" },
-        "operation_id": { "type": "string" },
-        "consumer_namespace": { "type": "string" },
-        "owns_subscription": { "type": "boolean" }
+        "subscription_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "consumer_namespace": {
+          "type": "string"
+        },
+        "owns_subscription": {
+          "type": "boolean"
+        }
       }
     },
     "values": {}
