@@ -242,7 +242,7 @@ class SubscriberTest(unittest.TestCase):
 
     def test_un_namespace_del_sistema_no_se_puede_suscribir(self):
         app, _, _, _ = make_app()
-        for ns in ("kube-system", "default", "apim-mock"):
+        for ns in ("kube-system", "default"):
             status, _ = subscribe(app, ns=ns, key=f"k-{ns}")
             self.assertEqual(status, 422, ns)
 
@@ -251,6 +251,11 @@ class SubscriberTest(unittest.TestCase):
         status, body = subscribe(app)
         self.assertEqual(status, 422)
         self.assertIn("permitidos", body["detail"])
+
+    def test_el_namespace_del_mock_se_puede_suscribir(self):
+        app, _, _, _ = make_app(own_namespace="payments")
+        status, _ = subscribe(app, ns="payments")
+        self.assertEqual(status, 202)
 
     def test_con_namespaces_permitidos_rechaza_los_demas(self):
         app, _, _, _ = make_app(allowed_namespaces=["sigla-x-qa"])

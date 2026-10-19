@@ -326,7 +326,7 @@ class App:
         return operation
 
     def namespace_rejection(self, namespace):
-        if namespace.startswith("kube-") or namespace in ("default", self.settings.get("own_namespace")):
+        if namespace.startswith("kube-") or namespace == "default":
             return f"El namespace {namespace} no se puede suscribir desde el mock."
         if not self.settings.get("create_secret", True):
             return None

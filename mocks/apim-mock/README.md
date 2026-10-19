@@ -29,8 +29,8 @@ mismo RITM en el mismo namespace da `409`, como una suscripción namespace × AP
 | `RITM9990666` | `202` y después `failed`: la suscripción se deshace (`RolledBack`) |
 
 Plan fuera del catálogo → `422`. `Idempotency-Key` es obligatoria en el alta y el cambio de plan: con otro
-cuerpo → `422`; con el mismo cuerpo (o una baja repetida) → la misma operación. Los namespaces `kube-*`,
-`default` y el del propio mock no se pueden suscribir.
+cuerpo → `422`; con el mismo cuerpo (o una baja repetida) → la misma operación. Los namespaces `kube-*` y
+`default` no se pueden suscribir.
 
 **Credencial**: en el primer alta exitosa de un namespace crea `secret-apim-<tenant>` (`b2c` por default) en ese
 namespace con `app_id = mock-app-<namespace>` y `app_key = mock-key-<namespace>`.
