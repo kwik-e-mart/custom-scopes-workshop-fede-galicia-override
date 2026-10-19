@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SUBSCRIBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SUBSCRIBE_DIR/subscriber_lib"
+
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+subscribe() {
+  require_agent_config
+
+  NOTIFICATION=$(read_notification)
+  local params service_id action_id approval_ref plan_id consumer_namespace
+  params=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})')
+  service_id=$(notification_field '.service.id')
+  action_id=$(notification_field '.id')
+  approval_ref=$(printf %s "$params" | jq -r '.approval_ref // empty')
+  plan_id=$(printf %s "$params" | jq -r '.plan_id // empty')
+
+  if [ -z "$service_id" ] || [ -z "$action_id" ]; then
+    fail "subscriber: la notificación no trae service.id o el id de la acción."
+  fi
+  if [ -z "$approval_ref" ] || [ -z "$plan_id" ]; then
+    fail "subscriber: faltan approval_ref o plan_id en el pedido."
+  fi
+
+  consumer_namespace=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null) || consumer_namespace=""
+  if [ -z "$consumer_namespace" ]; then
+    fail "subscriber: el provider container-orchestration no trae cluster.namespace; no se adivina el namespace a suscribir."
+  fi
+
+  local body
+  body=$(jq -nc \
+    --arg approval_ref "$approval_ref" \
+    --arg namespace "$consumer_namespace" \
+    --arg plan_id "$plan_id" \
+    --arg callback "$(callback_url "$service_id" "$action_id")" \
+    '{approvalRef: $approval_ref, consumerNamespace: $namespace, planId: $plan_id, callbackUrl: $callback}')
+
+  log info "subscriber: pidiendo la suscripción de $consumer_namespace con $approval_ref y plan $plan_id."
+  apim_request POST /v1/subscriptions "$body" "$action_id"
+
+  local results subscription_id
+  case "$APIM_HTTP_CODE" in
+    202)
+      results=$(printf %s "$APIM_BODY" | jq -ce --arg ns "$consumer_namespace" \
+        '{subscription_id: .target, operation_id: .id, consumer_namespace: $ns, owns_subscription: true}')
+      report_progress "Suscripción en curso (operación $(printf %s "$results" | jq -r .operation_id)). APIM avisa cuando quede activa." "$results" \
+        || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    409)
+      subscription_id=$(apim_problem_detail "$APIM_BODY" | grep -oE 'sub-[a-z0-9.-]+--[a-z0-9.-]+' | head -n1 || true)
+      results=$(jq -nc --arg ns "$consumer_namespace" --arg sub "$subscription_id" \
+        '{consumer_namespace: $ns, owns_subscription: false} + (if $sub == "" then {} else {subscription_id: $sub} end)')
+      close_action success "Tu namespace ya tiene acceso a esta API." "$results"
+      ;;
+    *)
+      fail "subscriber: APIM rechazó la suscripción (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
+      ;;
+  esac
+}
+
+subscribe
