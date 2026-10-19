@@ -9,42 +9,10 @@ trap close_on_unexpected_exit EXIT
 
 unsubscribe() {
   load_notification
-
-  local action_id subscription_id owns
-  action_id=$(notification_field '.id')
-  subscription_id=$(notification_field '.service.attributes.subscription_id')
-  owns=$(printf %s "$NOTIFICATION" | jq -r '.service.attributes.owns_subscription // false')
-
-  if [ "$owns" != "true" ] || [ -z "$subscription_id" ]; then
-    close_action success "No se dio de baja en APIM: la suscripción no la creó esta instancia o nunca se dio de alta."
-    return
-  fi
-
-  require_agent_config
-  require_subscription_id_format "$subscription_id"
-  if [ -z "$action_id" ]; then
-    fail "subscriber: la notificación no trae el id de la acción."
-  fi
-  require_provider_namespace
-
-  lookup_subscription_owner "$subscription_id"
-  if [ -z "$SUBSCRIPTION_OWNER" ]; then
-    close_action success "La suscripción $subscription_id ya no existe en APIM."
-    return
-  fi
-  require_owned_by_namespace "$subscription_id" "$PROVIDER_NAMESPACE"
-
-  log info "subscriber: dando de baja $subscription_id."
-  apim_request DELETE "/v1/subscriptions/$subscription_id" "" "$action_id"
-
-  case "$APIM_HTTP_CODE" in
-    202|404)
-      close_action success "Suscripción $subscription_id dada de baja en APIM."
-      ;;
-    *)
-      fail "subscriber: APIM rechazó la baja (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
-      ;;
-  esac
+  request_unsubscription \
+    "$(notification_field '.service.attributes.subscription_id')" \
+    "$(printf %s "$NOTIFICATION" | jq -r '.service.attributes.owns_subscription // false')" \
+    "$(notification_field '.id')"
 }
 
 unsubscribe
