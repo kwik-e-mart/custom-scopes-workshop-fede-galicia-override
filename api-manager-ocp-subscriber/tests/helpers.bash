@@ -17,12 +17,14 @@ setup_common() {
   export API_SUBSCRIBER_URL="https://apisub.test"
   export API_SUBSCRIBER_TOKEN="tok-123"
   export APIM_RETRY_DELAY=0
-  unset APIM_RETRIES NP_MOCK_UPDATE_FAIL ACTION_SETTLED
+  unset APIM_RETRIES NP_MOCK_UPDATE_FAIL ACTION_SETTLED SUBSCRIBER_SETTLED_MARKER
 
   export CURL_CALLS_LOG="$BATS_TEST_TMPDIR/curl-calls.log"
+  export CURL_ARGV_LOG="$BATS_TEST_TMPDIR/curl-argv.log"
   export CURL_RESPONSES="$BATS_TEST_TMPDIR/curl-responses"
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   : >"$CURL_CALLS_LOG"
+  : >"$CURL_ARGV_LOG"
   : >"$CURL_RESPONSES"
   : >"$NP_CALLS_LOG"
 
@@ -31,12 +33,15 @@ setup_common() {
 
   cat >"$BATS_TEST_TMPDIR/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-out="" method="GET" url="" data="" idem="" auth="" writeout="" prev=""
+out="" method="GET" url="" data="" idem="" auth="" writeout="" prev="" config="" timeouts=""
 for arg in "$@"; do
   case "$prev" in
     -o) out="$arg" ;;
     -X) method="$arg" ;;
     -w) writeout="$arg" ;;
+    --config) config="$arg" ;;
+    --max-time) timeouts="${timeouts}max" ;;
+    --connect-timeout) timeouts="${timeouts}connect" ;;
     --data-binary) data="$arg" ;;
     --data|-d) echo "mock curl: usar --data-binary, no --data" >&2; exit 2 ;;
     -H)
@@ -49,8 +54,13 @@ for arg in "$@"; do
   case "$arg" in http://*|https://*) url="$arg" ;; esac
   prev="$arg"
 done
+if [ "$config" = "-" ]; then
+  header=$(sed -n 's/^header = "Authorization: \(.*\)"$/\1/p')
+  if [ -n "$header" ]; then auth="$header"; fi
+fi
+printf '%s\n' "$*" >>"$CURL_ARGV_LOG"
 n=$(wc -l <"$CURL_CALLS_LOG" | tr -d ' ')
-printf '%s %s idem=%s auth=%s\n' "$method" "$url" "$idem" "$auth" >>"$CURL_CALLS_LOG"
+printf '%s %s idem=%s auth=%s timeouts=%s\n' "$method" "$url" "$idem" "$auth" "$timeouts" >>"$CURL_CALLS_LOG"
 printf '%s' "$data" >"$CURL_BODIES_DIR/$n.json"
 line=$(head -n1 "$CURL_RESPONSES")
 tail -n +2 "$CURL_RESPONSES" >"$CURL_RESPONSES.next"
@@ -61,11 +71,18 @@ if [ -z "$line" ]; then
 fi
 code="${line%%$'\t'*}"
 body="${line#*$'\t'}"
-if [ "$code" = "000" ]; then
-  if [ -n "$writeout" ]; then printf '000'; fi
-  echo "curl: (7) Failed to connect" >&2
-  exit 7
-fi
+case "$code" in
+  000)
+    if [ -n "$writeout" ]; then printf '000'; fi
+    echo "curl: (7) Failed to connect" >&2
+    exit 7
+    ;;
+  timeout)
+    if [ -n "$writeout" ]; then printf '000'; fi
+    echo "curl: (28) Operation timed out" >&2
+    exit 28
+    ;;
+esac
 if [ -n "$out" ]; then
   printf '%s' "$body" >"$out"
 else
@@ -93,11 +110,23 @@ queue_response() {
   printf '%s\t%s\n' "$1" "$2" >>"$CURL_RESPONSES"
 }
 
+run_step() {
+  run bash -c "source '$STEP'; echo NEXT_STEP_RAN"
+}
+
+curl_call_count() {
+  wc -l <"$CURL_CALLS_LOG" | tr -d ' '
+}
+
 np_updates() {
   jq -c 'select(.[0:3] == ["service","action","update"])' "$NP_CALLS_LOG"
 }
 
+np_update_count() {
+  np_updates | wc -l | tr -d ' '
+}
+
 np_last_update_flag() {
   local flag="$1"
-  np_updates | tail -n1 | jq -r --arg f "$flag" '. as $a | (index($f)) as $i | if $i == null then empty else $a[$i + 1] end'
+  np_updates | tail -n1 | jq -r --arg f "$flag" '(index($f) // empty) as $i | .[$i + 1]'
 }

@@ -62,3 +62,24 @@ MOCK
   [ ! -s "$NP_CALLS_LOG" ]
   [ ! -s "$CURL_CALLS_LOG" ]
 }
+
+@test "el handler service no pide los secretos de los providers" {
+  SERVICE_ACTION_TYPE=create SERVICE_PATH="${BATS_TEST_DIRNAME}/.." run bash "$SERVICE_HANDLER"
+  [ "$(jq -c 'select(.[0:3] == ["service","workflow","exec"]) | select(index("--include-secrets") != null)' "$NP_CALLS_LOG" | wc -l | tr -d ' ')" = "0" ]
+  [ "$(jq -c 'select(.[0:3] == ["service","workflow","exec"])' "$NP_CALLS_LOG" | wc -l | tr -d ' ')" = "1" ]
+}
+
+@test "si el step ya resolvio la accion y el workflow falla, el handler no la vuelve a cerrar" {
+  cat >"$BATS_TEST_TMPDIR/bin/np" <<'MOCK'
+#!/usr/bin/env bash
+jq -nc '$ARGS.positional' --args -- "$@" >>"$NP_CALLS_LOG"
+if [ "$1 $2" = "service workflow" ]; then
+  printf 1 >"$SUBSCRIBER_SETTLED_MARKER"
+  exit 1
+fi
+exit 0
+MOCK
+  SERVICE_ACTION_TYPE=create SERVICE_PATH="${BATS_TEST_DIRNAME}/.." run bash "$SERVICE_HANDLER"
+  [ "$status" -ne 0 ]
+  [ "$(np_update_count)" = "0" ]
+}

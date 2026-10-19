@@ -10,10 +10,10 @@ if [ -n "${NP_API_KEY:-}" ] && [ -z "${NULLPLATFORM_API_KEY:-}" ]; then
   export NULLPLATFORM_API_KEY="$NP_API_KEY"
 fi
 
-CLEAN_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
-export NP_ACTION_CONTEXT="$CLEAN_CONTEXT"
+NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
+export NP_ACTION_CONTEXT
 
-CONTEXT=$(echo "$CLEAN_CONTEXT" | jq '.notification') || { echo "NP_ACTION_CONTEXT no es JSON válido" >&2; exit 1; }
+CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq '.notification') || { echo "NP_ACTION_CONTEXT no es JSON válido" >&2; exit 1; }
 export CONTEXT
 
 SERVICE_ACTION=$(echo "$CONTEXT" | jq -r '.slug')
