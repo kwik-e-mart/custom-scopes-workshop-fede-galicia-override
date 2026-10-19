@@ -124,6 +124,21 @@ pendiente para siempre.
 
 ### Cambio de plan (`change-plan`)
 
+> [!WARNING]
+> **El plan es del namespace, no de la aplicación ni de esta instancia.**
+>
+> En APIM una suscripción es **namespace × API**: hay una sola por par, la comparten todas las
+> aplicaciones del namespace y el plan (el TPS máximo) se aplica a esa suscripción entera. Cambiar el
+> plan desde cualquier instancia que apunte a ella cambia el límite para **todas** las aplicaciones del
+> namespace que consumen esa API, estén o no linkeadas a esta instancia.
+>
+> Esto vale también cuando `owns_subscription` es `false`: la instancia no creó la suscripción, pero
+> conoce su `subscription_id` y puede cambiarle el plan. Bajar el plan (por ejemplo de `gold` a
+> `bronze`) puede hacer que otra aplicación del namespace empiece a recibir `429` sin haber tocado nada.
+>
+> El cambio no pasa por ServiceNow: el API Subscriber solo valida que el plan exista en el catálogo.
+> La descripción del formulario de `change-plan` lo advierte con este mismo texto resumido.
+
 1. Lee `subscription_id` de los atributos del service. Si no está, falla (la suscripción nunca se dio de alta).
 2. `PATCH /v1/subscriptions/{subscription_id}` con `Idempotency-Key: <action_id>` y
    `{planId, callbackUrl}` (mismo `callbackUrl` que el alta, con el id de esta acción).
