@@ -224,3 +224,14 @@ MIIBfake
   [ "$status" -ne 0 ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *https* ]]
 }
+
+@test "APIM_CA_CERT en base64 se decodifica a PEM" {
+  pem="-----BEGIN CERTIFICATE-----
+MIIBfake
+-----END CERTIFICATE-----"
+  export APIM_CA_CERT
+  APIM_CA_CERT=$(printf '%s\n' "$pem" | base64 | tr -d '\n')
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  [ "$(cat "$CURL_BODIES_DIR/ca.pem")" = "$pem" ]
+}

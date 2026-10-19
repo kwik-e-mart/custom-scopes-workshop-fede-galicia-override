@@ -175,7 +175,12 @@ apim_request() {
   response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
   if [ -n "${APIM_CA_CERT-}" ]; then
     ca_file=$(mktemp "$NP_OUTPUT_DIR/apim-ca.XXXXXX")
-    printf '%s\n' "$APIM_CA_CERT" >"$ca_file"
+    if [[ "$APIM_CA_CERT" == *"BEGIN CERTIFICATE"* ]]; then
+      printf '%s\n' "$APIM_CA_CERT" >"$ca_file"
+    else
+      printf '%s' "$APIM_CA_CERT" | base64 -d >"$ca_file" 2>/dev/null \
+        || fail "subscriber: APIM_CA_CERT no es un PEM ni un PEM en base64."
+    fi
   fi
   while :; do
     local args=(-sS --config - --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
