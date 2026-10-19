@@ -140,17 +140,24 @@ pendiente para siempre.
 > La descripción del formulario de `change-plan` lo advierte con este mismo texto resumido.
 
 1. Lee `subscription_id` de los atributos del service. Si no está, falla (la suscripción nunca se dio de alta).
-2. `PATCH /v1/subscriptions/{subscription_id}` con `Idempotency-Key: <action_id>` y
+   Valida su formato y el de `plan_id` antes de armar cualquier URL.
+2. **Verifica el dueño**: `GET /v1/subscriptions/{subscription_id}` y exige que `consumerNamespace` sea el
+   namespace del provider. Los atributos se pueden editar por API aunque el formulario los muestre de solo
+   lectura: sin esta verificación, una instancia podría cambiarle el plan a la suscripción de otro namespace.
+   `404` → `failed`.
+3. `PATCH /v1/subscriptions/{subscription_id}` con `Idempotency-Key: <action_id>` y
    `{planId, callbackUrl}` (mismo `callbackUrl` que el alta, con el id de esta acción).
-3. `202` → guarda `operation_id`, deja la acción abierta. `404` / `422` / otro → `failed` con el
+4. `202` → guarda `operation_id`, deja la acción abierta. `404` / `422` / otro → `failed` con el
    `detail`. `503` → mismos reintentos que el alta.
 
 ### Baja (`delete-subscription`)
 
 1. Si `owns_subscription` no es `true` o no hay `subscription_id`, cierra `success` sin tocar APIM:
    la suscripción ya existía antes de esta instancia y darla de baja le quitaría el acceso a quien la creó.
-2. `DELETE /v1/subscriptions/{subscription_id}` con `Idempotency-Key: <action_id>`.
-3. `202` o `404` → `success`. `503` → reintentos. Otro → `failed` con el `detail`.
+2. **Verifica el dueño** igual que el cambio de plan. `404` en el `GET` → `success` (ya no existe); otro
+   namespace → `failed`.
+3. `DELETE /v1/subscriptions/{subscription_id}` con `Idempotency-Key: <action_id>`.
+4. `202` o `404` → `success`. `503` → reintentos. Otro → `failed` con el `detail`.
 
 El `DELETE` del API Subscriber no recibe `callbackUrl`, así que la baja **no espera** el aviso de
 APIM: se cierra con el `202`. Si se quiere esperar, APIM tiene que aceptar `callbackUrl` en el `DELETE`.
