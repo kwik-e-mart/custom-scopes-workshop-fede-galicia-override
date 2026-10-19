@@ -150,7 +150,10 @@ apim_request() {
   local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
   local attempt=0 response_file code
-  response_file=$(mktemp)
+  if [ -z "${NP_OUTPUT_DIR-}" ]; then
+    fail "subscriber: NP_OUTPUT_DIR no está definido; los temporales tienen que quedar en el directorio que limpia el workflow."
+  fi
+  response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
   while :; do
     local args=(-sS --config - --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
       -o "$response_file" -w '%{http_code}' -X "$method" "$API_SUBSCRIBER_URL$path" -H "Accept: application/json")
