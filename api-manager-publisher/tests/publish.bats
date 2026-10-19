@@ -36,7 +36,7 @@ pushed() {
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
-   "backend":{"group":"networking.istio.io","kind":"Hostname","name":"main.payments.example.io","port":443}}}
+   "backend":{"kind":"Service","name":"d-1049050904-222","namespace":"payments","port":8080}}}
 JSON
 )" ]
   [ -z "$(np_last_update_flag --status)" ]
@@ -112,18 +112,32 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "el backend sale del dominio del scope elegido" {
+@test "el backend es el Service del despliegue activo del scope" {
+  queue_response 200 "$(pushed)"
+  run_step
+  grep -q -- "-n payments get httproute -l nullplatform=true,scope_id=1049050904 -o json" "$KUBECTL_CALLS_LOG"
+  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"kind":"Service","name":"d-1049050904-222","namespace":"payments","port":8080}' ]
+}
+
+@test "un scope que no es de la aplicacion falla sin llamar a APIM" {
   set_request '{}' '{"scope":"otro","ref_type":"branch","ref":"main"}' qas
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"otro"* ]]
 }
 
-@test "un scope sin desplegar falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"draft","ref_type":"branch","ref":"main"}' qas
+@test "un scope sin despliegue en el cluster falla sin llamar a APIM" {
+  export KUBECTL_MOCK_ROUTES='{"items":[]}'
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
-  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"despliegue"* ]]
+}
+
+@test "si no se pueden leer las rutas del scope falla sin llamar a APIM" {
+  export KUBECTL_MOCK_FAIL=1
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"rutas"* ]]
 }
 
 @test "dev no se publica" {

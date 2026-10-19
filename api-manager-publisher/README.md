@@ -8,8 +8,8 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 
 ## Cómo se usa
 
-- **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (la regla de APIM
-  apunta al dominio de ese scope, no a un despliegue), la referencia del repo (`branch` / `tag` / `commit`,
+- **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (APIM genera su
+  HTTPRoute contra el Service del despliegue activo de ese scope), la referencia del repo (`branch` / `tag` / `commit`,
   por default `main`), el legajo y, opcional, el rate limit (`window` + `hits_per_window`). La acción queda en
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
@@ -32,8 +32,13 @@ Qué se manda a APIM y de dónde sale:
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
 | `metadata.parentRefs` | `APIM_PUBLISH_PARENT_REFS` (hasta que exista la API de scheduler) |
-| `metadata.backend` | dominio del scope elegido (`networking.istio.io/Hostname`, puerto 443) |
+| `metadata.backend` | Service del despliegue activo del scope: el backend con más peso de sus HTTPRoute (`nullplatform=true,scope_id=<id>`) |
 | `callbackUrl` | la acción de nullplatform |
+
+> [!WARNING]
+> El HTTPRoute de APIM apunta al Service del despliegue que estaba activo al publicar. Después de un deploy
+> nuevo del scope, ese Service cambia (`d-<scope>-<deployment>`) y la ruta de APIM queda apuntando al anterior
+> hasta que se republique. Cómo sincronizarlo está pendiente de definir con APIM.
 
 ## Configuración del agente
 

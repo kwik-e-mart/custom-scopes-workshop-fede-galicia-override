@@ -7,7 +7,6 @@ PUBLISH_TENANT="b2c"
 REF_PATTERN='^[A-Za-z0-9._/-]+$'
 LEGAJO_PATTERN='^l[0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
-HOSTNAME_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'
 
 if ! type -t require_publish_environment >/dev/null 2>&1; then
 require_publish_environment() {
@@ -61,9 +60,9 @@ require_parent_refs() {
 }
 fi
 
-if ! type -t require_scope_domain >/dev/null 2>&1; then
-require_scope_domain() {
-  local scope="$1" application_id="$2" scopes
+if ! type -t require_scope_backend >/dev/null 2>&1; then
+require_scope_backend() {
+  local scope="$1" application_id="$2" namespace="$3" scopes scope_id routes
   if [ -z "$scope" ]; then
     fail "publisher: falta el scope que atiende la API."
   fi
@@ -71,17 +70,18 @@ require_scope_domain() {
     fail "publisher: el contexto no trae application.id; no se puede resolver el scope."
   fi
   scopes=$(np scope list --application-id "$application_id" --status active --format json \
-    --query '[ (.results? // .) | .[]? | {slug, domain} ]') \
+    --query '[ (.results? // .) | .[]? | {slug, id} ]') \
     || fail "publisher: falló el listado de scopes de la aplicación $application_id."
-  SCOPE_DOMAIN=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain] | first // empty')
-  if [ -z "$SCOPE_DOMAIN" ]; then
+  scope_id=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .id] | first // empty')
+  if [[ ! "$scope_id" =~ ^[0-9]+$ ]]; then
     fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
   fi
-  if [ "$SCOPE_DOMAIN" = "To be defined" ]; then
-    fail "publisher: el scope '$scope' todavía no está desplegado (domain: 'To be defined')."
-  fi
-  if [[ ! "$SCOPE_DOMAIN" =~ $HOSTNAME_PATTERN ]]; then
-    fail "publisher: el dominio del scope '$scope' no es un hostname válido: '$SCOPE_DOMAIN'."
+  routes=$(kubectl -n "$namespace" get httproute -l "nullplatform=true,scope_id=$scope_id" -o json) \
+    || fail "publisher: no se pudieron leer las rutas del scope '$scope' en el namespace $namespace."
+  SCOPE_BACKEND=$(printf %s "$routes" | jq -c '[.items[].spec.rules[]?.backendRefs[]? | select((.kind // "Service") == "Service")]
+    | sort_by(-(.weight // 1)) | first // empty | {kind: "Service", name, port}' 2>/dev/null) || SCOPE_BACKEND=""
+  if [ -z "$SCOPE_BACKEND" ]; then
+    fail "publisher: el scope '$scope' no tiene un despliegue con rutas en el cluster; desplegalo antes de publicar."
   fi
 }
 fi

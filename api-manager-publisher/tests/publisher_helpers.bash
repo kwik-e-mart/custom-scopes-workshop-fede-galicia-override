@@ -4,8 +4,22 @@ setup_publisher() {
   export APIM_PUBLISHER_URL="https://publisher.test"
   export APIM_PUBLISHER_TOKEN="pub-tok"
   export APIM_PUBLISH_PARENT_REFS='[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}]'
-  export NP_MOCK_SCOPES='[{"slug":"main","domain":"main.payments.example.io"},{"slug":"draft","domain":"To be defined"}]'
-  unset APIM_CLUSTER_NAME NP_MOCK_SCOPE_FAIL
+  export NP_MOCK_SCOPES='[{"slug":"main","id":1049050904},{"slug":"draft","id":555}]'
+  export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
+  : >"$KUBECTL_CALLS_LOG"
+  export KUBECTL_MOCK_ROUTES='{"items":[{"metadata":{"name":"k-8-s-main-1049050904-internal"},"spec":{"rules":[{"backendRefs":[{"kind":"Service","name":"d-1049050904-111","port":8080,"weight":30},{"kind":"Service","name":"d-1049050904-222","port":8080,"weight":70}]}]}}]}'
+  unset APIM_CLUSTER_NAME NP_MOCK_SCOPE_FAIL KUBECTL_MOCK_FAIL
+
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS_LOG"
+if [ "${KUBECTL_MOCK_FAIL:-0}" = "1" ]; then echo "kubectl: forbidden" >&2; exit 1; fi
+case "$*" in
+  *"get httproute"*) printf '%s\n' "$KUBECTL_MOCK_ROUTES" ;;
+  *) echo "mock kubectl: comando no esperado: $*" >&2; exit 2 ;;
+esac
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
 
   cat >"$BATS_TEST_TMPDIR/bin/np" <<'MOCK'
 #!/usr/bin/env bash
