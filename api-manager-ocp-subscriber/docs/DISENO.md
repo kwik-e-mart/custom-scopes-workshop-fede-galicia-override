@@ -44,6 +44,7 @@ Si falta alguna de las dos, la acción falla con un mensaje que la nombra.
 | `subscription_id` | resultado | `sub-<api>--<namespace>`, devuelto por el API Subscriber. Solo lectura. |
 | `operation_id` | resultado | Última operación pedida. Solo lectura. |
 | `consumer_namespace` | resultado | Namespace con el que se suscribió. Solo lectura. |
+| `owns_subscription` | resultado | Booleano, no visible (`visibleOn: []`). `true` si esta instancia creó la suscripción (`202`), `false` si ya existía (`409`). Decide si la baja llama a APIM. |
 
 **Acciones:**
 
@@ -112,8 +113,8 @@ El entrypoint corre las acciones del service con `np service-action exec --disab
 
 | HTTP | Qué hace |
 |---|---|
-| `202` | Guarda `subscription_id` (`target`), `operation_id` (`id`) y `consumer_namespace` en los results, manda un mensaje de avance y **deja la acción abierta**. La cierra el API Subscriber con `PATCH` al `callbackUrl` (`success` / `failed`). |
-| `409` | Cierra `success`: "Tu namespace ya tiene acceso a esta API". **No** guarda `subscription_id`: la suscripción la creó otro pedido, y si esta instancia la guardara, borrarla le quitaría el acceso a quien la creó. Sin `subscription_id`, el cambio de plan falla y la baja no toca APIM. |
+| `202` | Guarda `subscription_id` (`target`), `operation_id` (`id`), `consumer_namespace` y `owns_subscription: true` en los results, manda un mensaje de avance y **deja la acción abierta**. La cierra el API Subscriber con `PATCH` al `callbackUrl` (`success` / `failed`). |
+| `409` | Cierra `success`: "Tu namespace ya tiene acceso a esta API". Guarda `subscription_id` (el `sub-<api>--<namespace>` que trae el `detail`), `consumer_namespace` y `owns_subscription: false`. Si el `detail` no trae un id con ese formato, cierra `success` igual, sin `subscription_id`. |
 | `503` | Reintenta hasta 3 veces, 5 s entre intentos, con la misma `Idempotency-Key`. Si sigue, `failed`. |
 | otro | Cierra `failed` con el `detail` del `application/problem+json` (o `title`, o el cuerpo crudo). |
 
@@ -131,7 +132,8 @@ pendiente para siempre.
 
 ### Baja (`delete-subscription`)
 
-1. Lee `subscription_id` de los atributos. Si no está, cierra `success`: no hay nada que dar de baja.
+1. Si `owns_subscription` no es `true` o no hay `subscription_id`, cierra `success` sin tocar APIM:
+   la suscripción ya existía antes de esta instancia y darla de baja le quitaría el acceso a quien la creó.
 2. `DELETE /v1/subscriptions/{subscription_id}` con `Idempotency-Key: <action_id>`.
 3. `202` o `404` → `success`. `503` → reintentos. Otro → `failed` con el `detail`.
 
@@ -195,11 +197,13 @@ api-manager-ocp-subscriber/
 Mocks de `curl`, `np` y `kubectl` que modelan el comportamiento real (códigos HTTP, cuerpo
 `problem+json`, `-w '%{http_code}'`) y registran cada invocación en un archivo.
 
-- Alta: `202` deja la acción abierta y guarda los results; `409` cierra `success`; `422` cierra
+- Alta: `202` deja la acción abierta y guarda los results con `owns_subscription: true`; `409` cierra
+  `success` con el `subscription_id` del `detail` y `owns_subscription: false`; `422` cierra
   `failed` con el `detail`; `503` reintenta y después cierra `failed`; sin namespace en el provider
   falla sin llamar a APIM; error inesperado cierra `failed` por el `trap`; falta una variable del agente.
 - Cambio de plan: `202`; sin `subscription_id`; `422`.
-- Baja: `202`, `404` y sin `subscription_id` cierran `success`; otro código cierra `failed`.
+- Baja: con `owns_subscription: false` no llama a `curl`; `202`, `404` y sin `subscription_id` cierran
+  `success`; otro código cierra `failed`.
 - Planes: stdout es solo JSON; ante error, stdout vacío y exit ≠ 0.
 - Link / unlink: no llaman a `curl`.
 
