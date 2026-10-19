@@ -156,3 +156,17 @@ setup() {
   run require_subscription_id_format "sub-greeting--sigla-x-qa."
   [ "$status" -ne 0 ]
 }
+
+@test "apim_request deja sus archivos temporales dentro de NP_OUTPUT_DIR" {
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  grep -q -- "-o $NP_OUTPUT_DIR/" "$CURL_ARGV_LOG"
+}
+
+@test "apim_request sin NP_OUTPUT_DIR falla sin llamar a curl" {
+  unset NP_OUTPUT_DIR
+  run apim_request GET /v1/plans "" ""
+  [ "$status" -ne 0 ]
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"NP_OUTPUT_DIR"* ]]
+}

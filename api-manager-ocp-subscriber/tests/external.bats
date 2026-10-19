@@ -90,3 +90,19 @@ setup() {
   [ "$status" -ne 0 ]
   [ "${#stderr}" -lt 500 ]
 }
+
+@test "no usa archivos temporales" {
+  queue_response 200 '{"items":[{"id":"gold","maxTps":20}]}'
+  run --separate-stderr bash "$EXTERNAL"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c -- ' -o ' "$CURL_ARGV_LOG")" = "0" ]
+  [ "$output" = '{"plans":[{"id":"gold","maxTps":20}]}' ]
+}
+
+@test "una falla de red no escribe nada en stdout" {
+  queue_response 000 ''
+  run --separate-stderr bash "$EXTERNAL"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"HTTP 000"* ]]
+}

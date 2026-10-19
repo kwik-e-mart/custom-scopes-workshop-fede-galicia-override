@@ -190,6 +190,9 @@ directamente la API de nullplatform.
 - **Channel de external context**: tipo agent, `source = ["service"]`, filtrado por
   `action $in ["list-apim-plans"]` (sin filtros sobre `service.*`, que no existen al crear),
   con su API key del módulo `api_key`.
+  El filtro tiene que poder definirse desde el install (una variable que se combina con `$and` con el
+  filtro por `action`), para acotarlo al NRN o a las dimensiones que correspondan: con el filtro solo por
+  `action`, cualquier otro service del NRN que declare `list-apim-plans` dispararía este handler.
 
 ## Cambio en `tofu-modules`
 
@@ -220,6 +223,13 @@ api-manager-ocp-subscriber/
 
 `subscriber_lib` concentra el HTTP contra el API Subscriber (headers, reintentos de `503`, lectura del
 `detail`) y el cierre de la acción, para que el publisher lo reuse.
+
+## Temporales
+
+Los scripts de los steps crean sus temporales dentro de `NP_OUTPUT_DIR`, que `np service workflow exec`
+borra al terminar. `entrypoint/external` corre fuera del workflow y no usa temporales. La única excepción
+es la marca que `entrypoint/service` crea antes del workflow para saber si el step ya resolvió la acción;
+la borra el `trap` del propio handler.
 
 ## Tests (BATS)
 

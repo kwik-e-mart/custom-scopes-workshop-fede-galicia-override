@@ -17,6 +17,8 @@ setup_common() {
   export API_SUBSCRIBER_URL="https://apisub.test"
   export API_SUBSCRIBER_TOKEN="tok-123"
   export APIM_RETRY_DELAY=0
+  export NP_OUTPUT_DIR="$BATS_TEST_TMPDIR/np-output"
+  mkdir -p "$NP_OUTPUT_DIR"
   unset APIM_RETRIES NP_MOCK_UPDATE_FAIL ACTION_SETTLED SUBSCRIBER_SETTLED_MARKER
 
   export CURL_CALLS_LOG="$BATS_TEST_TMPDIR/curl-calls.log"
@@ -71,14 +73,18 @@ if [ -z "$line" ]; then
 fi
 code="${line%%$'\t'*}"
 body="${line#*$'\t'}"
+render_writeout() {
+  local rendered="${writeout//'%{http_code}'/$1}"
+  printf '%b' "$rendered"
+}
 case "$code" in
   000)
-    if [ -n "$writeout" ]; then printf '000'; fi
+    if [ -n "$writeout" ]; then render_writeout 000; fi
     echo "curl: (7) Failed to connect" >&2
     exit 7
     ;;
   timeout)
-    if [ -n "$writeout" ]; then printf '000'; fi
+    if [ -n "$writeout" ]; then render_writeout 000; fi
     echo "curl: (28) Operation timed out" >&2
     exit 28
     ;;
@@ -88,7 +94,7 @@ if [ -n "$out" ]; then
 else
   printf '%s' "$body"
 fi
-if [ -n "$writeout" ]; then printf '%s' "$code"; fi
+if [ -n "$writeout" ]; then render_writeout "$code"; fi
 MOCK
   chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 

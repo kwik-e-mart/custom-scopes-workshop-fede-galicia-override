@@ -21,18 +21,17 @@ if [ "$action" != "list-apim-plans" ]; then
   fail_external "acción de external context desconocida: '$action'."
 fi
 
-response_file=$(mktemp)
-trap 'rm -f "$response_file"' EXIT
-
-code=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" \
-  | curl -sS --config - --connect-timeout 10 --max-time 30 -o "$response_file" -w '%{http_code}' \
-    -X GET "$API_SUBSCRIBER_URL/v1/plans" -H "Accept: application/json") || code="000"
+response=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" \
+  | curl -sS --config - --connect-timeout 10 --max-time 30 -w '\n%{http_code}' \
+    -X GET "$API_SUBSCRIBER_URL/v1/plans" -H "Accept: application/json") || response=$'\n000'
+code="${response##*$'\n'}"
+body="${response%$'\n'*}"
 
 if [[ ! "$code" =~ ^2 ]]; then
-  fail_external "GET /v1/plans respondió HTTP $code: $(head -c 300 "$response_file" | tr -d '\000-\011\013-\037\177')"
+  fail_external "GET /v1/plans respondió HTTP $code: $(printf %s "$body" | head -c 300 | tr -d '\000-\011\013-\037\177')"
 fi
 
-plans=$(jq -ce 'if (.items | type) == "array" then {plans: (.items | map({id} + (if .maxTps != null then {maxTps} else {} end)))} else error("sin items") end' "$response_file" 2>/dev/null) \
+plans=$(printf %s "$body" | jq -ce 'if (.items | type) == "array" then {plans: (.items | map({id} + (if .maxTps != null then {maxTps} else {} end)))} else error("sin items") end' 2>/dev/null) \
   || fail_external "GET /v1/plans no devolvió una lista de planes en items."
 
 printf '%s\n' "$plans"
