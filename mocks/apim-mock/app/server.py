@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -13,11 +14,19 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PLANS = [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}]
+PLAN_IDS = [plan["id"] for plan in PLANS]
 ENVIRONMENTS = ["dev", "int", "qas", "prd"]
-LEGAJO_PATTERN = re.compile(r"^l[0-9]{7}$")
-NAMESPACE_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+LEGAJO_PATTERN = re.compile(r"l[0-9]{7}")
+NAMESPACE_PATTERN = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+CALLBACK_PATH = re.compile(r"/(service|link)/[A-Za-z0-9_-]+/action/[A-Za-z0-9_-]+")
+RITM_CONFLICT = "RITM9990409"
+RITM_NOT_APPROVED = "RITM9990422"
+RITM_UNAVAILABLE = "RITM9990503"
+RITM_ROLLBACK = "RITM9990666"
 FINAL_FAILED_STATES = ("RolledBack", "Failed")
+PUBLIC_OPERATION_FIELDS = ("id", "kind", "state", "target", "error")
 GENERATED_FILES = ["httproute.yaml", "ratelimitpolicy.yaml", "authpolicy.yaml", "apiproduct.yaml"]
+MAX_BODY_BYTES = 65536
 
 
 def log(message):
@@ -26,6 +35,10 @@ def log(message):
 
 def empty_state():
     return {"subscriptions": {}, "operations": {}, "idempotency": {}, "publications": {}}
+
+
+def is_text(value):
+    return isinstance(value, str) and value != ""
 
 
 class MemoryStore:
@@ -60,8 +73,14 @@ class ConfigMapStore:
         if status != 200:
             raise RuntimeError(f"no se pudo leer el ConfigMap {self.name}: HTTP {status}")
         self.exists = True
-        stored = json.loads((body.get("data") or {}).get(self.KEY) or "{}")
-        state.update(stored)
+        try:
+            stored = json.loads((body.get("data") or {}).get(self.KEY) or "{}")
+        except ValueError:
+            log(f"apim-mock: el ConfigMap {self.name} no tiene JSON válido; arranca con el estado vacío")
+            return state
+        for key in state:
+            if isinstance(stored.get(key), dict):
+                state[key] = stored[key]
         return state
 
     def save(self, state):
@@ -124,14 +143,17 @@ class Notifier:
 
     def allowed(self, callback_url):
         target = urllib.parse.urlparse(callback_url)
-        return target.scheme == "https" and target.netloc == urllib.parse.urlparse(self.np_api_url).netloc
+        return (target.scheme == "https"
+                and target.netloc == urllib.parse.urlparse(self.np_api_url).netloc
+                and CALLBACK_PATH.fullmatch(target.path) is not None
+                and not (target.query or target.fragment or target.params))
 
     def notify(self, callback_url, message, level="info", status=None):
         if not callback_url or not self.api_key:
             log(f"apim-mock: aviso sin enviar (callbackUrl o NP_API_KEY vacíos): {message}")
             return
         if not self.allowed(callback_url):
-            log(f"apim-mock: aviso sin enviar: {callback_url} no es https en {urllib.parse.urlparse(self.np_api_url).netloc}")
+            log(f"apim-mock: aviso sin enviar: {callback_url!r} no es una acción de {self.np_api_url}")
             return
         body = {"messages": [{"level": level, "message": message}]}
         if status:
@@ -142,9 +164,9 @@ class Notifier:
                 log(f"apim-mock: no se pudo obtener el token de nullplatform (HTTP {code})")
                 return
             code, _ = self.http("PATCH", callback_url, {"Authorization": f"Bearer {token['access_token']}"}, body)
-            log(f"apim-mock: aviso {status or 'avance'} a {callback_url} → HTTP {code}")
+            log(f"apim-mock: aviso {status or 'avance'} a {callback_url!r} → HTTP {code}")
         except Exception as error:
-            log(f"apim-mock: falló el aviso a {callback_url}: {error}")
+            log(f"apim-mock: falló el aviso a {callback_url!r}: {error}")
 
 
 def timer_scheduler(delay, fn):
@@ -161,12 +183,16 @@ def publish_error(message):
     return 400, {"status": "error", "message": message}
 
 
-def body_hash(raw):
-    try:
-        canonical = json.dumps(json.loads(raw or b"{}"), sort_keys=True)
-    except ValueError:
-        canonical = raw.decode(errors="replace")
-    return hashlib.sha256(canonical.encode()).hexdigest()
+def body_hash(body):
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+def public_operation(operation):
+    return {field: operation[field] for field in PUBLIC_OPERATION_FIELDS if field in operation}
+
+
+def publication_ref(body):
+    return body.get("branch") or body.get("tag") or body.get("commit")
 
 
 class App:
@@ -178,45 +204,95 @@ class App:
         self.settings = settings
         self.lock = threading.RLock()
         self.state = store.load()
+        self.reschedule_pending()
+
+    def reschedule_pending(self):
+        for operation in list(self.state["operations"].values()):
+            if operation.get("state") != "Committed":
+                continue
+            if operation.get("kind") == "subscription":
+                self.schedule(self.complete_subscription, operation["id"])
+            if operation.get("kind") == "planChange":
+                self.schedule(self.complete_plan_change, operation["id"])
+        for publication in list(self.state["publications"].values()):
+            if publication.get("status") == "pushed":
+                self.schedule(self.complete_publication, publication["apiId"], publication["ref"])
+
+    def schedule(self, fn, *args):
+        def run():
+            try:
+                fn(*args)
+            except Exception as error:
+                log(f"apim-mock: falló {fn.__name__}{args}: {error}")
+
+        self.scheduler(self.settings["callback_delay"], run)
 
     def save(self):
+        self.prune()
         self.store.save(self.state)
 
+    def prune(self):
+        limit = self.settings.get("max_history", 200)
+        operations = self.state["operations"]
+        finished = [op_id for op_id, operation in operations.items() if operation.get("state") != "Committed"]
+        for op_id in finished[:max(0, len(operations) - limit)]:
+            del operations[op_id]
+        idempotency = self.state["idempotency"]
+        for key in list(idempotency)[:max(0, len(idempotency) - limit)]:
+            del idempotency[key]
+
+    def authorized(self, headers):
+        token = self.settings.get("token")
+        if not token:
+            return True
+        lowered = {key.lower(): value for key, value in headers.items()}
+        return hmac.compare_digest(lowered.get("authorization", "").encode(), f"Bearer {token}".encode())
+
     def handle(self, method, path, headers, raw):
-        headers = {key.lower(): value for key, value in headers.items()}
         if path == "/healthz":
             return 200, {"status": "ok"}
-        token = self.settings.get("token")
-        if token and headers.get("authorization") != f"Bearer {token}":
+        if not self.authorized(headers):
             return problem(401, "Unauthorized", "Falta el Bearer del mock o no coincide con MOCK_TOKEN.")
         try:
             body = json.loads(raw) if raw else {}
         except ValueError:
             return problem(400, "Bad Request", "El cuerpo no es JSON válido.")
+        if not isinstance(body, dict):
+            return problem(400, "Bad Request", "El cuerpo tiene que ser un objeto JSON.")
+        headers = {key.lower(): value for key, value in headers.items()}
+        outbox = []
         with self.lock:
-            return self.route(method, path, headers, body, raw)
+            try:
+                result = self.route(method, path, headers, body, outbox)
+            except Exception as error:
+                log(f"apim-mock: error en {method} {path}: {error}")
+                outbox = []
+                result = problem(500, "Internal Server Error", f"El mock falló: {error}")
+        for notification in outbox:
+            self.notifier.notify(*notification[:2], **notification[2])
+        return result
 
-    def route(self, method, path, headers, body, raw):
+    def route(self, method, path, headers, body, outbox):
         key = headers.get("idempotency-key", "")
         if path == "/v1/plans" and method == "GET":
             return 200, {"items": PLANS}
         if path == "/v1/subscriptions" and method == "POST":
-            return self.create_subscription(body, raw, key)
+            return self.create_subscription(body, key, outbox)
         match = re.fullmatch(r"/v1/subscriptions/([^/]+)", path)
         if match and method == "GET":
             return self.get_subscription(match.group(1))
         if match and method == "PATCH":
-            return self.change_plan(match.group(1), body, raw, key)
+            return self.change_plan(match.group(1), body, key, outbox)
         if match and method == "DELETE":
-            return self.revoke_subscription(match.group(1))
+            return self.revoke_subscription(match.group(1), key)
         match = re.fullmatch(r"/v1/operations/([^/]+)", path)
         if match and method == "GET":
             operation = self.state["operations"].get(match.group(1))
             if not operation:
                 return problem(404, "Not Found", f"No existe la operación {match.group(1)}.")
-            return 200, operation
+            return 200, public_operation(operation)
         if path == "/v1/kuadrant/manifests/publish" and method == "POST":
-            return self.publish(body)
+            return self.publish(body, outbox)
         match = re.fullmatch(r"/v1/kuadrant/manifests/([^/]+)", path)
         if match and method == "DELETE":
             return self.unpublish(match.group(1))
@@ -228,89 +304,121 @@ class App:
             return 200, {"status": "reset"}
         return problem(404, "Not Found", f"{method} {path} no existe en el mock.")
 
-    def replay(self, key, raw):
-        if not key:
-            return None
-        previous = self.state["idempotency"].get(key)
+    def replay(self, key, body):
+        previous = self.state["idempotency"].get(key) if key else None
         if not previous:
             return None
-        operation = self.state["operations"].get(previous["operation_id"], {})
-        if operation.get("state") in FINAL_FAILED_STATES:
+        operation = self.state["operations"].get(previous["operation_id"])
+        if not operation or operation.get("state") in FINAL_FAILED_STATES:
             return None
-        if previous["hash"] != body_hash(raw):
+        if previous["hash"] != body_hash(body):
             return problem(422, "Unprocessable Entity", "La misma Idempotency-Key llegó con otro cuerpo.")
-        return previous["status"], operation
+        return previous["status"], public_operation(operation)
 
-    def remember(self, key, raw, status, operation):
+    def remember(self, key, body, status, operation):
         if key:
-            self.state["idempotency"][key] = {"hash": body_hash(raw), "operation_id": operation["id"], "status": status}
+            self.state["idempotency"][key] = {"hash": body_hash(body), "operation_id": operation["id"], "status": status}
 
     def new_operation(self, kind, target, callback_url):
         operation = {"id": str(uuid.uuid4()), "kind": kind, "state": "Committed", "target": target,
-                     "callbackUrl": callback_url or ""}
+                     "callbackUrl": callback_url if isinstance(callback_url, str) else ""}
         self.state["operations"][operation["id"]] = operation
         return operation
 
-    def create_subscription(self, body, raw, key):
-        replayed = self.replay(key, raw)
+    def namespace_rejection(self, namespace):
+        if namespace.startswith("kube-") or namespace in ("default", self.settings.get("own_namespace")):
+            return f"El namespace {namespace} no se puede suscribir desde el mock."
+        allowed = self.settings.get("allowed_namespaces") or []
+        if allowed and namespace not in allowed:
+            return f"El namespace {namespace} no está en los namespaces permitidos del mock."
+        return None
+
+    def create_subscription(self, body, key, outbox):
+        if not key:
+            return problem(400, "Bad Request", "Falta el header Idempotency-Key.")
+        replayed = self.replay(key, body)
         if replayed:
             return replayed
-        missing = [field for field in ("approvalRef", "consumerNamespace", "planId") if not body.get(field)]
-        if missing:
-            return problem(400, "Bad Request", f"Faltan campos obligatorios: {', '.join(missing)}.")
+        invalid = [field for field in ("approvalRef", "consumerNamespace", "planId") if not is_text(body.get(field))]
+        if invalid:
+            return problem(400, "Bad Request", f"Faltan o no son texto: {', '.join(invalid)}.")
         ritm = body["approvalRef"]
         namespace = body["consumerNamespace"]
-        if not NAMESPACE_PATTERN.match(namespace):
-            return problem(400, "Bad Request", f"consumerNamespace no es un nombre DNS-1123: {namespace}.")
+        if not NAMESPACE_PATTERN.fullmatch(namespace):
+            return problem(400, "Bad Request", f"consumerNamespace no es un nombre DNS-1123: {namespace!r}.")
+        rejection = self.namespace_rejection(namespace)
+        if rejection:
+            return problem(422, "Unprocessable Entity", rejection)
         digits = re.sub(r"[^0-9]", "", ritm) or "0"
         api_id = f"api-{digits}"
         subscription_id = f"sub-{api_id}--{namespace}"
-        if ritm.endswith("503"):
-            return problem(503, "Service Unavailable", "ServiceNow no responde (mock: RITM terminado en 503).")
-        if ritm.endswith("422"):
+        if ritm == RITM_UNAVAILABLE:
+            return problem(503, "Service Unavailable", f"ServiceNow no responde (mock: {RITM_UNAVAILABLE}).")
+        if ritm == RITM_NOT_APPROVED:
             return problem(422, "Unprocessable Entity",
                            "Tu solicitud no está aprobada en ServiceNow; volvé a enviarla cuando se apruebe.")
-        if body["planId"] not in [plan["id"] for plan in PLANS]:
+        if body["planId"] not in PLAN_IDS:
             return problem(422, "Plan inválido", f"El plan {body['planId']} no está en el catálogo.")
-        if ritm.endswith("409") or subscription_id in self.state["subscriptions"]:
+        if ritm == RITM_CONFLICT or subscription_id in self.state["subscriptions"]:
             return problem(409, "Conflict", f"El namespace {namespace} ya está suscripto a {api_id}: {subscription_id}")
+        operation = self.new_operation("subscription", subscription_id, body.get("callbackUrl"))
         self.state["subscriptions"][subscription_id] = {
             "id": subscription_id, "apiId": api_id, "consumerNamespace": namespace, "planId": body["planId"],
-            "approvalRef": ritm, "tenant": self.settings["tenant"], "state": "Syncing",
+            "approvalRef": ritm, "tenant": self.settings["tenant"], "state": "Syncing", "operationId": operation["id"],
         }
-        operation = self.new_operation("subscription", subscription_id, body.get("callbackUrl"))
-        self.remember(key, raw, 202, operation)
+        self.remember(key, body, 202, operation)
         self.save()
-        self.notifier.notify(operation["callbackUrl"],
-                             f"Solicitud {ritm} validada. Suscripción escrita en Git; aplicándola en los clusters.")
-        self.scheduler(self.settings["callback_delay"], lambda: self.complete_subscription(operation["id"]))
-        return 202, operation
+        outbox.append((operation["callbackUrl"],
+                       f"Solicitud {ritm} validada. Suscripción escrita en Git; aplicándola en los clusters.", {}))
+        self.schedule(self.complete_subscription, operation["id"])
+        return 202, public_operation(operation)
+
+    def pending_subscription(self, operation_id):
+        operation = self.state["operations"].get(operation_id)
+        if not operation or operation.get("state") != "Committed":
+            return None, None
+        subscription = self.state["subscriptions"].get(operation["target"])
+        if not subscription or subscription.get("operationId") != operation_id:
+            return operation, None
+        return operation, subscription
+
+    def fail_operation(self, operation, state, detail, message, drop_subscription):
+        if drop_subscription:
+            del self.state["subscriptions"][operation["target"]]
+        operation["state"] = state
+        operation["error"] = {"detail": detail}
+        self.save()
+        return operation["callbackUrl"], message, {"level": "error", "status": "failed"}
 
     def complete_subscription(self, operation_id):
         with self.lock:
-            operation = self.state["operations"][operation_id]
-            subscription = self.state["subscriptions"].get(operation["target"])
-            if not subscription:
+            operation, subscription = self.pending_subscription(operation_id)
+            if not operation:
                 return
-            if subscription["approvalRef"].endswith("666"):
-                del self.state["subscriptions"][operation["target"]]
-                operation["state"] = "RolledBack"
-                operation["error"] = {"detail": "mock: RITM terminado en 666"}
-                self.save()
-                outcome = ("failed", "error", "No se pudo completar (mock: RITM terminado en 666). Se deshizo; volvé a intentar más tarde.")
-            elif not self.ensure_credential_secret(subscription["consumerNamespace"]):
-                del self.state["subscriptions"][operation["target"]]
-                operation["state"] = "Failed"
-                operation["error"] = {"detail": "no se pudo crear el Secret de la credencial"}
-                self.save()
-                outcome = ("failed", "error", "No se pudo aplicar en los clusters (el mock no pudo crear el Secret de la credencial).")
+            if not subscription:
+                notification = self.fail_operation(operation, "RolledBack", "la suscripción se dio de baja antes de completarse",
+                                                   "La suscripción se dio de baja antes de quedar activa.", False)
+            elif subscription["approvalRef"] == RITM_ROLLBACK:
+                notification = self.fail_operation(operation, "RolledBack", f"mock: {RITM_ROLLBACK}",
+                                                   f"No se pudo completar (mock: {RITM_ROLLBACK}). Se deshizo; volvé a intentar más tarde.", True)
             else:
-                subscription["state"] = "Registered"
-                operation["state"] = "Registered"
-                self.save()
-                outcome = ("success", "info", "Suscripción activa y registrada en el catálogo de APIs.")
-        status, level, message = outcome
-        self.notifier.notify(operation["callbackUrl"], message, level=level, status=status)
+                notification = None
+                namespace = subscription["consumerNamespace"]
+        if notification is None:
+            secret_created = self.ensure_credential_secret(namespace)
+            with self.lock:
+                operation, subscription = self.pending_subscription(operation_id)
+                if not operation or not subscription:
+                    return
+                if not secret_created:
+                    notification = self.fail_operation(operation, "Failed", "no se pudo crear el Secret de la credencial",
+                                                       "No se pudo aplicar en los clusters (el mock no pudo crear el Secret de la credencial).", True)
+                else:
+                    subscription["state"] = "Registered"
+                    operation["state"] = "Registered"
+                    self.save()
+                    notification = (operation["callbackUrl"], "Suscripción activa y registrada en el catálogo de APIs.", {"status": "success"})
+        self.notifier.notify(*notification[:2], **notification[2])
 
     def ensure_credential_secret(self, namespace):
         if not self.settings.get("create_secret", True):
@@ -337,86 +445,106 @@ class App:
         subscription = self.state["subscriptions"].get(subscription_id)
         if not subscription:
             return problem(404, "Not Found", f"No existe la suscripción {subscription_id}.")
-        return 200, subscription
+        return 200, {field: value for field, value in subscription.items() if field != "operationId"}
 
-    def change_plan(self, subscription_id, body, raw, key):
+    def change_plan(self, subscription_id, body, key, outbox):
         if subscription_id not in self.state["subscriptions"]:
             return problem(404, "Not Found", f"No existe la suscripción {subscription_id}.")
-        replayed = self.replay(key, raw)
+        if not key:
+            return problem(400, "Bad Request", "Falta el header Idempotency-Key.")
+        replayed = self.replay(key, body)
         if replayed:
             return replayed
         plan_id = body.get("planId")
-        if not plan_id:
-            return problem(400, "Bad Request", "Falta planId.")
-        if plan_id not in [plan["id"] for plan in PLANS]:
+        if not is_text(plan_id):
+            return problem(400, "Bad Request", "Falta planId o no es texto.")
+        if plan_id not in PLAN_IDS:
             return problem(422, "Plan inválido", f"El plan {plan_id} no está en el catálogo.")
         operation = self.new_operation("planChange", subscription_id, body.get("callbackUrl"))
         operation["planId"] = plan_id
-        self.remember(key, raw, 202, operation)
+        self.remember(key, body, 202, operation)
         self.save()
-        self.notifier.notify(operation["callbackUrl"], f"Cambio de plan a {plan_id} escrito en Git; aplicándolo en los clusters.")
-        self.scheduler(self.settings["callback_delay"], lambda: self.complete_plan_change(operation["id"]))
-        return 202, operation
+        outbox.append((operation["callbackUrl"], f"Cambio de plan a {plan_id} escrito en Git; aplicándolo en los clusters.", {}))
+        self.schedule(self.complete_plan_change, operation["id"])
+        return 202, public_operation(operation)
 
     def complete_plan_change(self, operation_id):
         with self.lock:
-            operation = self.state["operations"][operation_id]
+            operation = self.state["operations"].get(operation_id)
+            if not operation or operation.get("state") != "Committed":
+                return
             subscription = self.state["subscriptions"].get(operation["target"])
             if not subscription:
-                return
-            subscription["planId"] = operation["planId"]
-            operation["state"] = "Registered"
-            self.save()
-        self.notifier.notify(operation["callbackUrl"], f"Plan cambiado a {operation['planId']}.", status="success")
+                notification = self.fail_operation(operation, "RolledBack", "la suscripción ya no existe",
+                                                   "No se pudo cambiar el plan: la suscripción ya no existe.", False)
+            else:
+                subscription["planId"] = operation["planId"]
+                operation["state"] = "Registered"
+                self.save()
+                notification = (operation["callbackUrl"], f"Plan cambiado a {operation['planId']}.", {"status": "success"})
+        self.notifier.notify(*notification[:2], **notification[2])
 
-    def revoke_subscription(self, subscription_id):
+    def revoke_subscription(self, subscription_id, key):
+        replayed = self.replay(key, {"revoke": subscription_id})
+        if replayed:
+            return replayed
         if subscription_id not in self.state["subscriptions"]:
             return problem(404, "Not Found", f"No existe la suscripción {subscription_id}.")
         del self.state["subscriptions"][subscription_id]
         operation = self.new_operation("revoke", subscription_id, "")
         operation["state"] = "Succeeded"
+        self.remember(key, {"revoke": subscription_id}, 202, operation)
         self.save()
-        return 202, operation
+        return 202, public_operation(operation)
 
     def validate_publication(self, body):
-        if not body.get("tenant"):
+        if not is_text(body.get("tenant")):
             return "El tenant de publicación es obligatorio."
-        for field in ("organization", "repository", "environment", "cluster", "metadata"):
-            if not body.get(field):
+        for field in ("organization", "repository", "environment", "cluster"):
+            if not is_text(body.get(field)):
                 return f"El campo {field} es obligatorio."
         if body["environment"] not in ENVIRONMENTS:
             return f"El ambiente {body['environment']} no es válido; tiene que ser uno de {', '.join(ENVIRONMENTS)}."
-        if not (body.get("branch") or body.get("tag") or body.get("commit")):
+        ref = publication_ref(body)
+        if not is_text(ref):
             return "Se requiere al menos uno de branch, tag o commit."
-        if body.get("legajo") and not LEGAJO_PATTERN.match(body["legajo"]):
+        legajo = body.get("legajo")
+        if legajo is not None and not (isinstance(legajo, str) and LEGAJO_PATTERN.fullmatch(legajo)):
             return "El legajo tiene que tener el formato l#######."
-        metadata = body["metadata"]
+        metadata = body.get("metadata")
+        if not isinstance(metadata, dict):
+            return "El campo metadata es obligatorio."
         for field in ("name", "namespace"):
-            if not metadata.get(field):
+            if not is_text(metadata.get(field)):
                 return f"El campo metadata.{field} es obligatorio."
-        parent_refs = metadata.get("parentRefs") or []
-        if not parent_refs or not all(ref.get("name") and ref.get("namespace") for ref in parent_refs):
+        parent_refs = metadata.get("parentRefs")
+        if (not isinstance(parent_refs, list) or not parent_refs
+                or not all(isinstance(ref, dict) and is_text(ref.get("name")) and is_text(ref.get("namespace")) for ref in parent_refs)):
             return "metadata.parentRefs necesita al menos un Gateway con name y namespace."
+        hostnames = metadata.get("hostnames")
+        if hostnames is not None and not (isinstance(hostnames, list) and all(is_text(host) for host in hostnames)):
+            return "metadata.hostnames tiene que ser una lista de hostnames."
         return None
 
-    def publish(self, body):
+    def publish(self, body, outbox):
         error = self.validate_publication(body)
         if error:
             return publish_error(error)
         metadata = body["metadata"]
         name, namespace, tenant, environment = metadata["name"], metadata["namespace"], body["tenant"], body["environment"]
         api_id = f"{namespace}-{name}-{tenant}-1"
-        ref = body.get("branch") or body.get("tag") or body.get("commit")
+        ref = publication_ref(body)
         existing = self.state["publications"].get(api_id)
         if existing and existing["ref"] == ref:
             return publish_error(f"La API {api_id} ya está publicada en {ref}.")
         hostnames = metadata.get("hostnames") or [f"{namespace}-{name}-{tenant}-{environment}.{self.settings['domain']}"]
+        callback_url = body.get("callbackUrl")
         publication = {
             "apiId": api_id, "ref": ref, "status": "pushed", "hostname": hostnames[0], "namespace": namespace,
             "apiName": name, "tenant": tenant, "environment": environment,
             "repository": f"{body['organization']}/{body['repository']}",
             "manifestPath": f"clusters/{body['cluster']}/apis/{namespace}/{name}",
-            "callbackUrl": body.get("callbackUrl") or "",
+            "callbackUrl": callback_url if isinstance(callback_url, str) else "",
         }
         self.state["publications"][api_id] = publication
         self.save()
@@ -429,25 +557,25 @@ class App:
             "argoStatus": {"application": "apim-mock", "sync": "OutOfSync", "health": "Healthy",
                            "operationPhase": "Running", "resources": []},
         }
-        self.notifier.notify(publication["callbackUrl"], "Manifiestos pusheados a Git; Argo está sincronizando.")
-        self.scheduler(self.settings["callback_delay"], lambda: self.complete_publication(api_id, ref))
+        outbox.append((publication["callbackUrl"], "Manifiestos pusheados a Git; Argo está sincronizando.", {}))
+        self.schedule(self.complete_publication, api_id, ref)
         return 200, response
 
     def complete_publication(self, api_id, ref):
         with self.lock:
             publication = self.state["publications"].get(api_id)
-            if not publication or publication["ref"] != ref:
+            if not publication or publication["ref"] != ref or publication["status"] != "pushed":
                 return
             if publication["repository"].split("/", 1)[1].startswith("fail-"):
                 del self.state["publications"][api_id]
                 self.save()
-                outcome = ("failed", "error", "Argo no sincronizó (mock: repo fail-*); se eliminaron los manifiestos.")
+                notification = (publication["callbackUrl"], "Argo no sincronizó (mock: repo fail-*); se eliminaron los manifiestos.",
+                                {"level": "error", "status": "failed"})
             else:
                 publication["status"] = "registered"
                 self.save()
-                outcome = ("success", "info", f"API publicada y registrada en {publication['hostname']}.")
-        status, level, message = outcome
-        self.notifier.notify(publication["callbackUrl"], message, level=level, status=status)
+                notification = (publication["callbackUrl"], f"API publicada y registrada en {publication['hostname']}.", {"status": "success"})
+        self.notifier.notify(*notification[:2], **notification[2])
 
     def unpublish(self, api_id):
         if api_id not in self.state["publications"]:
@@ -459,11 +587,9 @@ class App:
 
 def make_handler(app):
     class Handler(BaseHTTPRequestHandler):
-        def respond(self):
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length else b""
-            path = self.path.split("?", 1)[0]
-            status, body = app.handle(self.command, path, dict(self.headers.items()), raw)
+        timeout = 10
+
+        def send_json(self, status, body):
             payload = json.dumps(body).encode()
             content_type = "application/problem+json" if status >= 400 and "title" in body else "application/json"
             self.send_response(status)
@@ -472,18 +598,46 @@ def make_handler(app):
             self.end_headers()
             self.wfile.write(payload)
 
+        def respond(self):
+            path = self.path.split("?", 1)[0]
+            headers = dict(self.headers.items())
+            if path != "/healthz" and not app.authorized(headers):
+                self.send_json(*problem(401, "Unauthorized", "Falta el Bearer del mock o no coincide con MOCK_TOKEN."))
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0:
+                self.send_json(*problem(400, "Bad Request", "Content-Length inválido."))
+                return
+            if length > MAX_BODY_BYTES:
+                self.send_json(*problem(413, "Payload Too Large", f"El cuerpo supera {MAX_BODY_BYTES} bytes."))
+                return
+            raw = self.rfile.read(length) if length else b""
+            try:
+                status, body = app.handle(self.command, path, headers, raw)
+            except Exception as error:
+                log(f"apim-mock: error en {self.command} {path}: {error}")
+                status, body = problem(500, "Internal Server Error", "El mock falló.")
+            self.send_json(status, body)
+
         do_GET = respond
         do_POST = respond
         do_PATCH = respond
         do_DELETE = respond
 
         def log_message(self, format, *args):
-            log(f"apim-mock: {self.command} {self.path} → {args[1] if len(args) > 1 else ''}")
+            log(f"apim-mock: {self.command} {self.path!r} → {args[1] if len(args) > 1 else ''}")
 
     return Handler
 
 
 def main():
+    token = os.environ.get("MOCK_TOKEN", "")
+    if not token:
+        log("apim-mock: MOCK_TOKEN es obligatorio; sin token cualquiera podría crear Secrets con la ServiceAccount del mock.")
+        sys.exit(1)
     namespace = os.environ.get("POD_NAMESPACE", "default")
     k8s = K8sClient(os.environ.get("K8S_API_URL", "https://kubernetes.default.svc"),
                     "/var/run/secrets/kubernetes.io/serviceaccount/token",
@@ -494,11 +648,14 @@ def main():
         store = MemoryStore()
     notifier = Notifier(os.environ.get("NP_API_URL", "https://api.nullplatform.com"), os.environ.get("NP_API_KEY", ""))
     settings = {
-        "token": os.environ.get("MOCK_TOKEN", ""),
+        "token": token,
         "tenant": os.environ.get("MOCK_TENANT", "b2c"),
         "callback_delay": float(os.environ.get("CALLBACK_DELAY_SECONDS", "5")),
         "domain": os.environ.get("PUBLISH_DOMAIN", "bancogalicia.com.ar"),
         "create_secret": os.environ.get("CREATE_CREDENTIAL_SECRET", "true") == "true",
+        "own_namespace": namespace,
+        "allowed_namespaces": [item for item in os.environ.get("ALLOWED_NAMESPACES", "").split(",") if item],
+        "max_history": int(os.environ.get("MAX_HISTORY", "200")),
     }
     app = App(store, k8s, notifier, timer_scheduler, settings)
     port = int(os.environ.get("PORT", "8080"))

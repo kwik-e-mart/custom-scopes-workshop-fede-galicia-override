@@ -1,6 +1,9 @@
+import http.client
 import json
 import os
+import subprocess
 import sys
+import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
@@ -59,7 +62,8 @@ def make_app(**config):
     k8s = FakeK8s()
     notifier = FakeNotifier()
     scheduler = ManualScheduler()
-    settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar", "create_secret": True}
+    settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar",
+                "create_secret": True, "own_namespace": "apim-mock", "allowed_namespaces": [], "max_history": 200}
     settings.update(config)
     app = server.App(server.MemoryStore(), k8s, notifier, scheduler, settings)
     return app, k8s, notifier, scheduler
@@ -156,30 +160,30 @@ class SubscriberTest(unittest.TestCase):
 
     def test_ritm_terminado_en_422_responde_422(self):
         app, _, _, _ = make_app()
-        status, body = subscribe(app, ritm="RITM0000422")
+        status, body = subscribe(app, ritm="RITM9990422")
         self.assertEqual(status, 422)
         self.assertIn("ServiceNow", body["detail"])
 
     def test_ritm_terminado_en_503_responde_503_sin_guardar_nada(self):
         app, _, _, _ = make_app()
-        status, _ = subscribe(app, ritm="RITM0000503")
+        status, _ = subscribe(app, ritm="RITM9990503")
         self.assertEqual(status, 503)
         _, state = call(app, "GET", "/mock/state")
         self.assertEqual(state["subscriptions"], {})
 
     def test_ritm_terminado_en_409_responde_409_aunque_no_exista(self):
         app, _, _, _ = make_app()
-        status, body = subscribe(app, ritm="RITM0000409")
+        status, body = subscribe(app, ritm="RITM9990409")
         self.assertEqual(status, 409)
-        self.assertIn("sub-api-0000409--sigla-x-qa", body["detail"])
+        self.assertIn("sub-api-9990409--sigla-x-qa", body["detail"])
 
     def test_ritm_terminado_en_666_falla_y_deshace_la_suscripcion(self):
         app, k8s, notifier, scheduler = make_app()
-        _, op = subscribe(app, ritm="RITM0000666")
+        _, op = subscribe(app, ritm="RITM9990666")
         scheduler.run_all()
         self.assertEqual(notifier.calls[-1]["status"], "failed")
         self.assertEqual(notifier.calls[-1]["level"], "error")
-        status, _ = call(app, "GET", "/v1/subscriptions/sub-api-0000666--sigla-x-qa")
+        status, _ = call(app, "GET", "/v1/subscriptions/sub-api-9990666--sigla-x-qa")
         self.assertEqual(status, 404)
         _, operation = call(app, "GET", f"/v1/operations/{op['id']}")
         self.assertEqual(operation["state"], "RolledBack")
@@ -196,6 +200,154 @@ class SubscriberTest(unittest.TestCase):
         status, body = subscribe(app, plan="platinum")
         self.assertEqual(status, 422)
         self.assertIn("Plan", body["title"] + body["detail"])
+
+    def test_un_ritm_que_termina_como_un_centinela_es_un_alta_normal(self):
+        app, _, _, _ = make_app()
+        status, _ = subscribe(app, ritm="RITM0012503")
+        self.assertEqual(status, 202)
+
+    def test_alta_sin_idempotency_key_responde_400(self):
+        app, _, _, _ = make_app()
+        status, body = call(app, "POST", "/v1/subscriptions",
+                            {"approvalRef": "RITM1", "consumerNamespace": "ns-a", "planId": "gold"})
+        self.assertEqual(status, 400)
+        self.assertIn("Idempotency-Key", body["detail"])
+
+    def test_la_operacion_que_devuelve_no_expone_el_callback(self):
+        app, _, _, _ = make_app()
+        _, body = subscribe(app)
+        self.assertEqual(sorted(body), ["id", "kind", "state", "target"])
+
+    def test_un_cuerpo_que_no_es_un_objeto_responde_400(self):
+        app, _, _, _ = make_app()
+        for path in ("/v1/subscriptions", PUBLISH):
+            status, _ = call(app, "POST", path, [], {"Idempotency-Key": "k"})
+            self.assertEqual(status, 400, path)
+
+    def test_campos_con_tipo_incorrecto_responden_400(self):
+        app, _, _, _ = make_app()
+        status, _ = call(app, "POST", "/v1/subscriptions",
+                         {"approvalRef": 1, "consumerNamespace": "ns-a", "planId": "gold"}, {"Idempotency-Key": "k1"})
+        self.assertEqual(status, 400)
+        status, _ = call(app, "POST", "/v1/subscriptions",
+                         {"approvalRef": "RITM1", "consumerNamespace": ["ns"], "planId": "gold"}, {"Idempotency-Key": "k2"})
+        self.assertEqual(status, 400)
+
+    def test_un_namespace_con_salto_de_linea_responde_400(self):
+        app, k8s, _, _ = make_app()
+        status, _ = subscribe(app, ns="sigla-x-qa\n")
+        self.assertEqual(status, 400)
+        self.assertEqual(k8s.calls, [])
+
+    def test_un_namespace_del_sistema_no_se_puede_suscribir(self):
+        app, _, _, _ = make_app()
+        for ns in ("kube-system", "default", "apim-mock"):
+            status, _ = subscribe(app, ns=ns, key=f"k-{ns}")
+            self.assertEqual(status, 422, ns)
+
+    def test_con_namespaces_permitidos_rechaza_los_demas(self):
+        app, _, _, _ = make_app(allowed_namespaces=["sigla-x-qa"])
+        self.assertEqual(subscribe(app, key="k1")[0], 202)
+        self.assertEqual(subscribe(app, ns="otra-qa", key="k2")[0], 422)
+
+    def test_si_no_se_puede_guardar_el_estado_responde_500(self):
+        app, _, _, _ = make_app()
+
+        def broken(state):
+            raise RuntimeError("configmap lleno")
+
+        app.store.save = broken
+        status, _ = subscribe(app)
+        self.assertEqual(status, 500)
+
+    def test_si_no_se_puede_guardar_al_completar_el_timer_no_se_cae(self):
+        app, _, _, scheduler = make_app()
+        subscribe(app)
+
+        def broken(state):
+            raise RuntimeError("configmap lleno")
+
+        app.store.save = broken
+        scheduler.run_all()
+
+    def test_el_historial_de_operaciones_tiene_tope(self):
+        app, _, _, scheduler = make_app(max_history=5)
+        for number in range(12):
+            subscribe(app, ritm=f"RITM{number:07d}", key=f"k{number}")
+        scheduler.run_all()
+        _, state = call(app, "GET", "/mock/state")
+        self.assertLessEqual(len(state["operations"]), 5)
+        self.assertLessEqual(len(state["idempotency"]), 5)
+        self.assertEqual(len(state["subscriptions"]), 12)
+
+    def test_los_avisos_se_mandan_sin_tener_el_lock(self):
+        app, _, _, scheduler = make_app()
+        free = []
+
+        class LockProbe:
+            def notify(self, *args, **kwargs):
+                result = []
+
+                def try_lock():
+                    acquired = app.lock.acquire(timeout=0.2)
+                    if acquired:
+                        app.lock.release()
+                    result.append(acquired)
+
+                probe = threading.Thread(target=try_lock)
+                probe.start()
+                probe.join()
+                free.append(result[0])
+
+        app.notifier = LockProbe()
+        subscribe(app)
+        scheduler.run_all()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        self.assertEqual(len(free), 4)
+        self.assertTrue(all(free))
+
+    def test_al_reiniciar_reprograma_las_operaciones_pendientes(self):
+        k8s = FakeK8s()
+        settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar", "create_secret": True}
+        first = server.App(server.ConfigMapStore(k8s, "apim-mock", "apim-mock-state"), k8s, FakeNotifier(), ManualScheduler(), settings)
+        subscribe(first)
+        call(first, "POST", PUBLISH, publish_body())
+        notifier = FakeNotifier()
+        scheduler = ManualScheduler()
+        second = server.App(server.ConfigMapStore(k8s, "apim-mock", "apim-mock-state"), k8s, notifier, scheduler, settings)
+        scheduler.run_all()
+        self.assertEqual([c["status"] for c in notifier.calls], ["success", "success"])
+        _, sub = call(second, "GET", "/v1/subscriptions/sub-api-0012345--sigla-x-qa")
+        self.assertEqual(sub["state"], "Registered")
+
+    def test_una_baja_durante_un_alta_pendiente_no_completa_la_suscripcion_nueva(self):
+        app, _, notifier, scheduler = make_app()
+        _, first = subscribe(app, key="k1", callback="https://api.nullplatform.com/service/s/action/a1")
+        call(app, "DELETE", "/v1/subscriptions/sub-api-0012345--sigla-x-qa", None, {"Idempotency-Key": "k2"})
+        _, second = subscribe(app, key="k3", callback="https://api.nullplatform.com/service/s/action/a3")
+        scheduler.run_all()
+        finals = [c for c in notifier.calls if c["status"]]
+        self.assertEqual([c["url"] for c in finals if c["status"] == "success"], ["https://api.nullplatform.com/service/s/action/a3"])
+        _, op1 = call(app, "GET", f"/v1/operations/{first['id']}")
+        _, op2 = call(app, "GET", f"/v1/operations/{second['id']}")
+        self.assertNotEqual(op1["state"], "Registered")
+        self.assertEqual(op2["state"], "Registered")
+
+    def test_baja_repetida_con_la_misma_key_devuelve_la_misma_operacion(self):
+        app, _, _, scheduler = make_app()
+        subscribe(app)
+        scheduler.run_all()
+        _, first = call(app, "DELETE", "/v1/subscriptions/sub-api-0012345--sigla-x-qa", None, {"Idempotency-Key": "k9"})
+        status, second = call(app, "DELETE", "/v1/subscriptions/sub-api-0012345--sigla-x-qa", None, {"Idempotency-Key": "k9"})
+        self.assertEqual(status, 202)
+        self.assertEqual(first["id"], second["id"])
+
+    def test_reset_con_operaciones_pendientes_no_rompe_los_timers(self):
+        app, _, _, scheduler = make_app()
+        subscribe(app)
+        call(app, "POST", "/mock/reset")
+        scheduler.run_all()
 
     def test_pedido_sin_campos_obligatorios_responde_400(self):
         app, _, _, _ = make_app()
@@ -468,6 +620,15 @@ class NotifierTest(unittest.TestCase):
         server.Notifier("https://api.nullplatform.com", "k", lambda *a: calls.append(a)).notify("https://api.nullplatform.com.evil.example/x", "x")
         self.assertEqual(calls, [])
 
+    def test_solo_avisa_a_rutas_de_acciones_de_nullplatform(self):
+        calls = []
+        notifier = server.Notifier("https://api.nullplatform.com", "k", lambda *a: calls.append(a) or (200, {"access_token": "t"}))
+        notifier.notify("https://api.nullplatform.com/user/1", "x")
+        notifier.notify("https://api.nullplatform.com/service/s/action/a?x=1", "x")
+        self.assertEqual(calls, [])
+        notifier.notify("https://api.nullplatform.com/link/l-1/action/a-1", "x")
+        self.assertEqual(calls[-1][1], "https://api.nullplatform.com/link/l-1/action/a-1")
+
     def test_un_aviso_de_avance_no_manda_status(self):
         calls = []
 
@@ -487,6 +648,62 @@ class NotifierTest(unittest.TestCase):
         calls = []
         server.Notifier("https://api.nullplatform.com", "k", lambda *a: calls.append(a)).notify("", "x", status="success")
         self.assertEqual(calls, [])
+
+
+class HttpTest(unittest.TestCase):
+    def setUp(self):
+        self.app, _, _, _ = make_app(token="secreto")
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.app))
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.port = self.httpd.server_address[1]
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def send(self, method, path, headers, body=b""):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.putrequest(method, path)
+        for key, value in headers.items():
+            connection.putheader(key, value)
+        connection.endheaders()
+        if body:
+            connection.send(body)
+        response = connection.getresponse()
+        status = response.status
+        connection.close()
+        return status
+
+    def test_sin_bearer_responde_401_sin_leer_el_cuerpo(self):
+        status = self.send("POST", "/v1/subscriptions", {"Content-Length": "1000000000"})
+        self.assertEqual(status, 401)
+
+    def test_un_cuerpo_demasiado_grande_responde_413(self):
+        status = self.send("POST", "/v1/subscriptions", {"Authorization": "Bearer secreto", "Content-Length": "1000000000"})
+        self.assertEqual(status, 413)
+
+    def test_un_content_length_invalido_responde_400(self):
+        status = self.send("POST", "/v1/subscriptions", {"Authorization": "Bearer secreto", "Content-Length": "-1"})
+        self.assertEqual(status, 400)
+
+    def test_un_error_inesperado_responde_500_y_no_corta_la_conexion(self):
+        def explode(*args):
+            raise ValueError("boom")
+
+        self.app.route = explode
+        body = b"{}"
+        status = self.send("POST", "/v1/subscriptions", {"Authorization": "Bearer secreto", "Content-Length": str(len(body))}, body)
+        self.assertEqual(status, 500)
+
+
+class MainTest(unittest.TestCase):
+    def test_no_arranca_sin_mock_token(self):
+        env = {key: value for key, value in os.environ.items() if key != "MOCK_TOKEN"}
+        env.update({"STATE_BACKEND": "memory", "PORT": "0"})
+        result = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "app", "server.py")],
+                                env=env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MOCK_TOKEN", result.stderr)
 
 
 if __name__ == "__main__":
