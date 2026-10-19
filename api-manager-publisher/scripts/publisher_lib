@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+PUBLISHER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PUBLISHER_LIB_DIR/../../api-manager-ocp-subscriber/scripts/subscriber_lib"
+
+PUBLISH_TENANT="b2c"
+REF_PATTERN='^[A-Za-z0-9._/-]+$'
+LEGAJO_PATTERN='^l[0-9]{7}$'
+WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
+HOSTNAME_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'
+
+if ! type -t require_publish_environment >/dev/null 2>&1; then
+require_publish_environment() {
+  local dimension
+  dimension=$(printf %s "$1" | tr '[:upper:]' '[:lower:]')
+  case "$dimension" in
+    int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
+    qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
+    prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
+    dev|development|desarrollo) fail "publisher: hoy no se publica en dev (dimensión environment '$1')." ;;
+    *) fail "publisher: la dimensión environment '$1' no corresponde a int, qas ni prd." ;;
+  esac
+}
+fi
+
+if ! type -t require_source_repository >/dev/null 2>&1; then
+require_source_repository() {
+  local url="$1" path
+  path=$(printf %s "$url" | sed -E 's#^https?://[^/]+/##; s#\.git$##; s#/+$##')
+  if [[ ! "$path" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    fail "publisher: el repository_url de la aplicación ('$url') no es https://<host>/<org>/<repo>."
+  fi
+  SOURCE_ORGANIZATION="${path%%/*}"
+  SOURCE_REPOSITORY="${path##*/}"
+}
+fi
+
+if ! type -t require_cluster_name >/dev/null 2>&1; then
+require_cluster_name() {
+  CLUSTER_NAME=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.name // empty' 2>/dev/null) || CLUSTER_NAME=""
+  if [ -n "${APIM_CLUSTER_NAME-}" ]; then
+    CLUSTER_NAME="$APIM_CLUSTER_NAME"
+  fi
+  if [ -z "$CLUSTER_NAME" ]; then
+    fail "publisher: el provider no trae el nombre del cluster; configurá APIM_CLUSTER_NAME en el agente."
+  fi
+}
+fi
+
+if ! type -t require_parent_refs >/dev/null 2>&1; then
+require_parent_refs() {
+  PARENT_REFS=$(printf %s "${APIM_PUBLISH_PARENT_REFS-}" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
+  if [ -z "$PARENT_REFS" ]; then
+    fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser una lista JSON de Gateways con name y namespace."
+  fi
+}
+fi
+
+if ! type -t require_scope_domain >/dev/null 2>&1; then
+require_scope_domain() {
+  local scope="$1" application_id="$2" scopes
+  if [ -z "$scope" ]; then
+    fail "publisher: falta el scope que atiende la API."
+  fi
+  if [ -z "$application_id" ]; then
+    fail "publisher: el contexto no trae application.id; no se puede resolver el scope."
+  fi
+  scopes=$(np scope list --application-id "$application_id" --status active --format json \
+    --query '[ (.results? // .) | .[]? | {slug, domain} ]') \
+    || fail "publisher: falló el listado de scopes de la aplicación $application_id."
+  SCOPE_DOMAIN=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain] | first // empty')
+  if [ -z "$SCOPE_DOMAIN" ]; then
+    fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
+  fi
+  if [ "$SCOPE_DOMAIN" = "To be defined" ]; then
+    fail "publisher: el scope '$scope' todavía no está desplegado (domain: 'To be defined')."
+  fi
+  if [[ ! "$SCOPE_DOMAIN" =~ $HOSTNAME_PATTERN ]]; then
+    fail "publisher: el dominio del scope '$scope' no es un hostname válido: '$SCOPE_DOMAIN'."
+  fi
+}
+fi

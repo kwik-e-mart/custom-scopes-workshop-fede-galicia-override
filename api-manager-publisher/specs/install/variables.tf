@@ -1,45 +1,39 @@
 variable "np_api_key" {
   type        = string
   sensitive   = true
-  description = "API key con la que el provider de nullplatform crea el spec y el channel."
+  description = "API key con la que el provider de nullplatform registra el service y los channels."
 }
 
 variable "nrn" {
   type        = string
-  description = "Nullplatform Resource Name (organization=...:account=...) dueño del spec."
-}
-
-variable "agent_api_key" {
-  type        = string
-  sensitive   = true
-  description = "API key que queda embebida en el notification channel para que el agente pueda responderle a la plataforma."
+  description = "NRN (organization=...:account=...) dueño del service."
 }
 
 variable "tags_selectors" {
   type        = map(string)
-  description = "Selector de tags que decide qué agente atiende las notificaciones de este service. Con un agente por cluster, es lo que hace que la acción caiga en el cluster correcto."
+  description = "Selector de tags del agente que atiende este service; ese agente tiene que tener APIM_PUBLISHER_URL, APIM_PUBLISHER_TOKEN, APIM_PUBLISH_PARENT_REFS, API_SUBSCRIBER_URL y API_SUBSCRIBER_TOKEN."
 }
 
 variable "repository_service_spec_repo" {
   type        = string
-  default     = "kwik-e-mart/custom-scopes-workshop-fede-galicia-override"
-  description = "Repo que clona el agente; se usa para armar la ruta del entrypoint."
+  default     = "galicia-integrations/terraform_np_installation"
+  description = "Repo que clona el agente."
 }
 
 variable "service_path" {
   type        = string
-  default     = "api-manager-publisher"
-  description = "Ruta del directorio del service dentro del repo."
+  default     = "galicia-deployment-override/api-manager-publisher"
+  description = "Ruta del service dentro del repo que clona el agente."
+}
+
+variable "base_clone_path" {
+  type        = string
+  default     = "/home/agent/.np"
+  description = "Ruta donde el agente clona el repo."
 }
 
 variable "extra_visible_to_nrns" {
   type        = list(string)
   default     = []
   description = "NRNs adicionales que tienen que ver el service specification."
-}
-
-variable "manage_notification_channel" {
-  type        = bool
-  default     = true
-  description = "Si esta capa crea el notification channel que asocia el service al agente. Se pone en false cuando el channel se administra por fuera: dos channels con el mismo filtro disparan la accion dos veces."
 }

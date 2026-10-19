@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PUBLISH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PUBLISH_DIR/publisher_lib"
+
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+publish() {
+  require_publisher_config
+  load_notification
+
+  local params service_id action_id
+  params=$(printf %s "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})')
+  service_id=$(notification_field '.service.id')
+  action_id=$(notification_field '.id')
+  require_action_ids "$service_id" "$action_id"
+
+  local ref_type ref legajo window hits
+  ref_type=$(printf %s "$params" | jq -r '.ref_type // "branch"')
+  ref=$(printf %s "$params" | jq -r '.ref // empty')
+  legajo=$(printf %s "$params" | jq -r '.legajo // empty')
+  window=$(printf %s "$params" | jq -r '.window // empty')
+  hits=$(printf %s "$params" | jq -r '.hits_per_window // empty')
+
+  case "$ref_type" in
+    branch|tag|commit) ;;
+    *) fail "publisher: ref_type tiene que ser branch, tag o commit (llegó '$ref_type')." ;;
+  esac
+  if [[ ! "$ref" =~ $REF_PATTERN ]]; then
+    fail "publisher: la referencia '$ref' no es un branch, tag o commit válido."
+  fi
+  if [ -n "$legajo" ] && [[ ! "$legajo" =~ $LEGAJO_PATTERN ]]; then
+    fail "publisher: el legajo tiene que tener el formato l#######."
+  fi
+  if [ -n "$window$hits" ]; then
+    if [[ ! "$window" =~ $WINDOW_PATTERN ]] || [[ ! "$hits" =~ ^[1-9][0-9]*$ ]]; then
+      fail "publisher: el rate limit necesita window (por ejemplo 10s) y hits_per_window mayor a 0, los dos juntos."
+    fi
+  fi
+
+  require_publish_environment "$(notification_field '.service.dimensions.environment')"
+  require_source_repository "$(printf %s "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
+  require_provider_namespace
+  require_cluster_name
+  require_parent_refs
+  require_scope_domain "$(printf %s "$params" | jq -r '.scope // empty')" "$(printf %s "${CONTEXT-}" | jq -r '.application.id // empty')"
+
+  local body
+  body=$(jq -nc \
+    --arg organization "$SOURCE_ORGANIZATION" \
+    --arg repository "$SOURCE_REPOSITORY" \
+    --arg ref_type "$ref_type" \
+    --arg ref "$ref" \
+    --arg environment "$PUBLISH_ENVIRONMENT" \
+    --arg tenant "$PUBLISH_TENANT" \
+    --arg cluster "$CLUSTER_NAME" \
+    --arg legajo "$legajo" \
+    --arg window "$window" \
+    --arg hits "$hits" \
+    --arg callback "$(callback_url "$service_id" "$action_id")" \
+    --arg namespace "$PROVIDER_NAMESPACE" \
+    --arg domain "$SCOPE_DOMAIN" \
+    --argjson parent_refs "$PARENT_REFS" \
+    '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
+      tenant: $tenant, cluster: $cluster, callbackUrl: $callback,
+      metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
+                 backend: {group: "networking.istio.io", kind: "Hostname", name: $domain, port: 443}}}
+     + (if $legajo == "" then {} else {legajo: $legajo} end)
+     + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
+
+  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT sobre $SCOPE_DOMAIN."
+  apim_request POST /v1/kuadrant/manifests/publish "$body" ""
+
+  local status message results
+  status=$(printf %s "$APIM_BODY" | jq -r '.status // empty' 2>/dev/null) || status=""
+  message=$(printf %s "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
+  if [ "$APIM_HTTP_CODE" != "200" ]; then
+    fail "publisher: APIM rechazó la publicación (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
+  fi
+  results=$(printf %s "$APIM_BODY" | jq -c '{api_id: .apiId, hostname: .hostname, manifest_path: .manifestPath}')
+  case "$status" in
+    pushed|synced)
+      report_progress "Publicación $status en APIM ($(printf %s "$results" | jq -r .api_id)). APIM avisa cuando quede registrada." "$results" \
+        || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    registered)
+      close_action success "API publicada y registrada en $(printf %s "$results" | jq -r .hostname)." "$results"
+      ;;
+    *)
+      fail "publisher: APIM no pudo publicar (estado '$status'): $(apim_problem_detail "${message:-$APIM_BODY}")"
+      ;;
+  esac
+}
+
+publish

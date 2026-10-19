@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LINK_SUBSCRIBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$LINK_SUBSCRIBE_DIR/publisher_lib"
+
+ACTION_ENTITY=link
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+link_subscribe() {
+  require_agent_config
+  load_notification
+
+  local params link_id action_id
+  params=$(printf %s "$NOTIFICATION" | jq -c '(.link.attributes // {}) * (.parameters // {})')
+  link_id=$(notification_field '.link.id')
+  action_id=$(notification_field '.id')
+  require_action_ids "$link_id" "$action_id"
+  require_provider_namespace
+
+  request_subscription \
+    "$(printf %s "$params" | jq -r '.approval_ref // empty')" \
+    "$(printf %s "$params" | jq -r '.plan_id // empty')" \
+    "$PROVIDER_NAMESPACE" \
+    "$(callback_url "$link_id" "$action_id")" \
+    "$action_id"
+}
+
+link_subscribe
