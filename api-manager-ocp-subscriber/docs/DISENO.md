@@ -30,6 +30,12 @@ Si falta alguna de las dos, la acción falla con un mensaje que la nombra.
 
 ## Formularios
 
+> [!NOTE]
+> **Primera versión: planes fijos.** Mientras no haya acceso a `GET /v1/plans`, `plan_id` ofrece
+> `bronze` (5 TPS), `gold` (20 TPS) y `no-limits` como un `oneOf` fijo, y las acciones no declaran
+> `external`. El install no crea el channel de external context. Todo lo que este documento dice sobre
+> external context es el paso siguiente; `entrypoint/external` ya está implementado y probado.
+
 `service-spec.json.tpl` lleva `"use_default_actions": false`: las acciones `create`, `update` y
 `delete` son action specifications propias en `specs/actions/`, porque las autogeneradas no admiten
 `external`.

@@ -7,7 +7,6 @@ setup() {
   CHANGE="$SPECS/actions/change-plan.json.tpl"
   DELETE="$SPECS/actions/delete-subscription.json.tpl"
   CONNECT="$SPECS/links/connect.json.tpl"
-  PLANS='{"external":{"plans":[{"id":"bronze","maxTps":5},{"id":"gold","maxTps":20},{"id":"no-limits"}]}}'
 }
 
 @test "todos los specs son JSON valido" {
@@ -27,23 +26,20 @@ setup() {
   [ "$(jq -r .type "$DELETE")" = "delete" ]
 }
 
-@test "alta y cambio de plan resuelven los planes por external context" {
+@test "alta y cambio de plan todavia no dependen de external context" {
   for f in "$CREATE" "$CHANGE"; do
-    [ "$(jq -r '.external.action' "$f")" = "list-apim-plans" ]
-    [ "$(jq -r '.external.output_schema.required[0]' "$f")" = "plans" ]
+    [ "$(jq -r 'has("external")' "$f")" = "false" ]
   done
 }
 
-@test "el desplegable muestra el TPS y manda el id" {
-  expr=$(jq -r '.parameters.schema.properties.plan_id.additionalKeywords.oneOf' "$CREATE")
-  run jq -c "$expr" <<<"$PLANS"
-  [ "$status" -eq 0 ]
+@test "el desplegable ofrece los planes de APIM con su TPS y manda el id" {
+  run jq -c '.parameters.schema.properties.plan_id.oneOf' "$CREATE"
   [ "$output" = '[{"const":"bronze","title":"bronze (5 TPS)"},{"const":"gold","title":"gold (20 TPS)"},{"const":"no-limits","title":"no-limits (sin límite)"}]' ]
 }
 
-@test "cambio de plan usa la misma expresion de planes que el alta" {
-  [ -n "$(jq -r '.parameters.schema.properties.plan_id.additionalKeywords.oneOf // empty' "$CHANGE")" ]
-  [ "$(jq -r '.parameters.schema.properties.plan_id.additionalKeywords.oneOf' "$CREATE")" = "$(jq -r '.parameters.schema.properties.plan_id.additionalKeywords.oneOf' "$CHANGE")" ]
+@test "cambio de plan ofrece los mismos planes que el alta" {
+  [ -n "$(jq -c '.parameters.schema.properties.plan_id.oneOf // empty' "$CHANGE")" ]
+  [ "$(jq -c '.parameters.schema.properties.plan_id.oneOf' "$CREATE")" = "$(jq -c '.parameters.schema.properties.plan_id.oneOf' "$CHANGE")" ]
 }
 
 @test "el alta pide api_name, approval_ref y plan_id" {

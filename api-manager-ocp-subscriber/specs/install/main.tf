@@ -1,5 +1,5 @@
 module "service_definition" {
-  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition?ref=feat/service-definition-action-external"
+  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition?ref=v9.0.0"
 
   nrn          = var.nrn
   service_name = "API Manager OCP Subscriber"
@@ -24,15 +24,6 @@ module "actions_api_key" {
   custom_role_slugs = ["controlplane:agent", "ops"]
 }
 
-module "external_api_key" {
-  source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/api_key?ref=v9.0.0"
-
-  type              = "custom"
-  nrn               = var.nrn
-  custom_name       = "EXTERNAL-CONTEXT-CHANNEL-API-MANAGER-OCP-SUBSCRIBER"
-  custom_role_slugs = ["controlplane:agent"]
-}
-
 module "service_definition_agent_association" {
   source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/service_definition_agent_association?ref=v9.0.0"
 
@@ -43,39 +34,4 @@ module "service_definition_agent_association" {
   service_path                 = var.service_path
   base_clone_path              = var.base_clone_path
   tags_selectors               = var.tags_selectors
-}
-
-resource "terraform_data" "external_api_key_trigger" {
-  input = module.external_api_key.api_key
-}
-
-resource "nullplatform_notification_channel" "external_context" {
-  nrn         = var.nrn
-  type        = "agent"
-  source      = ["service"]
-  description = "Planes de APIM para el formulario del subscriber"
-
-  configuration {
-    agent {
-      api_key = module.external_api_key.api_key
-      command {
-        type = "exec"
-        data = {
-          cmdline = "${var.base_clone_path}/${var.repository_service_spec_repo}/${var.service_path}/entrypoint/external"
-          environment = jsonencode({
-            NP_ACTION_CONTEXT = "'$${NOTIFICATION_CONTEXT}'"
-          })
-        }
-      }
-      selector = var.tags_selectors
-    }
-  }
-
-  filters = jsonencode({
-    action = { "$in" = ["list-apim-plans"] }
-  })
-
-  lifecycle {
-    replace_triggered_by = [terraform_data.external_api_key_trigger]
-  }
 }
