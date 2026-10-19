@@ -195,3 +195,17 @@ JSON
   run_step
   [ "$(jq -c '{branch, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"commit":"a1b2c3d","legajo":"l0510541"}' ]
 }
+
+@test "parentRefs como namespace/nombre:listener separados por coma" {
+  export APIM_PUBLISH_PARENT_REFS="gateways/s2s-ingress:https,otro-ns/gw-b"
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -c .metadata.parentRefs "$CURL_BODIES_DIR/0.json")" = '[{"group":"gateway.networking.k8s.io","kind":"Gateway","namespace":"gateways","name":"s2s-ingress","sectionName":"https"},{"group":"gateway.networking.k8s.io","kind":"Gateway","namespace":"otro-ns","name":"gw-b"}]' ]
+}
+
+@test "parentRefs con un formato que no es namespace/nombre falla sin llamar a APIM" {
+  export APIM_PUBLISH_PARENT_REFS="s2s-ingress"
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}

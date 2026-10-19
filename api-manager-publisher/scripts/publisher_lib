@@ -49,9 +49,14 @@ fi
 
 if ! type -t require_parent_refs >/dev/null 2>&1; then
 require_parent_refs() {
-  PARENT_REFS=$(printf %s "${APIM_PUBLISH_PARENT_REFS-}" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
+  local raw="${APIM_PUBLISH_PARENT_REFS-}"
+  if [[ "$raw" != \[* ]]; then
+    raw=$(printf %s "$raw" | jq -Rc 'split(",") | map(select(length > 0) | capture("^(?<namespace>[a-z0-9-]+)/(?<name>[a-z0-9-]+)(:(?<sectionName>[a-z0-9-]+))?$")
+      | {group: "gateway.networking.k8s.io", kind: "Gateway", namespace, name} + (if .sectionName then {sectionName} else {} end))' 2>/dev/null) || raw=""
+  fi
+  PARENT_REFS=$(printf %s "$raw" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
   if [ -z "$PARENT_REFS" ]; then
-    fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser una lista JSON de Gateways con name y namespace."
+    fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser namespace/nombre[:listener] separados por coma, o una lista JSON de Gateways con name y namespace."
   fi
 }
 fi
