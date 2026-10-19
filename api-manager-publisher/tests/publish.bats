@@ -12,8 +12,10 @@ setup() {
 }
 
 set_request() {
-  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" --arg env "$3" \
-    '{notification:{id:"act-1",type:"create",service:{id:"svc-1",attributes:$a,dimensions:{environment:$env}},parameters:$p}}')
+  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" \
+    '{notification:{id:"act-1",type:"create",service:{id:"svc-1",attributes:$a},parameters:$p}}')
+  export NP_MOCK_SCOPES
+  NP_MOCK_SCOPES=$(jq -nc --arg env "$3" '[{slug:"main",id:1049050904,dimensions:{environment:$env}},{slug:"draft",id:555,dimensions:{environment:$env}}]')
 }
 
 set_context() {
@@ -140,7 +142,7 @@ JSON
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"rutas"* ]]
 }
 
-@test "dev no se publica" {
+@test "el ambiente sale de la dimension del scope elegido: dev no se publica" {
   set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' development
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
@@ -152,6 +154,21 @@ JSON
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "prd" ]
+}
+
+@test "APIM_PUBLISH_ENVIRONMENT fuerza el ambiente aunque el scope sea de dev" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' development
+  export APIM_PUBLISH_ENVIRONMENT=qas
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "qas" ]
+}
+
+@test "APIM_PUBLISH_ENVIRONMENT invalido falla sin llamar a APIM" {
+  export APIM_PUBLISH_ENVIRONMENT=dev
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISH_ENVIRONMENT* ]]
 }
 
 @test "un ambiente desconocido falla sin llamar a APIM" {

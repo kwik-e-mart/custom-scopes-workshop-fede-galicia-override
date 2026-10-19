@@ -40,12 +40,12 @@ publish() {
     fi
   fi
 
-  require_publish_environment "$(notification_field '.service.dimensions.environment')"
   require_source_repository "$(printf %s "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
   require_provider_namespace
   require_cluster_name
   require_parent_refs
   require_scope_backend "$(printf %s "$params" | jq -r '.scope // empty')" "$(printf %s "${CONTEXT-}" | jq -r '.application.id // empty')" "$PROVIDER_NAMESPACE"
+  resolve_publish_environment "$SCOPE_ENVIRONMENT"
 
   local body
   body=$(jq -nc \
