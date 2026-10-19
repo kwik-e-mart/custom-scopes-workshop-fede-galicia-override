@@ -185,6 +185,12 @@ class SubscriberTest(unittest.TestCase):
         self.assertEqual(operation["state"], "RolledBack")
         self.assertNotIn("/api/v1/namespaces/sigla-x-qa/secrets/secret-apim-b2c", k8s.objects)
 
+    def test_un_namespace_que_no_es_dns_1123_responde_400_sin_tocar_kubernetes(self):
+        app, k8s, _, _ = make_app()
+        status, _ = subscribe(app, ns="../kube-system")
+        self.assertEqual(status, 400)
+        self.assertEqual(k8s.calls, [])
+
     def test_plan_fuera_del_catalogo_responde_422(self):
         app, _, _, _ = make_app()
         status, body = subscribe(app, plan="platinum")
@@ -451,6 +457,16 @@ class NotifierTest(unittest.TestCase):
         self.assertEqual((method, url), ("PATCH", CALLBACK))
         self.assertEqual(headers["Authorization"], "Bearer tok-np")
         self.assertEqual(body, {"status": "success", "messages": [{"level": "info", "message": "listo"}]})
+
+    def test_no_manda_el_token_a_un_callback_fuera_de_nullplatform(self):
+        calls = []
+        server.Notifier("https://api.nullplatform.com", "k", lambda *a: calls.append(a)).notify("https://evil.example/x", "x", status="success")
+        self.assertEqual(calls, [])
+
+    def test_no_acepta_un_host_que_solo_empieza_igual(self):
+        calls = []
+        server.Notifier("https://api.nullplatform.com", "k", lambda *a: calls.append(a)).notify("https://api.nullplatform.com.evil.example/x", "x")
+        self.assertEqual(calls, [])
 
     def test_un_aviso_de_avance_no_manda_status(self):
         calls = []

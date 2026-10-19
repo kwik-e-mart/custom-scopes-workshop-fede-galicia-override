@@ -1,0 +1,26 @@
+{{- if not .Values.httpRoute.parentRefs }}
+{{- fail "httpRoute.parentRefs es obligatorio: el Gateway (name y namespace) al que cuelga el mock" }}
+{{- end }}
+{{- if not .Values.httpRoute.hostnames }}
+{{- fail "httpRoute.hostnames es obligatorio: el hostname por el que se llega al mock" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "apim-mock.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "apim-mock.fullname" . }}
+          port: {{ .Values.service.port }}

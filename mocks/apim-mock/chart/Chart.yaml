@@ -1,0 +1,6 @@
+apiVersion: v2
+name: apim-mock
+description: Mock del API Subscriber y el API Publisher de APIM para probar los services de nullplatform.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
