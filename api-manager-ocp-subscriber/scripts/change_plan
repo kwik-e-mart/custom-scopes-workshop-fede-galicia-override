@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHANGE_PLAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$CHANGE_PLAN_DIR/subscriber_lib"
+
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+change_plan() {
+  require_agent_config
+
+  NOTIFICATION=$(read_notification)
+  local service_id action_id subscription_id plan_id
+  service_id=$(notification_field '.service.id')
+  action_id=$(notification_field '.id')
+  subscription_id=$(notification_field '.service.attributes.subscription_id')
+  plan_id=$(notification_field '.parameters.plan_id')
+
+  if [ -z "$service_id" ] || [ -z "$action_id" ]; then
+    fail "subscriber: la notificación no trae service.id o el id de la acción."
+  fi
+  if [ -z "$subscription_id" ]; then
+    fail "subscriber: esta instancia no tiene subscription_id; la suscripción nunca se dio de alta."
+  fi
+  require_subscription_id_format "$subscription_id"
+  if [ -z "$plan_id" ]; then
+    fail "subscriber: falta plan_id en el pedido."
+  fi
+
+  local body
+  body=$(jq -nc --arg plan_id "$plan_id" --arg callback "$(callback_url "$service_id" "$action_id")" \
+    '{planId: $plan_id, callbackUrl: $callback}')
+
+  log info "subscriber: cambiando el plan de $subscription_id a $plan_id."
+  apim_request PATCH "/v1/subscriptions/$subscription_id" "$body" "$action_id"
+
+  local results
+  case "$APIM_HTTP_CODE" in
+    202)
+      results=$(printf %s "$APIM_BODY" | jq -ce '{operation_id: .id}')
+      report_progress "Cambio de plan en curso (operación $(printf %s "$results" | jq -r .operation_id))." "$results" \
+        || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    *)
+      fail "subscriber: APIM rechazó el cambio de plan (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
+      ;;
+  esac
+}
+
+change_plan
