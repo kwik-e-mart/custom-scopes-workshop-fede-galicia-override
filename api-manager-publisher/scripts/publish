@@ -45,7 +45,7 @@ publish() {
   require_provider_namespace
   require_cluster_name
   require_parent_refs
-  require_scope_domain "$(printf %s "$params" | jq -r '.scope // empty')" "$(printf %s "${CONTEXT-}" | jq -r '.application.id // empty')"
+  require_scope_backend "$(printf %s "$params" | jq -r '.scope // empty')" "$(printf %s "${CONTEXT-}" | jq -r '.application.id // empty')" "$PROVIDER_NAMESPACE"
 
   local body
   body=$(jq -nc \
@@ -61,16 +61,16 @@ publish() {
     --arg hits "$hits" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
     --arg namespace "$PROVIDER_NAMESPACE" \
-    --arg domain "$SCOPE_DOMAIN" \
+    --argjson backend "$SCOPE_BACKEND" \
     --argjson parent_refs "$PARENT_REFS" \
     '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
       tenant: $tenant, cluster: $cluster, callbackUrl: $callback,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
-                 backend: {group: "networking.istio.io", kind: "Hostname", name: $domain, port: 443}}}
+                 backend: ($backend + {namespace: $namespace})}}
      + (if $legajo == "" then {} else {legajo: $legajo} end)
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
-  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT sobre $SCOPE_DOMAIN."
+  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT sobre $(printf %s "$SCOPE_BACKEND" | jq -r .name)."
   apim_request POST /v1/kuadrant/manifests/publish "$body" ""
 
   local status message results
