@@ -17,6 +17,7 @@ npApiKey:
 
 credentialSecrets:
   create: true
+  namespaces: []
 
 service:
   port: 80

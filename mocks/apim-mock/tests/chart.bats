@@ -63,14 +63,14 @@ kinds() {
 }
 
 @test "el role del estado solo toca configmaps en el namespace del release" {
-  role=$(render | yq -N 'select(.kind == "Role")')
+  role=$(render | yq -N 'select(.kind == "Role" and .metadata.name == "mock-apim-mock-state")')
   [ "$(yq -N '.metadata.namespace' <<<"$role")" = "apim-mock" ]
-  [ "$(yq -N -o=json -I=0 '.rules' <<<"$role")" = '[{"apiGroups":[""],"resources":["configmaps"],"verbs":["get","create","update"]}]' ]
+  [ "$(yq -N -o=json -I=0 '.rules' <<<"$role")" = '[{"apiGroups":[""],"resources":["configmaps"],"verbs":["create"]},{"apiGroups":[""],"resources":["configmaps"],"resourceNames":["mock-apim-mock-state"],"verbs":["get","update"]}]' ]
 }
 
-@test "el clusterrole solo puede leer y crear secrets" {
+@test "el clusterrole solo puede crear secrets" {
   run render
-  [ "$(yq -N -o=json -I=0 'select(.kind == "ClusterRole") | .rules' <<<"$output")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["get","create"]}]' ]
+  [ "$(yq -N -o=json -I=0 'select(.kind == "ClusterRole") | .rules' <<<"$output")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["create"]}]' ]
 }
 
 @test "sin crear secretos no hay clusterrole y el mock lo sabe" {
@@ -110,4 +110,18 @@ kinds() {
   run render
   [ "$(yq -N 'select(.kind == "Secret") | .stringData.MOCK_TOKEN' <<<"$output")" = "tok-123" ]
   [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "MOCK_TOKEN") | .valueFrom.secretKeyRef.key' <<<"$output")" = "MOCK_TOKEN" ]
+}
+
+@test "con namespaces permitidos crea un role por namespace y no el clusterrole" {
+  run render --set "credentialSecrets.namespaces={ns-a,ns-b}"
+  [ "$status" -eq 0 ]
+  [ "$(yq -N 'select(.kind == "ClusterRole") | .metadata.name' <<<"$output" | wc -l | tr -d ' ')" = "0" ]
+  [ "$(yq -N 'select(.kind == "Role" and .metadata.name == "mock-apim-mock-credentials") | .metadata.namespace' <<<"$output" | tr '\n' ' ')" = "ns-a ns-b " ]
+  [ "$(yq -N 'select(.kind == "RoleBinding" and .metadata.name == "mock-apim-mock-credentials") | .metadata.namespace' <<<"$output" | tr '\n' ' ')" = "ns-a ns-b " ]
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOWED_NAMESPACES") | .value' <<<"$output")" = "ns-a,ns-b" ]
+}
+
+@test "el pod corre con el perfil seccomp por default" {
+  run render
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.securityContext.seccompProfile.type' <<<"$output")" = "RuntimeDefault" ]
 }

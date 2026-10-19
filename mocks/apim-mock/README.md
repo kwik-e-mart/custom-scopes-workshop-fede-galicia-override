@@ -23,13 +23,14 @@ mismo RITM en el mismo namespace da `409`, como una suscripción namespace × AP
 | RITM | Respuesta |
 |---|---|
 | cualquiera | `202` y después `success` |
-| termina en `409` | `409` con el `sub-…` en el `detail` |
-| termina en `422` | `422` "no está aprobada en ServiceNow" |
-| termina en `503` | `503` (no guarda nada) |
-| termina en `666` | `202` y después `failed`: la suscripción se deshace (`RolledBack`) |
+| `RITM9990409` | `409` con el `sub-…` en el `detail` |
+| `RITM9990422` | `422` "no está aprobada en ServiceNow" |
+| `RITM9990503` | `503` (no guarda nada) |
+| `RITM9990666` | `202` y después `failed`: la suscripción se deshace (`RolledBack`) |
 
-Plan fuera del catálogo → `422`; misma `Idempotency-Key` con otro cuerpo → `422`; misma key y mismo cuerpo →
-la misma operación.
+Plan fuera del catálogo → `422`. `Idempotency-Key` es obligatoria en el alta y el cambio de plan: con otro
+cuerpo → `422`; con el mismo cuerpo (o una baja repetida) → la misma operación. Los namespaces `kube-*`,
+`default` y el del propio mock no se pueden suscribir.
 
 **Credencial**: en el primer alta exitosa de un namespace crea `secret-apim-<tenant>` (`b2c` por default) en ese
 namespace con `app_id = mock-app-<namespace>` y `app_key = mock-key-<namespace>`.
@@ -46,11 +47,14 @@ Publicar otra vez el mismo `apiId` con el mismo branch/tag/commit → `400 ya es
 
 **Utilidades**: `GET /mock/state` (todo el estado), `POST /mock/reset` (lo vacía), `GET /healthz`.
 
+Si el pod se reinicia con operaciones o publicaciones pendientes, las reprograma al arrancar.
+
 ## Avisos a nullplatform
 
 Hace lo mismo que el APIM real según el mini doc de avisos: canjea `NP_API_KEY` por un token y manda
-`PATCH` al `callbackUrl` (un avance y después el resultado). Solo llama a URLs `https` del host de
-`mock.npApiUrl`. Sin `NP_API_KEY` no avisa y la acción queda abierta.
+`PATCH` al `callbackUrl` (un avance y después el resultado). Solo llama a acciones de nullplatform:
+`https://<host de mock.npApiUrl>/service|link/{id}/action/{id}`, sin query. Sin `NP_API_KEY` no avisa y la
+acción queda abierta.
 
 ## Instalación
 
@@ -66,9 +70,13 @@ helm upgrade --install apim-mock mocks/apim-mock/chart -n apim-mock --create-nam
 
 Después, en el agente: `API_SUBSCRIBER_URL=https://<hostname>` y `API_SUBSCRIBER_TOKEN=<mock.token>`.
 
-El chart crea un ClusterRole que puede leer y crear Secrets en cualquier namespace (para dejar la credencial
-donde vive la app). Es para clusters de prueba; `credentialSecrets.create=false` lo apaga y el alta termina
-igual sin Secret.
+`mock.token` es obligatorio (el mock no arranca sin token): es el Bearer que manda el service, y viaja en un
+Secret del chart.
+
+Para dejar la credencial donde vive la app, el chart da permiso de **crear** (no leer) Secrets:
+- `credentialSecrets.namespaces: [ns-a, ns-b]` crea un Role por namespace y el mock rechaza los demás;
+- sin lista, usa un ClusterRole: solo para clusters de prueba;
+- `credentialSecrets.create=false` lo apaga y el alta termina igual sin Secret.
 
 ## Imagen
 
@@ -87,3 +95,5 @@ PATH=/opt/homebrew/bin:$PATH bats tests/chart.bats
 ```
 
 Requiere Python >= 3.9, helm, yq y bats.
+
+Para correrlo local: `MOCK_TOKEN=t STATE_BACKEND=memory CREATE_CREDENTIAL_SECRET=false python3 app/server.py`.
