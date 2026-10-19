@@ -83,3 +83,25 @@ MOCK
   [ "$status" -ne 0 ]
   [ "$(np_update_count)" = "0" ]
 }
+
+@test "sin NP_ACTION_CONTEXT sale con error sin llamar a np" {
+  unset NP_ACTION_CONTEXT
+  run bash "$ENTRYPOINT"
+  [ "$status" -ne 0 ]
+  [ ! -s "$NP_CALLS_LOG" ]
+}
+
+@test "una notificacion sin link ni service sale con error sin llamar a np" {
+  NP_ACTION_CONTEXT=$(ctx '{"id":"act-1","type":"create","marker_key":"x"}')
+  run bash "$ENTRYPOINT"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"marker_key"* ]] || false
+  [ ! -s "$NP_CALLS_LOG" ]
+}
+
+@test "saca las comillas simples que agrega el channel" {
+  NP_ACTION_CONTEXT="'$(ctx '{"id":"act-1","type":"create","service":{"id":"svc-1"}}')'"
+  run bash "$ENTRYPOINT"
+  [ "$status" -eq 0 ]
+  jq -e 'select(.[0:2] == ["service-action","exec"]) | map(select(test("--script=.*/service$"))) | length == 1' "$NP_CALLS_LOG"
+}

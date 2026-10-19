@@ -142,3 +142,19 @@ set_params() {
   run_step
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
+
+@test "los parametros del pedido pisan a los atributos guardados" {
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",service:{id:"svc-1",attributes:{plan_id:"bronze",approval_ref:"RITM0000001"}},parameters:{plan_id:"gold"}}}')
+  queue_response 202 '{"id":"op-1","target":"sub-greeting--sigla-x-qa"}'
+  run_step
+  [ "$(jq -r .planId "$CURL_BODIES_DIR/0.json")" = "gold" ]
+  [ "$(jq -r .approvalRef "$CURL_BODIES_DIR/0.json")" = "RITM0000001" ]
+}
+
+@test "sin service.id falla una sola vez sin llamar a APIM" {
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",parameters:{approval_ref:"RITM0012345",plan_id:"gold"}}}')
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_update_count)" = "1" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}
