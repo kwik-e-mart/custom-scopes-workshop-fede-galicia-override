@@ -26,7 +26,7 @@ Qué se manda a APIM y de dónde sale:
 |---|---|
 | `organization`, `repository` | `repository_url` de la aplicación |
 | `branch` / `tag` / `commit` | formulario |
-| `environment` | dimensión `environment` del service (`int`, `qas`, `prd`; `dev` no se publica) |
+| `environment` | dimensión `environment` del scope elegido (`int`, `qas`, `prd`; `dev` no se publica), o `APIM_PUBLISH_ENVIRONMENT` |
 | `tenant` | `b2c` fijo por ahora |
 | `cluster` | nombre del cluster del provider, o `APIM_CLUSTER_NAME` |
 | `metadata.name`, `labels.app` | nombre del repo |
@@ -45,10 +45,11 @@ Qué se manda a APIM y de dónde sale:
 | Variable | Uso |
 |---|---|
 | `APIM_PUBLISHER_URL`, `APIM_PUBLISHER_TOKEN` | API Publisher (https) |
-| `APIM_PUBLISH_PARENT_REFS` | JSON con los Gateways, por ejemplo `[{"name":"s2s-ingress","namespace":"gateways"}]` |
+| `APIM_PUBLISH_PARENT_REFS` | Gateways: `namespace/nombre[:listener]` separados por coma (por ejemplo `gateways/s2s-ingress`) o una lista JSON |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
+| `APIM_PUBLISH_ENVIRONMENT` | opcional: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope (para probar con scopes de dev) |
 | `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
-| `APIM_CA_CERT` | opcional: PEM de la CA con la que validar a APIM (si usa una CA privada) |
+| `APIM_CA_CERT` | opcional: CA con la que validar a APIM si usa una privada, en PEM o en base64 |
 
 ## Instalación
 

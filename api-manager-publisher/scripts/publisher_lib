@@ -16,8 +16,21 @@ require_publish_environment() {
     int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
     qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
     prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
-    dev|development|desarrollo) fail "publisher: hoy no se publica en dev (dimensión environment '$1')." ;;
+    dev|development|desarrollo) fail "publisher: hoy no se publica en dev (dimensión environment '$1' del scope; APIM_PUBLISH_ENVIRONMENT lo fuerza)." ;;
     *) fail "publisher: la dimensión environment '$1' no corresponde a int, qas ni prd." ;;
+  esac
+}
+fi
+
+if ! type -t resolve_publish_environment >/dev/null 2>&1; then
+resolve_publish_environment() {
+  if [ -z "${APIM_PUBLISH_ENVIRONMENT-}" ]; then
+    require_publish_environment "$1"
+    return
+  fi
+  case "$APIM_PUBLISH_ENVIRONMENT" in
+    int|qas|prd) PUBLISH_ENVIRONMENT="$APIM_PUBLISH_ENVIRONMENT" ;;
+    *) fail "publisher: APIM_PUBLISH_ENVIRONMENT tiene que ser int, qas o prd (llegó '$APIM_PUBLISH_ENVIRONMENT')." ;;
   esac
 }
 fi
@@ -70,9 +83,10 @@ require_scope_backend() {
     fail "publisher: el contexto no trae application.id; no se puede resolver el scope."
   fi
   scopes=$(np scope list --application-id "$application_id" --status active --format json \
-    --query '[ (.results? // .) | .[]? | {slug, id} ]') \
+    --query '[ (.results? // .) | .[]? | {slug, id, dimensions} ]') \
     || fail "publisher: falló el listado de scopes de la aplicación $application_id."
   scope_id=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .id] | first // empty')
+  SCOPE_ENVIRONMENT=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
   if [[ ! "$scope_id" =~ ^[0-9]+$ ]]; then
     fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
   fi
