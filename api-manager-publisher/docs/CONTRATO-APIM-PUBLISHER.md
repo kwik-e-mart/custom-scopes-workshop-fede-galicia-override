@@ -55,6 +55,39 @@ cierre la acción de nullplatform con el formato del mini doc de avisos
 - En el API Subscriber: aceptar el `apiId` en el pedido de suscripción y rechazar el RITM si es de otra API.
   Sin eso, un link a la API X con un RITM aprobado para la API Y suscribe a Y.
 
+## Propuesta: colgar las políticas de la ruta del scope (probado el 2026-10-19)
+
+En lugar de generar un HTTPRoute propio (que tendría que volver a entrar al Gateway para llegar al scope),
+APIM cuelga sus políticas del HTTPRoute que ya genera el deploy de nullplatform para el scope en el Gateway de
+ingreso (`k-8-s-<scope>-<id>-internal`); el publish manda el nombre de esa ruta.
+
+Esa ruta también la usa el tráfico s2s, que tiene su propia AuthPolicy (el validador de `x-egress-token`). Se
+probó en `gal-kuadrant-poc` (Kuadrant v1.5.2) con una AuthPolicy como la de APIM (`app_key` + autorización por
+`app_id`) sobre `payments/k-8-s-eks-1049050904-internal`:
+
+| Configuración | s2s | `app_key` + `app_id` correctos | `app_key` de otra app | sin credencial | `x-egress-token` inventado |
+|---|---|---|---|---|---|
+| sin policy de APIM (línea de base) | 200 | 401 | 401 | 401 | 401 |
+| las dos `atomic` (default) | **401** | 200 | 401 | 401 | 401 |
+| APIM `merge`, validador `atomic` | **401** | 200 | 401 | 401 | — |
+| las dos `merge`, authz de APIM sin `when` | **403** | 200 | 403 | 401 | 401 |
+| **las dos `merge`, authz de APIM con `when`** | **200** | **200** | **403** | **401** | **401** |
+
+Con `atomic`, dos AuthPolicies sobre la misma ruta no se combinan: la más nueva deja a la otra `Overridden`, así
+que la de APIM además **apaga el validador de s2s**. Funciona solo así:
+
+- **las dos** AuthPolicies declaran `spec.defaults.strategy: merge` (alcanza con que una sea `atomic` para que
+  la pisen);
+- los nombres de las reglas no se repiten entre las dos políticas (el merge es por nombre);
+- las reglas de **autorización** de APIM llevan `when: has(request.headers.app_key)`: en `merge` las
+  autenticaciones se combinan en OR pero las autorizaciones en AND, y sin el `when` la de `app_id` rechaza al
+  tráfico s2s. La del validador ya tiene su `when` sobre el `iss`.
+
+Pedido a APIM: generar la AuthPolicy (y la RateLimitPolicy) con `defaults.strategy: merge`, nombres de reglas
+propios y `when` en sus autorizaciones, y aceptar en el publish el nombre del HTTPRoute de destino en lugar de
+generar uno. Del lado nuestro, el validador de `s2s-traffic-migrator` tiene que pasar a `defaults` con
+`strategy: merge`.
+
 ## Para discutir cuando hagamos la publicación en el service
 
 - Cómo tener aprobaciones para QA / producción (lo preguntaron en la reunión).
