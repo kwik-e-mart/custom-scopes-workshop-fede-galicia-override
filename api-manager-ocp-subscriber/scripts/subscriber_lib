@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+NP_API_BASE_URL="https://api.nullplatform.com"
+
+if ! type -t close_action >/dev/null 2>&1; then
+close_action() {
+  local status="$1" message="$2" results="${3-}"
+  local level="info"
+  if [ "$status" = "failed" ]; then
+    level="error"
+  fi
+  local messages
+  messages=$(jq -nc --arg l "$level" --arg m "$message" '[{level: $l, message: $m}]')
+  local args=(service action update --status "$status" --messages "$messages")
+  if [ -n "$results" ]; then
+    args+=(--results "$results")
+  fi
+  ACTION_SETTLED=1
+  np "${args[@]}"
+}
+fi
+
+if ! type -t report_progress >/dev/null 2>&1; then
+report_progress() {
+  local message="$1" results="${2-}"
+  local messages
+  messages=$(jq -nc --arg m "$message" '[{level: "info", message: $m}]')
+  local args=(service action update --messages "$messages")
+  if [ -n "$results" ]; then
+    args+=(--results "$results")
+  fi
+  ACTION_SETTLED=1
+  np "${args[@]}"
+}
+fi
+
+if ! type -t fail >/dev/null 2>&1; then
+fail() {
+  log error "$1"
+  close_action failed "$1" || log error "subscriber: tampoco se pudo cerrar la acción como fallida."
+  exit 1
+}
+fi
+
+if ! type -t close_on_unexpected_exit >/dev/null 2>&1; then
+close_on_unexpected_exit() {
+  if [ "${ACTION_SETTLED:-0}" != "1" ]; then
+    close_action failed "subscriber: la acción terminó por un error inesperado; revisá el log del agente." || true
+  fi
+}
+fi
+
+if ! type -t require_agent_config >/dev/null 2>&1; then
+require_agent_config() {
+  local name
+  for name in API_SUBSCRIBER_URL API_SUBSCRIBER_TOKEN; do
+    if [ -z "${!name-}" ]; then
+      fail "subscriber: el agente no tiene configurada la variable $name."
+    fi
+  done
+}
+fi
+
+if ! type -t read_notification >/dev/null 2>&1; then
+read_notification() {
+  local notification
+  notification=$(printf %s "${NP_ACTION_CONTEXT-}" | jq -c '.notification // empty' 2>/dev/null) || notification=""
+  if [ -z "$notification" ]; then
+    fail "subscriber: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
+  fi
+  printf '%s' "$notification"
+}
+fi
+
+if ! type -t notification_field >/dev/null 2>&1; then
+notification_field() {
+  printf %s "$NOTIFICATION" | jq -r "$1 // empty"
+}
+fi
+
+if ! type -t callback_url >/dev/null 2>&1; then
+callback_url() {
+  printf '%s/service/%s/action/%s' "$NP_API_BASE_URL" "$1" "$2"
+}
+fi
+
+if ! type -t apim_problem_detail >/dev/null 2>&1; then
+apim_problem_detail() {
+  local body="$1" detail
+  detail=$(printf %s "$body" | jq -r '.detail // .title // empty' 2>/dev/null) || detail=""
+  if [ -z "$detail" ]; then
+    detail="$body"
+  fi
+  printf '%s' "$detail"
+}
+fi
+
+if ! type -t require_subscription_id_format >/dev/null 2>&1; then
+require_subscription_id_format() {
+  if [[ ! "$1" =~ ^sub-[a-z0-9.-]+--[a-z0-9.-]+$ ]]; then
+    fail "subscriber: subscription_id con formato inválido: '$1'."
+  fi
+}
+fi
+
+if ! type -t apim_request >/dev/null 2>&1; then
+apim_request() {
+  local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
+  local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
+  local attempt=0 response_file code
+  response_file=$(mktemp)
+  while :; do
+    local args=(-sS -o "$response_file" -w '%{http_code}' -X "$method" "$API_SUBSCRIBER_URL$path"
+      -H "Authorization: Bearer $API_SUBSCRIBER_TOKEN" -H "Accept: application/json")
+    if [ -n "$idempotency_key" ]; then
+      args+=(-H "Idempotency-Key: $idempotency_key")
+    fi
+    if [ -n "$body" ]; then
+      args+=(-H "Content-Type: application/json" --data-binary "$body")
+    fi
+    : >"$response_file"
+    code=$(curl "${args[@]}") || code="000"
+    APIM_HTTP_CODE="$code"
+    APIM_BODY=$(cat "$response_file")
+    if [ "$code" != "503" ] && [ "$code" != "000" ]; then
+      break
+    fi
+    if [ "$attempt" -ge "$retries" ]; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    log warn "subscriber: APIM no responde (HTTP $code); reintento $attempt de $retries."
+    sleep "$delay"
+  done
+  rm -f "$response_file"
+}
+fi
