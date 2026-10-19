@@ -3,8 +3,9 @@ set -euo pipefail
 
 MOCK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ -z "${IMAGE_REPO-}" ]; then
-  echo "IMAGE_REPO es obligatorio, por ejemplo public.ecr.aws/<alias>/apim-mock" >&2
+IMAGE_REPO="${IMAGE_REPO-docker.io/federicomalehnullplatform/apim-mock}"
+if [ -z "$IMAGE_REPO" ]; then
+  echo "IMAGE_REPO está vacío; dejalo sin definir para usar docker.io/federicomalehnullplatform/apim-mock" >&2
   exit 1
 fi
 
