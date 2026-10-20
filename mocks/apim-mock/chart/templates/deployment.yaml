@@ -60,6 +60,8 @@ spec:
               value: {{ join "," (.Values.credentialSecrets.namespaces | default list) | quote }}
             - name: ALLOW_ALL_NAMESPACES
               value: {{ .Values.credentialSecrets.allowAllNamespaces | quote }}
+            - name: ROUTE_PATHS
+              value: {{ join "," (.Values.mock.routePaths | default list) | quote }}
             - name: CREDENTIALS_NAMESPACE
               value: {{ .Values.credentialSecrets.gatewayNamespace | quote }}
             {{- if or .Values.npApiKey.existingSecret .Values.npApiKey.value }}

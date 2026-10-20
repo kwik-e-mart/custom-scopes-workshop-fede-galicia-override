@@ -785,6 +785,13 @@ class PublishedObjectsTest(unittest.TestCase):
         self.assertEqual(rule["filters"],
                          [{"type": "URLRewrite", "urlRewrite": {"hostname": "test-kuadrant-main.ms.ws.bancogalicia.com.ar"}}])
 
+    def test_con_paths_configurados_la_ruta_solo_acepta_esos_paths(self):
+        app, k8s, _, scheduler = make_app(route_paths=["/whoami", "/health"])
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        self.assertEqual(k8s.objects[ROUTE]["spec"]["rules"][0]["matches"],
+                         [{"path": {"type": "Exact", "value": "/whoami"}}, {"path": {"type": "Exact", "value": "/health"}}])
+
     def test_sin_destino_la_ruta_no_reescribe(self):
         app, k8s, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())

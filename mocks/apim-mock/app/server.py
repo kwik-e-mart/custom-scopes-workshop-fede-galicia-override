@@ -259,7 +259,7 @@ def destination_host(destination):
     return parsed.hostname if HOSTNAME_PATTERN.fullmatch(parsed.hostname) else None
 
 
-def api_manifests(publication):
+def api_manifests(publication, route_paths=()):
     namespace, name, api_id = publication["namespace"], publication["apiName"], publication["apiId"]
     labels = {**publication.get("labels", {}), "app.kubernetes.io/managed-by": "apim-mock", "api-id": api_id}
     metadata = {"name": name, "namespace": namespace, "labels": labels}
@@ -268,7 +268,8 @@ def api_manifests(publication):
     requested = dict(publication.get("backend") or {})
     destination = requested.pop("destinationFqdn", None)
     backend.update(requested)
-    rule = {"matches": [{"path": {"type": "PathPrefix", "value": "/"}}], "backendRefs": [backend]}
+    matches = [{"path": {"type": "Exact", "value": path}} for path in route_paths] or [{"path": {"type": "PathPrefix", "value": "/"}}]
+    rule = {"matches": matches, "backendRefs": [backend]}
     if destination:
         rule["filters"] = [{"type": "URLRewrite", "urlRewrite": {"hostname": destination_host(destination)}}]
     manifests = [
@@ -749,7 +750,7 @@ class App:
         return 200, response
 
     def apply_api_objects(self, publication):
-        for path, manifest in api_manifests(publication):
+        for path, manifest in api_manifests(publication, self.settings.get("route_paths") or ()):
             try:
                 status, _ = self.k8s.request("APPLY", path, manifest)
             except Exception as error:
@@ -764,7 +765,7 @@ class App:
         self.delete_paths(api_object_paths(publication["namespace"], publication["apiName"]) + publication.get("stalePaths", []))
 
     def delete_unused_objects(self, publication):
-        applied = {path for path, _ in api_manifests(publication)}
+        applied = {path for path, _ in api_manifests(publication, self.settings.get("route_paths") or ())}
         own = [path for path in api_object_paths(publication["namespace"], publication["apiName"]) if path not in applied]
         self.delete_paths(own + publication.get("stalePaths", []))
 
@@ -884,6 +885,7 @@ def main():
         "allowed_namespaces": [item for item in os.environ.get("ALLOWED_NAMESPACES", "").split(",") if item],
         "allow_all_namespaces": os.environ.get("ALLOW_ALL_NAMESPACES", "false") == "true",
         "credentials_namespace": os.environ.get("CREDENTIALS_NAMESPACE", "kuadrant-system"),
+        "route_paths": [path for path in os.environ.get("ROUTE_PATHS", "").split(",") if path],
         "max_history": int(os.environ.get("MAX_HISTORY", "200")),
     }
     app = App(store, k8s, notifier, timer_scheduler, settings, notifier.link_service_id)

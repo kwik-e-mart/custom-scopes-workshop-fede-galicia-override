@@ -51,7 +51,7 @@ El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin c
 `400 ya está publicada`; con otro ref → `200` (republicación).
 
 Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadata.name`:
-- un `HTTPRoute` colgado de `metadata.parentRefs`, con el `hostname` publicado, `PathPrefix /` y el backend de
+- un `HTTPRoute` colgado de `metadata.parentRefs`, con el `hostname` publicado, los paths de `mock.routePaths` (`/whoami` por default, para simular lo que expone el swagger; vacío = `PathPrefix /`) y el backend de
   `metadata.backend` (o el Service `metadata.name:8080`); si viene `metadata.backend.destinationFqdn`
   (`https://<host>`), la regla reescribe el host a ese valor (`URLRewrite`) y el backend es el gateway;
 - una `AuthPolicy` que pide `app_key` (credenciales con `api-id` de la API) y `app_id` igual al de la credencial;

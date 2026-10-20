@@ -1,6 +1,6 @@
 image:
   repository: ""
-  tag: "0.2.3"
+  tag: "0.2.4"
   pullPolicy: IfNotPresent
 
 mock:
@@ -9,6 +9,8 @@ mock:
   callbackDelaySeconds: 5
   publishDomain: bancogalicia.com.ar
   npApiUrl: https://api.nullplatform.com
+  routePaths:
+    - /whoami
 
 npApiKey:
   existingSecret: ""
