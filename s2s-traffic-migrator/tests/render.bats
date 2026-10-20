@@ -884,7 +884,7 @@ sin_sigla() {
   export SIGLA_CTX=AYRM
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | yq -N 'select(.metadata) | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
+  [ "$(echo "$output" | yq -N 'select(.metadata and .metadata.name != "s2s-validator") | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
   [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.metadata.labels.sigla' | sort -u)" = "AYRM" ]
   [ "$(echo "$output" | yq -N 'select(.kind == "CronJob") | (.spec.jobTemplate.metadata.labels.sigla, .spec.jobTemplate.spec.template.metadata.labels.sigla)' | sort -u)" = "AYRM" ]
 }
@@ -900,4 +900,20 @@ sin_sigla() {
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | yq -N '.. | select(has("sigla")?)')" ]
+}
+
+@test "la AuthPolicy validadora no lleva sigla: es una por cluster y la comparten todos los namespaces" {
+  export SIGLA_CTX=AYRM
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .metadata.name')" = "s2s-validator" ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .metadata.labels.sigla')" = "null" ]
+}
+
+@test "la sigla llega del build_context al contexto de render en create y en delete" {
+  local dir="${BATS_TEST_DIRNAME}/.."
+  grep -q -- '--arg sigla "${SIGLA:-}"' "$dir/scripts/k8s/reconcile"
+  grep -q '^export .*\bSIGLA\b' "$dir/scripts/k8s/build_context"
+  grep -q '{ name: SIGLA, type: environment }' "$dir/workflows/openshift/create.yaml"
+  grep -q '{ name: SIGLA, type: environment }' "$dir/workflows/openshift/delete.yaml"
 }
