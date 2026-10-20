@@ -1,1 +1,2 @@
-nrn = "organization=1636958496"
+# NRN of the nullplatform organization where services are registered.
+nrn = "organization=<ORGANIZATION_ID>"
