@@ -347,7 +347,12 @@ class App:
         headers = {key.lower(): value for key, value in headers.items()}
         link_api_id = None
         if method == "POST" and path == "/v1/subscriptions":
-            link_api_id = self.link_api_id(body.get("callbackUrl"))
+            entity, entity_id = callback_entity(body.get("callbackUrl"))
+            if entity == "link":
+                service_id = self.link_service_id(entity_id)
+                if not service_id:
+                    return problem(503, "Service Unavailable", f"No se pudo leer el link {entity_id} en nullplatform; reintentá más tarde.")
+                link_api_id = f"apim-{service_id}"
         outbox = []
         with self.lock:
             try:
@@ -359,13 +364,6 @@ class App:
         for notification in outbox:
             self.notifier.notify(*notification[:2], **notification[2])
         return result
-
-    def link_api_id(self, callback_url):
-        entity, entity_id = callback_entity(callback_url)
-        if entity != "link":
-            return None
-        service_id = self.link_service_id(entity_id)
-        return f"apim-{service_id}" if service_id else None
 
     def route(self, method, path, headers, body, outbox, link_api_id=None):
         key = headers.get("idempotency-key", "")
@@ -517,9 +515,12 @@ class App:
             secret_created = self.ensure_credential_secret(namespace) and self.ensure_gateway_credential(pending)
             with self.lock:
                 operation, subscription = self.pending_subscription(operation_id)
-                if not operation or not subscription:
+                if not operation:
                     return
-                if not secret_created:
+                if not subscription:
+                    notification = self.fail_operation(operation, "RolledBack", "la suscripción se dio de baja antes de completarse",
+                                                       "La suscripción se dio de baja antes de quedar activa.", False)
+                elif not secret_created:
                     notification = self.fail_operation(operation, "Failed", "no se pudo crear el Secret de la credencial",
                                                        "No se pudo aplicar en los clusters (el mock no pudo crear el Secret de la credencial).", True)
                 else:
@@ -527,6 +528,8 @@ class App:
                     operation["state"] = "Registered"
                     self.save()
                     notification = (operation["callbackUrl"], "Suscripción activa y registrada en el catálogo de APIs.", {"status": "success"})
+            if not subscription:
+                self.delete_gateway_credential(pending)
         self.notifier.notify(*notification[:2], **notification[2])
 
     def ensure_credential_secret(self, namespace):
@@ -749,9 +752,10 @@ class App:
         applied = pending["repository"].split("/", 1)[1].startswith("fail-") is False and self.apply_api_objects(pending)
         with self.lock:
             publication = self.state["publications"].get(api_id)
-            if not publication or publication["ref"] != ref or publication["status"] != "pushed":
-                return
-            if not applied:
+            current = publication and publication["ref"] == ref and publication["status"] == "pushed"
+            if not current:
+                notification = None
+            elif not applied:
                 del self.state["publications"][api_id]
                 self.save()
                 notification = (publication["callbackUrl"], "Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); se eliminaron los manifiestos.",
@@ -760,7 +764,10 @@ class App:
                 publication["status"] = "registered"
                 self.save()
                 notification = (publication["callbackUrl"], f"API publicada y registrada en {publication['hostname']}.", {"status": "success"})
-        self.notifier.notify(*notification[:2], **notification[2])
+        if not publication or (current and not applied):
+            self.delete_api_objects(pending)
+        if notification:
+            self.notifier.notify(*notification[:2], **notification[2])
 
     def unpublish(self, api_id):
         if api_id not in self.state["publications"]:

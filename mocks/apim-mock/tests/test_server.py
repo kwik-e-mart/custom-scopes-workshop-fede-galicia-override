@@ -16,6 +16,7 @@ class FakeK8s:
         self.calls = []
         self.objects = {}
         self.fail_apply_for = ""
+        self.during_apply = None
 
     def request(self, method, path, body=None):
         self.calls.append((method, path, body))
@@ -34,6 +35,9 @@ class FakeK8s:
             self.objects[path] = body
             return 200, body
         if method == "APPLY":
+            if self.during_apply:
+                hook, self.during_apply = self.during_apply, None
+                hook()
             if self.fail_apply_for and self.fail_apply_for in path:
                 return 403, {"kind": "Status", "code": 403}
             self.objects[path] = body
@@ -805,6 +809,22 @@ class PublishedObjectsTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("test-kuadrant", body["message"])
 
+    def test_si_falla_la_authpolicy_no_queda_la_ruta_sin_autenticacion(self):
+        app, k8s, notifier, scheduler = make_app()
+        k8s.fail_apply_for = "/authpolicies/"
+        call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        self.assertNotIn(ROUTE, k8s.objects)
+
+    def test_una_baja_durante_la_publicacion_no_deja_objetos(self):
+        app, k8s, _, scheduler = make_app()
+        _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        k8s.during_apply = lambda: call(app, "DELETE", f"/v1/kuadrant/manifests/{response['apiId']}")
+        scheduler.run_all()
+        for path in (ROUTE, AUTH, RLP):
+            self.assertNotIn(path, k8s.objects)
+
     def test_la_baja_provisoria_borra_los_objetos(self):
         app, k8s, _, scheduler = make_app()
         _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
@@ -845,10 +865,20 @@ class LinkSubscriptionTest(unittest.TestCase):
         call(app, "DELETE", "/v1/subscriptions/sub-apim-svc-pub--sigla-x-qa", None, {"Idempotency-Key": "k-del"})
         self.assertEqual([p for p in k8s.objects if p.startswith("/api/v1/namespaces/kuadrant-system/secrets/")], [])
 
-    def test_un_link_que_no_se_puede_resolver_usa_la_api_del_ritm(self):
+    def test_un_link_que_no_se_puede_resolver_responde_503_y_no_guarda_nada(self):
         app, _, _, _ = make_app()
-        _, body = subscribe(app, callback=LINK_CALLBACK)
-        self.assertEqual(body["target"], "sub-api-0012345--sigla-x-qa")
+        status, body = subscribe(app, callback=LINK_CALLBACK)
+        self.assertEqual(status, 503)
+        self.assertIn("l-1", body["detail"])
+        self.assertEqual(app.state["subscriptions"], {})
+
+    def test_una_baja_durante_el_alta_no_deja_la_credencial_y_cierra_la_accion(self):
+        app, k8s, notifier, scheduler = make_app(link_services={"l-1": "svc-pub"})
+        subscribe(app, callback=LINK_CALLBACK)
+        k8s.during_apply = lambda: call(app, "DELETE", "/v1/subscriptions/sub-apim-svc-pub--sigla-x-qa", None, {"Idempotency-Key": "k-del"})
+        scheduler.run_all()
+        self.assertEqual([p for p in k8s.objects if p.startswith("/api/v1/namespaces/kuadrant-system/secrets/")], [])
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
 
 
 if __name__ == "__main__":
