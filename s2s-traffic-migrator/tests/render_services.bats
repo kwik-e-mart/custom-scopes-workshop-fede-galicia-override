@@ -17,6 +17,7 @@ contexto() {  # <platform> <interceptions-json>
     namespace: "payments", gateway_name: "egress-gw", listen_port: 8080,
     managed_label: "egress-interceptor/managed", role_label: "egress-interceptor/role",
     original_selector_annotation: "egress-interceptor/original-selector",
+    sigla: (env.SIGLA_CTX // ""),
     platform: $platform, interceptions: $interceptions
   }' >"$BATS_TEST_TMPDIR/ctx.json"
 }
@@ -146,4 +147,12 @@ sin_service_previo() {  # <service>
   run archivos_rendeados openshift '[]'
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "los Services del interceptor llevan el label sigla" {
+  export SIGLA_CTX=AYRM
+  run render openshift "$(jq -nc '[{service_name:"reports", original:{selector:{app:"reports"}, ports:[{port:8080}]}}]')"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "Service") | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
 }

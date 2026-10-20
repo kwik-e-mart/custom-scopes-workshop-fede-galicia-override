@@ -643,3 +643,10 @@ exportado() {  # <variable>
     bash -c "source '$BC' >/dev/null 2>&1; printf '%s' \"\$KEYS_NAMESPACE\"")
   [ "$v" = "kuadrant-system" ]
 }
+
+@test "la sigla sale del namespace del CONTEXT y se exporta para el reconcile" {
+  CONTEXT="$(ctx | jq -c '.namespace.slug = "ayrm-menuatenciondig"')" NP_ACTION_CONTEXT="$(notif)" \
+    run bash -c 'source "$1" >/dev/null; bash -c "echo SIGLA=\$SIGLA"' _ "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SIGLA=AYRM"* ]]
+}

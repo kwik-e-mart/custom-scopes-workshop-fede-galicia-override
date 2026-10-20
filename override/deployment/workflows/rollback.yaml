@@ -1,0 +1,5 @@
+steps:
+  - name: add_sigla_label
+    type: script
+    after: build context
+    file: "$OVERRIDES_PATH/deployment/scripts/add_sigla_label"

@@ -1,6 +1,10 @@
 provider_categories:
   - scope-configurations
 steps:
+  - name: add_sigla_label
+    type: script
+    after: build context
+    file: "$OVERRIDES_PATH/deployment/scripts/add_sigla_label"
   - name: mount_certificates
     type: script
     after: create deployment

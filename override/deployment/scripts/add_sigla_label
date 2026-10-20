@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../shared/scripts/sigla"
+
+SIGLA=$(resolve_sigla "$CONTEXT")
+
+if [ -n "$SIGLA" ]; then
+  echo "🏷️ Adding label sigla=$SIGLA to every object"
+  CONTEXT=$(echo "$CONTEXT" | jq --arg sigla "$SIGLA" '.k8s_modifiers.global.labels.sigla = $sigla')
+  export CONTEXT
+fi
