@@ -134,9 +134,18 @@ original_specs() {
 # segundos después que Istio, el resultado además dependía de cuándo se mirara.
 # El criterio correcto: alguien la reporta True y NADIE la reporta distinto de True.
 wait_route_condition() {  # <ns> <route> <condicion> <timeout-segundos>
-  local ns="$1" route="$2" cond="$3" deadline=$(( SECONDS + $4 )) buenas malas
+  local ns="$1" route="$2" cond="$3" deadline=$(( SECONDS + $4 )) buenas malas json
   while [ "$SECONDS" -lt "$deadline" ]; do
-    read -r buenas malas < <(kubectl -n "$ns" get "httproute/$route" -o json 2>/dev/null \
+    if ! json=$(kubectl -n "$ns" get "httproute/$route" -o json 2>&1); then
+      case "$json" in
+        *NotFound*|*not\ found*) json="" ;;
+        *)
+          log error "egress-interceptor: no se pudo leer la HTTPRoute '$route' de '$ns'."
+          log error "  $json"
+          exit 1 ;;
+      esac
+    fi
+    read -r buenas malas < <(printf '%s' "$json" \
       | jq -r --arg c "$cond" '[.status.parents[]?.conditions[]? | select(.type == $c)] as $cs
           | "\([$cs[] | select(.status == "True")] | length) \([$cs[] | select(.status != "True")] | length)"' \
       2>/dev/null || echo "0 0")
