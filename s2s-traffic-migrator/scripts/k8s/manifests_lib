@@ -85,7 +85,7 @@ render_manifests() {
       rm -f "$out"
       continue
     fi
-    if [ -n "$sigla" ] && ! label_sigla "$out" "$sigla"; then
+    if [ -n "$sigla" ] && [ "$(basename "$out")" != "25-authpolicy-validator.yaml" ] && ! label_sigla "$out" "$sigla"; then
       log error "egress-interceptor: no se pudo agregar el label sigla a $(basename "$out")"
       return 1
     fi
