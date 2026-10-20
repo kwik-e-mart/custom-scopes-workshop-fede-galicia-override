@@ -291,7 +291,7 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   [[ "$output" == *"platform=eks"* ]]
 }
 
-@test "el prefijo del site no exige guion: la dimension puede valer el sustrato pelado" {
+@test "el prefijo del site no exige guion: la dimension puede valer el sustrato" {
   run_bc_site '{"site":"openshift"}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"platform=openshift"* ]] || false
