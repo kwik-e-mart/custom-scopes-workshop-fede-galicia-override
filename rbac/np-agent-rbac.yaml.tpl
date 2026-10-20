@@ -38,27 +38,29 @@ rules:
     resources: ["externalsecrets"]
     verbs: ["get", "list"]
 
-{{/*
-# SÓLO para NAMESPACE_SETUP_ENABLED=true, el modo con el que el service crea el alta del namespace
-# que normalmente hace el chart. Es excepcional: se usa en un namespace donde el chart no corrió o
-# quedó a medias. Mientras el flag esté en false estos permisos NO hacen falta, y por eso no están
-# en el ClusterRole de arriba.
-
+{{- if eq (getenv "NAMESPACE_SETUP_ENABLED" "false") "true" }}
+  # Desde acá, SÓLO para NAMESPACE_SETUP_ENABLED=true: el modo con el que el service crea el alta
+  # del namespace que normalmente hace el chart. Es excepcional —un namespace donde el chart no
+  # corrió o quedó a medias— y con el flag en false estos permisos no hacen falta.
   - apiGroups: [""]
     resources: ["serviceaccounts", "configmaps"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
     verbs: ["create", "delete"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["external-secrets.io"]
     resources: ["externalsecrets"]
     verbs: ["create", "update", "patch", "delete"]
-
-# Y en KEYS_NAMESPACE, el Role np-agent-keys de más abajo con create/delete sobre secrets.
-*/}}
+  # El API server rechaza por escalada la creación de un Role que otorgue algo que el creador no
+  # tiene. El service crea el Role del rotador, así que acá tiene que estar todo lo que ese Role
+  # pide, incluido lo de secrets del Role np-agent-keys de más abajo.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -117,17 +119,25 @@ subjects:
   - { kind: ServiceAccount, name: {{ getenv "AGENT_SA" }}, namespace: {{ getenv "AGENT_NAMESPACE" }} }
 {{- end }}
 */}}
-{{/*
-# El Role np-agent-keys con create/delete sobre secrets en KEYS_NAMESPACE NO se usa: los Secrets de
-# la clave de firma los crea el ExternalSecret, y el que lo declara es el SA `rotador` desde adentro
-# del Job, no el agente. Se deja documentado por si el flujo cambia.
-
+{{- if eq (getenv "NAMESPACE_SETUP_ENABLED" "false") "true" }}
 ---
+# Namespaced a propósito: en KEYS_NAMESPACE también vive la clave de firma del wristband.
+# Cluster-wide, esto sería borrar cualquier Secret de cualquier namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: np-agent-keys, namespace: KEYS_NAMESPACE }
+metadata: { name: np-agent-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
 rules:
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "delete"]
-*/}}
+    verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: np-agent-keys, namespace: {{ getenv "KEYS_NAMESPACE" }} }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: np-agent-keys }
+subjects:
+  - { kind: ServiceAccount, name: {{ getenv "AGENT_SA" }}, namespace: {{ getenv "AGENT_NAMESPACE" }} }
+{{- end }}

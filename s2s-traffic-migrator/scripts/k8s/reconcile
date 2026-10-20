@@ -37,25 +37,22 @@ set_selector() {  # <svc> <json del selector>
 # como "sin selector" manda al revert y al swap por la rama equivocada, sobre un dato que es el
 # único registro de cómo volver atrás.
 current_selector() {
-  svc_campo "$1" '{.spec.selector}'
-}
-
-svc_campo() {  # <svc> <jsonpath>
   local salida
-  if salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="$2" 2>&1); then
-    printf '%s' "$salida"
-    return 0
-  fi
-  case "$salida" in
-    *NotFound*|*not\ found*) return 0 ;;
-  esac
-  log error "egress-interceptor: no se pudo leer el Service '$1' de '$NAMESPACE'." >&2
+  salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath='{.spec.selector}' 2>&1) && { printf '%s' "$salida"; return 0; }
+  case "$salida" in *NotFound*|*not\ found*) return 0 ;; esac
+  log error "egress-interceptor: no se pudo leer el selector de '$1' en '$NAMESPACE'." >&2
   log error "  $salida" >&2
   exit 1
 }
 
 original_selector() {
-  svc_campo "$1" "{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}"
+  local salida
+  salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}" 2>&1) \
+    && { printf '%s' "$salida"; return 0; }
+  case "$salida" in *NotFound*|*not\ found*) return 0 ;; esac
+  log error "egress-interceptor: no se pudo leer la annotation de '$1' en '$NAMESPACE'." >&2
+  log error "  $salida" >&2
+  exit 1
 }
 
 # El orden importa y la verificación también: la annotation es el ÚNICO lugar donde vive el
@@ -619,7 +616,7 @@ for svc in $DECLARED_SERVICES; do
   CURRENT_SELECTOR=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath='{.spec.selector}')
   [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && continue
   # El selector original se captura una sola vez: es el dato con el que se revierte.
-  ALREADY_ANNOTATED=$(svc_campo "$svc" "{.metadata.annotations.$ORIGINAL_SELECTOR_ANNOTATION}")
+  ALREADY_ANNOTATED=$(original_selector "$svc")
   if [ -z "$ALREADY_ANNOTATED" ]; then
     # Guardar el selector del propio Gateway como "original" haría que el revert no revierta nada.
     [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }
