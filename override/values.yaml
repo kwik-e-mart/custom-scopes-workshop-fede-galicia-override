@@ -9,6 +9,8 @@ configuration:
     - x-np-svc
     - x-np-scope
     - x-api-key
+    - app_key
+    - app_id
   CABANCO_MOUNTS:
     - name: cakeystore
       secretName: secret-cabanco-keystore
