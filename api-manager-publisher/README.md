@@ -14,8 +14,12 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
 - **Actualizar = republicar** con otra referencia o rate limit (APIM sobrescribe la misma ruta).
-- **Borrar**: APIM todavía no tiene endpoint de baja. La acción cierra bien y avisa que la API sigue
-  publicada; la baja se pide a APIM por fuera.
+- **Después del 200 del publish**, cuelga en cada route del scope (`nullplatform=true,scope_id=<id>`) una
+  AuthPolicy `<apiId>-<route>` que acepta las credenciales de esa API (`app_key` con label `api-id`, `app_id`
+  igual al label `app-id`). Es la que deja pasar el reingreso de APIM por el gateway privado; se combina en
+  `merge` con el validador del s2s, que también tiene que estar en `merge`.
+- **Borrar**: APIM todavía no tiene endpoint de baja. Borra las AuthPolicies de la API (el scope deja de
+  aceptar sus credenciales) y cierra avisando que la API sigue publicada; la baja se pide a APIM por fuera.
 - **Linkear una app = suscribirla.** El link pide el RITM aprobado y el plan, y usa el mismo flujo que
   [`api-manager-ocp-subscriber`](../api-manager-ocp-subscriber) con el callback del link. El unlink da de baja
   la suscripción solo si ese link la creó.

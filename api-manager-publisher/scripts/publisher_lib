@@ -89,6 +89,8 @@ require_scope_destination() {
   if [[ ! "$scope_id" =~ ^[0-9]+$ ]]; then
     fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
   fi
+  SCOPE_ID="$scope_id"
+  SCOPE_SLUG="$scope"
   SCOPE_ENVIRONMENT=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
   SCOPE_DOMAIN=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain // empty] | first // empty')
   if [ -z "$SCOPE_DOMAIN" ]; then
@@ -114,5 +116,60 @@ require_gateway_backend() {
   fi
   GATEWAY_BACKEND=$(jq -nc --arg name "$name" --arg namespace "$namespace" --argjson port "$port" \
     '{kind: "Service", name: $name, namespace: $namespace, port: $port}')
+}
+fi
+
+if ! type -t require_api_id_format >/dev/null 2>&1; then
+require_api_id_format() {
+  if [[ ! "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    fail "publisher: APIM devolvió un apiId que no sirve como nombre de Kubernetes: '$1'."
+  fi
+}
+fi
+
+if ! type -t scope_auth_policy >/dev/null 2>&1; then
+scope_auth_policy() {
+  local api_id="$1" namespace="$2" scope_id="$3" route="$4"
+  jq -nc --arg api "$api_id" --arg ns "$namespace" --arg scope "$scope_id" --arg route "$route" \
+    --arg app_id_check "auth.identity.metadata.labels['app-id'] == request.headers.app_id" '{
+    apiVersion: "kuadrant.io/v1", kind: "AuthPolicy",
+    metadata: {name: "\($api)-\($route)", namespace: $ns,
+               labels: {"app.kubernetes.io/managed-by": "api-manager-publisher", "api-id": $api, scope_id: $scope}},
+    spec: {
+      targetRef: {group: "gateway.networking.k8s.io", kind: "HTTPRoute", name: $route},
+      defaults: {strategy: "merge", rules: {
+        authentication: {($api): {
+          apiKey: {selector: {matchLabels: {"api-id": $api}}, allNamespaces: true},
+          credentials: {customHeader: {name: "app_key"}}}},
+        authorization: {"\($api)-app-id": {
+          when: [{predicate: "has(request.headers.app_key)"}],
+          patternMatching: {patterns: [{predicate: $app_id_check}]}}}}}}}'
+}
+fi
+
+if ! type -t attach_scope_auth_policies >/dev/null 2>&1; then
+attach_scope_auth_policies() {
+  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" routes route
+  require_api_id_format "$api_id"
+  routes=$(kubectl -n "$namespace" get httproute -l "nullplatform=true,scope_id=$scope_id" -o json) \
+    || fail "publisher: no se pudieron leer las routes del scope '$scope_slug' en el namespace $namespace."
+  routes=$(printf %s "$routes" | jq -r '.items[]?.metadata.name')
+  if [ -z "$routes" ]; then
+    fail "publisher: el scope '$scope_slug' no tiene routes en el cluster; desplegalo y volvé a publicar."
+  fi
+  while IFS= read -r route; do
+    scope_auth_policy "$api_id" "$namespace" "$scope_id" "$route" | kubectl apply -f - >/dev/null \
+      || fail "publisher: no se pudo colgar la AuthPolicy de $api_id en la route $route."
+    log info "publisher: la route $route acepta las credenciales de $api_id."
+  done <<<"$routes"
+}
+fi
+
+if ! type -t detach_scope_auth_policies >/dev/null 2>&1; then
+detach_scope_auth_policies() {
+  local api_id="$1" namespace="$2"
+  require_api_id_format "$api_id"
+  kubectl -n "$namespace" delete authpolicy -l "app.kubernetes.io/managed-by=api-manager-publisher,api-id=$api_id" --ignore-not-found >/dev/null \
+    || fail "publisher: no se pudieron borrar las AuthPolicies de $api_id en el namespace $namespace; reintentá el borrado."
 }
 fi

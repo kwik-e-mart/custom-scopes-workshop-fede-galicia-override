@@ -119,7 +119,6 @@ JSON
   set_request '{}' '{"scope":"draft","ref_type":"branch","ref":"main"}' qas
   queue_response 200 "$(pushed)"
   run_step
-  [ ! -s "$KUBECTL_CALLS_LOG" ]
   [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"https://test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443}' ]
 }
 
@@ -271,4 +270,79 @@ JSON
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"dominio"* ]]
+}
+
+applied() {
+  jq -s 'sort_by(.metadata.name)' "$KUBECTL_APPLIED_DIR"/*.json
+}
+
+@test "despues del 200 cuelga una AuthPolicy de la API en cada route del scope" {
+  export KUBECTL_MOCK_ROUTES='{"items":[{"metadata":{"name":"k-8-s-main-1049050904-grpc"}},{"metadata":{"name":"k-8-s-main-1049050904-internal"}}]}'
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  grep -q -- "-n payments get httproute -l nullplatform=true,scope_id=1049050904 -o json" "$KUBECTL_CALLS_LOG"
+  [ "$(applied | jq -c '[.[] | {name: .metadata.name, namespace: .metadata.namespace, route: .spec.targetRef.name}]')" = \
+    '[{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-1049050904-grpc","namespace":"payments","route":"k-8-s-main-1049050904-grpc"},{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-1049050904-internal","namespace":"payments","route":"k-8-s-main-1049050904-internal"}]' ]
+  [ -z "$(np_last_update_flag --status)" ]
+}
+
+@test "la AuthPolicy valida la credencial de esta API y se combina con el validador del s2s" {
+  queue_response 200 "$(pushed)"
+  run_step
+  local policy
+  policy=$(applied | jq -c '.[0]')
+  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"payments-test-kuadrant-b2c-1","scope_id":"1049050904"}' ]
+  [ "$(jq -c .spec.targetRef <<<"$policy")" = '{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","name":"k-8-s-main-1049050904-internal"}' ]
+  [ "$(jq -r .spec.defaults.strategy <<<"$policy")" = "merge" ]
+  [ "$(jq -c '.spec.defaults.rules.authentication."payments-test-kuadrant-b2c-1"' <<<"$policy")" = \
+    '{"apiKey":{"selector":{"matchLabels":{"api-id":"payments-test-kuadrant-b2c-1"}},"allNamespaces":true},"credentials":{"customHeader":{"name":"app_key"}}}' ]
+  [ "$(jq -c '.spec.defaults.rules.authorization."payments-test-kuadrant-b2c-1-app-id"' <<<"$policy")" = \
+    '{"when":[{"predicate":"has(request.headers.app_key)"}],"patternMatching":{"patterns":[{"predicate":"auth.identity.metadata.labels['"'"'app-id'"'"'] == request.headers.app_id"}]}}' ]
+}
+
+@test "registered tambien cuelga la AuthPolicy antes de cerrar success" {
+  queue_response 200 "$(pushed registered)"
+  run_step
+  [ "$(applied | jq length)" = "1" ]
+  [ "$(np_last_update_flag --status)" = "success" ]
+}
+
+@test "si APIM rechaza la publicacion no cuelga ninguna AuthPolicy" {
+  queue_response 400 '{"status":"error","message":"firma invalida"}'
+  run_step
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
+  ! grep -q "get httproute" "$KUBECTL_CALLS_LOG"
+}
+
+@test "un scope sin routes en el cluster cierra failed avisando que hay que desplegarlo" {
+  export KUBECTL_MOCK_ROUTES='{"items":[]}'
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"main"*"routes"* ]]
+}
+
+@test "si no puede leer las routes del scope cierra failed" {
+  export KUBECTL_MOCK_FAIL=1
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"routes"* ]]
+}
+
+@test "si el cluster rechaza la AuthPolicy cierra failed nombrando la route" {
+  export KUBECTL_MOCK_APPLY_FAIL=1
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"k-8-s-main-1049050904-internal"* ]]
+}
+
+@test "un apiId de APIM que no es un nombre de Kubernetes cierra failed sin tocar el cluster" {
+  queue_response 200 '{"status":"pushed","apiId":"API Pagos/1","hostname":"h"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
 }
