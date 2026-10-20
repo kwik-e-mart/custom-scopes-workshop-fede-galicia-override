@@ -24,7 +24,7 @@ kinds() {
 @test "renderiza deployment, service, httproute y el rbac, sin ingress" {
   run kinds
   [ "$status" -eq 0 ]
-  [ "$output" = "Deployment HTTPRoute Role Role RoleBinding RoleBinding Secret Service ServiceAccount " ]
+  [ "$output" = "Deployment HTTPRoute Role Role Role RoleBinding RoleBinding RoleBinding Secret Service ServiceAccount " ]
 }
 
 @test "falla sin parentRefs del HTTPRoute" {
@@ -57,7 +57,7 @@ kinds() {
 @test "el deployment corre una sola replica con el estado en un configmap" {
   deployment=$(render | yq -N 'select(.kind == "Deployment")')
   [ "$(yq -N '.spec.replicas' <<<"$deployment")" = "1" ]
-  [ "$(yq -N '.spec.template.spec.containers[0].image' <<<"$deployment")" = "public.ecr.aws/test/apim-mock:0.1.1" ]
+  [ "$(yq -N '.spec.template.spec.containers[0].image' <<<"$deployment")" = "public.ecr.aws/test/apim-mock:0.2.0" ]
   [ "$(yq -N '.spec.template.spec.containers[0].env[] | select(.name == "STATE_BACKEND") | .value' <<<"$deployment")" = "configmap" ]
   [ "$(yq -N '.spec.template.spec.containers[0].env[] | select(.name == "POD_NAMESPACE") | .valueFrom.fieldRef.fieldPath' <<<"$deployment")" = "metadata.namespace" ]
   [ "$(yq -N '.spec.template.spec.serviceAccountName' <<<"$deployment")" = "mock-apim-mock" ]
@@ -69,14 +69,16 @@ kinds() {
   [ "$(yq -N -o=json -I=0 '.rules' <<<"$role")" = '[{"apiGroups":[""],"resources":["configmaps"],"verbs":["create"]},{"apiGroups":[""],"resources":["configmaps"],"resourceNames":["mock-apim-mock-state"],"verbs":["get","update"]}]' ]
 }
 
-@test "el clusterrole solo puede crear secrets" {
+@test "el clusterrole solo crea secrets y gestiona los objetos de la api" {
   run render --set "credentialSecrets.namespaces=null" --set credentialSecrets.allowAllNamespaces=true
-  [ "$(yq -N -o=json -I=0 'select(.kind == "ClusterRole") | .rules' <<<"$output")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["create"]}]' ]
+  [ "$(yq -N -o=json -I=0 'select(.kind == "ClusterRole") | .rules' <<<"$output")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["create"]},{"apiGroups":["gateway.networking.k8s.io"],"resources":["httproutes"],"verbs":["create","patch","delete"]},{"apiGroups":["kuadrant.io"],"resources":["authpolicies","ratelimitpolicies"],"verbs":["create","patch","delete"]}]' ]
 }
 
-@test "sin crear secretos no hay clusterrole y el mock lo sabe" {
+@test "sin crear secretos no hay permisos sobre secrets y el mock lo sabe" {
   run kinds --set credentialSecrets.create=false
-  [ "$output" = "Deployment HTTPRoute Role RoleBinding Secret Service ServiceAccount " ]
+  [ "$output" = "Deployment HTTPRoute Role Role RoleBinding RoleBinding Secret Service ServiceAccount " ]
+  run render --set credentialSecrets.create=false
+  [ "$(yq -N 'select(.kind == "Role") | .rules[].resources[]' <<<"$output" | grep -c '^secrets$')" = "0" ]
   run render --set credentialSecrets.create=false
   [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "CREATE_CREDENTIAL_SECRET") | .value' <<<"$output")" = "false" ]
 }
@@ -138,4 +140,29 @@ kinds() {
   [ "$status" -eq 0 ]
   [ "$(yq -N 'select(.kind == "ClusterRole") | .metadata.name' <<<"$output")" = "mock-apim-mock-credentials" ]
   [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ALLOW_ALL_NAMESPACES") | .value' <<<"$output")" = "true" ]
+}
+
+@test "el role del namespace permitido puede aplicar y borrar los objetos de la api" {
+  role=$(render | yq -N 'select(.kind == "Role" and .metadata.name == "mock-apim-mock-credentials")')
+  [ "$(yq -N '.metadata.namespace' <<<"$role")" = "sigla-x-qa" ]
+  [ "$(yq -N -o=json -I=0 '.rules' <<<"$role")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["create"]},{"apiGroups":["gateway.networking.k8s.io"],"resources":["httproutes"],"verbs":["create","patch","delete"]},{"apiGroups":["kuadrant.io"],"resources":["authpolicies","ratelimitpolicies"],"verbs":["create","patch","delete"]}]' ]
+}
+
+@test "la credencial del gateway se gestiona solo en su namespace" {
+  run render --set credentialSecrets.gatewayNamespace=auth-ns
+  role=$(yq -N 'select(.kind == "Role" and .metadata.name == "mock-apim-mock-gateway-credentials")' <<<"$output")
+  [ "$(yq -N '.metadata.namespace' <<<"$role")" = "auth-ns" ]
+  [ "$(yq -N -o=json -I=0 '.rules' <<<"$role")" = '[{"apiGroups":[""],"resources":["secrets"],"verbs":["create","patch","delete"]}]' ]
+  [ "$(yq -N 'select(.kind == "RoleBinding" and .metadata.name == "mock-apim-mock-gateway-credentials") | .subjects[0].namespace' <<<"$output")" = "apim-mock" ]
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "CREDENTIALS_NAMESPACE") | .value' <<<"$output")" = "auth-ns" ]
+}
+
+@test "por default la credencial del gateway va a kuadrant-system" {
+  run render
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "CREDENTIALS_NAMESPACE") | .value' <<<"$output")" = "kuadrant-system" ]
+}
+
+@test "sin crear secretos sigue pudiendo publicar en el namespace permitido" {
+  run render --set credentialSecrets.create=false
+  [ "$(yq -N 'select(.kind == "Role" and .metadata.name == "mock-apim-mock-credentials") | .metadata.namespace' <<<"$output")" = "sigla-x-qa" ]
 }
