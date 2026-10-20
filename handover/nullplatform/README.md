@@ -35,13 +35,14 @@ Esos se siguen administrando del lado de nullplatform, en otro layer.
 - Un **GitHub token válido** con lectura sobre los repos de
   `galicia-trfm-terraform`. Ver [El GitHub token](#el-github-token): es la
   causa de error más común en la primera corrida.
-
-`gomplate` no hace falta en este layer.
+- `git` y salida a `github.com` / `raw.githubusercontent.com`: el módulo se
+  descarga por `git::https` y las specs se leen de GitHub.
 
 ## Setup
 
 1. Copiar `backend.tfbackend.example` a `backend.tfbackend` y completar
-   `bucket` y `profile`. El `key` define dónde vive el state dentro del bucket.
+   `bucket`, `profile` y `region`. El `key` define dónde vive el state dentro
+   del bucket.
 
 2. Copiar `terraform.tfvars.example` a `terraform.tfvars` y completar `nrn`
    con el NRN de la organización (`organization=<ORGANIZATION_ID>`).
@@ -69,24 +70,32 @@ termina en duplicados o en errores de conflicto.
 1. Con el backend ya inicializado, cargar el state entregado:
 
    ```sh
-   tofu state list            # tiene que estar vacío antes de cargarlo
+   tofu state list            # sin recursos antes de cargarlo
    tofu state push terraform.tfstate
-   tofu state list            # ahora lista los recursos
+   tofu state list            # ahora lista module.service_definitions_packages["<key>"]...
    ```
 
-   Alternativa: subir el archivo directo al bucket, en la ruta del `key`,
-   antes del `tofu init`.
+   Si el backend ya tiene un state propio, `push` falla por lineage o serial:
+   no usar `-force` sin revisar cuál de los dos es el correcto.
+
+   Alternativa: subir el archivo con `aws s3 cp` al mismo `key` del
+   `backend.tfbackend` y después correr `tofu init`.
 
 2. Planificar:
 
    ```sh
-   tofu plan -var-file=./terraform.tfvars -out=handover.tfplan
+   tofu plan -out=handover.tfplan
    ```
+
+   `terraform.tfvars` se carga solo. El `.tfplan` contiene los valores de las
+   variables sensibles (API key, token): no compartirlo.
 
    El resultado esperado es **sin cambios** o, a lo sumo, updates in place.
    Si el plan muestra `create` o `destroy` de `nullplatform_service_specification`
-   o `nullplatform_package`, el state no corresponde a la organización del
-   `nrn`/API key o no se cargó bien: frenar y revisar antes de seguir.
+   o `nullplatform_package`, frenar y revisar antes de seguir. Las causas
+   habituales son: el state no se cargó o el backend apunta a otro `key`, el
+   state es de otra organización que la del `nrn`/API key, o las direcciones
+   del state no coinciden con `module.service_definitions_packages["<key>"]`.
 
 3. Recién con el plan revisado:
 
@@ -97,16 +106,17 @@ termina en duplicados o en errores de conflicto.
 ## Operación
 
 Cualquier cambio sigue el mismo ciclo: editar, `tofu plan`, revisar, `tofu apply`.
-Los cambios hechos a mano desde la UI de nullplatform sobre estos recursos se
-pierden en el próximo apply.
+Los cambios hechos a mano desde la UI de nullplatform sobre atributos que
+maneja este layer se revierten en el próximo apply: revisar siempre el plan.
 
 ### Habilitar, deshabilitar o cambiar versión de un servicio
 
 Se hace con `var.service_definitions`. Ojo: definirla en `terraform.tfvars`
 **reemplaza el mapa completo** del default de `variables.tf`, no lo mergea. Un
 servicio que no aparezca en el mapa queda con los defaults (`enabled = true`,
-`version = "main"`), y `main` no es un ref válido (ver
-[Versionado](#versionado)). Por eso, si se sobreescribe, copiar el mapa entero
+`version = "main"`): en los servicios que leen specs de GitHub `main` falla la
+validación (ver [Versionado](#versionado)), y los servicios locales publican el
+package con versión `main`. Por eso, si se sobreescribe, copiar el mapa entero
 y modificar solo la entrada que cambia; o editar el default directamente en
 `variables.tf`.
 
@@ -120,17 +130,16 @@ que son privados, así que el token tiene que tener acceso de lectura a ellos.
 `api_manager_publisher` y `s2s_traffic_migrator` usan specs locales
 (`services/`) y no dependen del token.
 
-Un token inválido, vencido o sin permiso sobre el repo hace que
-`raw.githubusercontent.com` devuelva **404**, y el provider `http` no valida el
-status: el 404 llega como un cuerpo de texto `"404: Not Found"` y el error
-recién aparece al parsearlo, sin mencionar el token por ningún lado:
+Un token inválido, vencido o sin acceso al repo hace que
+`raw.githubusercontent.com` devuelva 401, 403 o 404, y el `plan` falla con:
 
 ```
-Call to function "jsondecode" failed: extraneous data after JSON object.
+Fetch of https://raw.githubusercontent.com/<org>/<repo>/refs/<ref_type>/<version>/... returned HTTP 404, expected 200.
 ```
 
-Si ves eso en el primer `plan`, revisá el token y los permisos del repo antes
-que cualquier otra cosa.
+Un 404 también puede ser un `version`/`ref_type` que no existe (por ejemplo un
+tag con `ref_type = "heads"`). Revisar el token y el ref antes que cualquier
+otra cosa.
 
 ## Versionado
 
@@ -139,14 +148,18 @@ Cada servicio pinea dos cosas por separado, en el default de
 
 | campo | qué pinea |
 |---|---|
-| `version` + `ref_type` | el tag del repo del servicio, de donde salen las specs y el código |
+| `version` + `ref_type` | el ref del repo del servicio, de donde salen las specs y el código. `ref_type`: `tags` para un tag, `heads` para un branch (default), `""` para un SHA |
 | `package_version` | el semver con el que se publica el package en nullplatform |
 
 Son independientes: el package se versiona con su propio criterio y no tiene
-por qué seguir la numeración del repo.
+por qué seguir la numeración del repo. Si `package_version` se omite, el package
+usa el valor de `version` (caso `aws_s3_bucket`).
 
-`version` no acepta branches móviles (`main`, `master`, `head`, `latest`): el
-módulo valida que sea un ref pineado, para que el mismo apply no registre
-contenido distinto según el día. La excepción son `api_manager_publisher` y
-`s2s_traffic_migrator`: sus specs son locales (`services/`), no se lee ningún
-repo, y en ellos solo cuenta `package_version`.
+El módulo rechaza `version` vacío o `main`, `master`, `head`, `latest`, para
+que el mismo apply no registre contenido distinto según el día. Cualquier otro
+branch pasa la validación: para que sea inmutable usar `ref_type = "tags"` o un
+SHA.
+
+En `api_manager_publisher` y `s2s_traffic_migrator` las specs son locales
+(`services/`): la validación no aplica y no se lee ningún repo, pero `version`
+igual se registra como `reference` del artifact del package.
