@@ -19,13 +19,14 @@ setup() {
   export CONTEXT
   CONTEXT=$(jq -nc '{application:{nrn:"organization=1:account=2:namespace=3:application=4"},
     scope:{nrn:"organization=1:account=2:namespace=3:application=4:scope=5", dimensions:{environment:"qas", site:"main"}}}')
-  unset NP_MOCK_FAIL
+  unset NP_MOCK_FAIL NP_MOCK_GARBAGE
 
   cat >"$BATS_TEST_TMPDIR/bin/np" <<'MOCK'
 #!/usr/bin/env bash
 jq -nc '$ARGS.positional' --args -- "$@" >>"$NP_CALLS_LOG"
 if [ "${1-} ${2-}" != "link list" ]; then echo "mock np: comando no esperado: $*" >&2; exit 2; fi
 if [ "${NP_MOCK_FAIL:-0}" = "1" ]; then echo "np: unauthorized" >&2; exit 1; fi
+if [ "${NP_MOCK_GARBAGE:-0}" = "1" ]; then echo "warning: nueva version disponible"; exit 0; fi
 jq -nc --argjson links "$NP_MOCK_LINKS" '{results: $links}'
 MOCK
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
@@ -139,4 +140,12 @@ CREDENTIAL_ENV='[{"name":"PORT","value":"8080"},{"name":"APIM_APP_ID","valueFrom
   for workflow in initial blue_green; do
     [ "$(yq -o=json -I=0 '.steps[] | select(.name == "inject_apim_credentials") | pick(["type", "after", "file"])' "$OVERRIDE/deployment/workflows/$workflow.yaml")" = '{"type":"script","after":"create deployment","file":"$OVERRIDES_PATH/deployment/scripts/inject_apim_credentials"}' ]
   done
+}
+
+@test "si la respuesta de los links no se puede leer corta el deployment" {
+  export NP_MOCK_GARBAGE=1
+  run_step
+  [ "$status" -ne 0 ]
+  [[ "$output" != *NEXT_STEP_RAN* ]] || false
+  [ "$(app_env)" = '[{"name":"PORT","value":"8080"}]' ]
 }
