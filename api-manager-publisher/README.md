@@ -32,7 +32,7 @@ Qué se manda a APIM y de dónde sale:
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
 | `metadata.parentRefs` | `APIM_PUBLISH_PARENT_REFS` (hasta que exista la API de scheduler) |
-| `metadata.backend` | gateway privado: `name` de `providers["container-orchestration"].gateway.gateway_private_name` (o `INGRESS_GATEWAY_NAME`), `namespace` `APIM_GATEWAY_NAMESPACE` (`gateways`), `port` `APIM_GATEWAY_PORT` (`8080`) |
+| `metadata.backend` | Service del ingreso del cluster: `name` y `namespace` de `LOCAL_INGRESS_HOST` (igual que `s2s-traffic-migrator`), `port` `APIM_GATEWAY_PORT` (`443`) |
 | `metadata.backend.destinationFqdn` | `https://` + dominio del scope elegido; APIM reescribe el host a ese valor |
 | `callbackUrl` | la acción de nullplatform |
 
@@ -47,8 +47,8 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `APIM_PUBLISH_PARENT_REFS` | Gateways: `namespace/nombre[:listener]` separados por coma (por ejemplo `gateways/s2s-ingress`) o una lista JSON |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
 | `APIM_PUBLISH_ENVIRONMENT` | **solo para pruebas**: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope en todo lo que publique ese agente. Nunca en un agente productivo: un scope de dev quedaría publicado como `prd` |
-| `INGRESS_GATEWAY_NAME` | gateway privado cuando el provider no trae `gateway.gateway_private_name` |
-| `APIM_GATEWAY_NAMESPACE`, `APIM_GATEWAY_PORT` | opcionales: namespace (`gateways`) y puerto (`8080`) del gateway privado que va como backend |
+| `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
+| `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
 | `APIM_CA_CERT` | opcional: CA con la que validar a APIM si usa una privada, en PEM o en base64 |
 

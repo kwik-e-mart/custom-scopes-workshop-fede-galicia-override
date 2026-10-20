@@ -102,22 +102,17 @@ fi
 
 if ! type -t require_gateway_backend >/dev/null 2>&1; then
 require_gateway_backend() {
-  local gateway port="${APIM_GATEWAY_PORT:-8080}" namespace="${APIM_GATEWAY_NAMESPACE:-gateways}"
-  gateway=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].gateway.gateway_private_name // empty')
-  gateway="${gateway:-${INGRESS_GATEWAY_NAME:-}}"
-  if [ -z "$gateway" ]; then
-    fail "publisher: no hay gateway privado: falta providers[\"container-orchestration\"].gateway.gateway_private_name o INGRESS_GATEWAY_NAME en el agente."
+  local host="${LOCAL_INGRESS_HOST-s2s-ingress-istio.gateways.svc.cluster.local}" port="${APIM_GATEWAY_PORT:-443}" name namespace
+  local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+  if [[ ! "$host" =~ ^($label)\.($label)(\..*)?$ ]]; then
+    fail "publisher: LOCAL_INGRESS_HOST inválido: '$host'. Tiene que ser <service>.<namespace>[.svc.cluster.local] del ingreso del cluster."
   fi
-  if [[ ! "$gateway" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
-    fail "publisher: el gateway privado '$gateway' no es un nombre de Kubernetes válido."
-  fi
-  if [[ ! "$namespace" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
-    fail "publisher: APIM_GATEWAY_NAMESPACE inválido: '$namespace'."
-  fi
+  name="${BASH_REMATCH[1]}"
+  namespace="${BASH_REMATCH[3]}"
   if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]]; then
     fail "publisher: APIM_GATEWAY_PORT inválido: '$port'."
   fi
-  GATEWAY_BACKEND=$(jq -nc --arg name "$gateway" --arg namespace "$namespace" --argjson port "$port" \
+  GATEWAY_BACKEND=$(jq -nc --arg name "$name" --arg namespace "$namespace" --argjson port "$port" \
     '{kind: "Service", name: $name, namespace: $namespace, port: $port}')
 }
 fi

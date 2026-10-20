@@ -19,10 +19,8 @@ set_request() {
 }
 
 set_context() {
-  CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" --arg gateway "${3-gateway-private}" \
-    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":(
-      {cluster:({namespace:"payments"} + (if $cluster == "" then {} else {name:$cluster} end))}
-      + (if $gateway == "" then {} else {gateway:{gateway_private_name:$gateway}} end))}}')
+  CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" \
+    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":{cluster:({namespace:"payments"} + (if $cluster == "" then {} else {name:$cluster} end))}}}')
 }
 
 pushed() {
@@ -40,7 +38,7 @@ pushed() {
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
-   "backend":{"kind":"Service","name":"gateway-private","namespace":"gateways","port":8080,
+   "backend":{"kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443,
               "destinationFqdn":"https://test-kuadrant-main.ms.ws.bancogalicia.com.ar"}}}
 JSON
 )" ]
@@ -117,41 +115,35 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "el backend es el gateway privado del provider y el destino es el dominio del scope elegido" {
+@test "el backend es el Service del ingreso local y el destino es el dominio del scope elegido" {
   set_request '{}' '{"scope":"draft","ref_type":"branch","ref":"main"}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ ! -s "$KUBECTL_CALLS_LOG" ]
-  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"https://test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"gateway-private","namespace":"gateways","port":8080}' ]
+  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"https://test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443}' ]
 }
 
-@test "sin gateway privado en el provider usa INGRESS_GATEWAY_NAME" {
-  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc ""
-  export INGRESS_GATEWAY_NAME=s2s-ingress
+@test "LOCAL_INGRESS_HOST define el Service y el namespace del ingreso" {
+  export LOCAL_INGRESS_HOST=gateway-private-istio.istio-gateways.svc.cluster.local
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .metadata.backend.name "$CURL_BODIES_DIR/0.json")" = "s2s-ingress" ]
+  [ "$(jq -c '.metadata.backend | [.name, .namespace]' "$CURL_BODIES_DIR/0.json")" = '["gateway-private-istio","istio-gateways"]' ]
 }
 
-@test "el gateway del provider gana sobre INGRESS_GATEWAY_NAME" {
-  export INGRESS_GATEWAY_NAME=s2s-ingress
+@test "APIM_GATEWAY_PORT cambia el puerto del ingreso" {
+  export APIM_GATEWAY_PORT=8080
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .metadata.backend.name "$CURL_BODIES_DIR/0.json")" = "gateway-private" ]
+  [ "$(jq -r .metadata.backend.port "$CURL_BODIES_DIR/0.json")" = "8080" ]
 }
 
-@test "APIM_GATEWAY_PORT y APIM_GATEWAY_NAMESPACE cambian el destino del gateway" {
-  export APIM_GATEWAY_PORT=443 APIM_GATEWAY_NAMESPACE=istio-gateways
-  queue_response 200 "$(pushed)"
-  run_step
-  [ "$(jq -c '.metadata.backend | [.port, .namespace]' "$CURL_BODIES_DIR/0.json")" = '[443,"istio-gateways"]' ]
-}
-
-@test "sin gateway privado ni INGRESS_GATEWAY_NAME falla sin llamar a APIM" {
-  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc ""
-  run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *gateway_private_name*INGRESS_GATEWAY_NAME* ]]
+@test "un LOCAL_INGRESS_HOST vacio o que no es service.namespace falla sin llamar a APIM" {
+  for host in "" "Gateway Privado.gateways.svc" "s2s-ingress-istio"; do
+    export LOCAL_INGRESS_HOST="$host"
+    run_step
+    [ ! -s "$CURL_CALLS_LOG" ]
+    [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *LOCAL_INGRESS_HOST* ]] || false
+  done
 }
 
 @test "un APIM_GATEWAY_PORT que no es un puerto falla sin llamar a APIM" {
@@ -279,15 +271,4 @@ JSON
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"dominio"* ]]
-}
-
-@test "un gateway o namespace que no es un nombre de kubernetes falla sin llamar a APIM" {
-  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc "Gateway Privado"
-  run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"Gateway Privado"* ]] || false
-  set_context https://github.com/zosc-zosconnect/test-kuadrant
-  export APIM_GATEWAY_NAMESPACE="gateways/../x"
-  run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
 }
