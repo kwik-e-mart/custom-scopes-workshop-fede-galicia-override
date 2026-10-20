@@ -11,7 +11,13 @@ unpublish() {
   load_notification
   local api_id
   api_id=$(notification_field '.service.attributes.api_id')
-  close_action success "APIM todavía no tiene endpoint de baja: la API ${api_id:-sin apiId} sigue publicada. Pedí la baja a APIM por fuera."
+  if [ -z "$api_id" ]; then
+    close_action success "APIM todavía no tiene endpoint de baja: la API sin apiId sigue publicada. Pedí la baja a APIM por fuera."
+    return
+  fi
+  require_provider_namespace
+  detach_scope_auth_policies "$api_id" "$PROVIDER_NAMESPACE"
+  close_action success "APIM todavía no tiene endpoint de baja: la API $api_id sigue publicada, pero el scope ya no acepta sus credenciales. Pedí la baja a APIM por fuera."
 }
 
 unpublish
