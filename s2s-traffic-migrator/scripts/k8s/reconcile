@@ -10,7 +10,11 @@ GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
-MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io,gateway.gateway.networking.k8s.io"
+# El Gateway NO está acá: con NAMESPACE_SETUP_ENABLED=false lo crea el chart del namespace y
+# borrarlo dejaría sin egreso a todo el namespace, no sólo a esta instancia. Con el flag en true se
+# agrega abajo, que es el único caso en que es nuestro.
+MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io"
+[ "${NAMESPACE_SETUP_ENABLED:-false}" = "true" ] && MANAGED_KINDS="${MANAGED_KINDS},gateway.gateway.networking.k8s.io"
 GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
 
 # `set -euo pipefail` está arriba pero NO alcanza: el runner de workflows del CLI ejecuta cada step
@@ -508,11 +512,8 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Programmed "gateway/$GATEWAY_N
   log error "el Gateway $GATEWAY_NAME no llegó a Programmed=True. El tráfico NO se desvió."
   log error "$(kubectl -n "$NAMESPACE" get "gateway/$GATEWAY_NAME" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}' 2>/dev/null || true)"
-  log error "  Estado de los pods del data plane:"
-  log error "$(kubectl -n "$NAMESPACE" get pods -l "gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME" \
-    -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,FASE:.status.phase --no-headers 2>/dev/null || true)"
-  log error "  En CRC, un pod trabado en ContainerCreating suele ser el token de multus vencido (Gotcha #23):"
-  log error "    kubectl delete pod -n openshift-multus -l app=multus"
+  log error "  Mirá los pods del data plane: kubectl -n $NAMESPACE get pods -l gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME"
+  log error "  En CRC, un pod trabado en ContainerCreating suele ser el token de multus vencido (Gotcha #23)."
   exit 1
 fi
 if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
@@ -527,7 +528,6 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
   if [ "$NAMESPACE_SETUP_ENABLED" = "true" ]; then
     if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/rotar-$NAMESPACE-init" --timeout=180s; then
       log error "el Job rotar-$NAMESPACE-init no terminó: sin él no hay clave de firma y la AuthPolicy nunca va a enforcear."
-      log error "$(kubectl -n "$NAMESPACE" logs "job/rotar-$NAMESPACE-init" --tail=20 2>&1)"
       exit 1
     fi
   fi
