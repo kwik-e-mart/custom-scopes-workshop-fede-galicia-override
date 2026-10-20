@@ -884,7 +884,7 @@ sin_sigla() {
   export SIGLA_CTX=AYRM
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | yq -N 'select(.metadata and .metadata.name != "s2s-validator") | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
+  [ "$(echo "$output" | yq -N 'select(.metadata and (.metadata.name | test("^s2s-validator") | not)) | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
   [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.metadata.labels.sigla' | sort -u)" = "AYRM" ]
   [ "$(echo "$output" | yq -N 'select(.kind == "CronJob") | (.spec.jobTemplate.metadata.labels.sigla, .spec.jobTemplate.spec.template.metadata.labels.sigla)' | sort -u)" = "AYRM" ]
 }
@@ -906,8 +906,8 @@ sin_sigla() {
   export SIGLA_CTX=AYRM
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .metadata.name')" = "s2s-validator" ]
-  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .metadata.labels.sigla')" = "null" ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator"))) | .metadata.name' | grep -c .)" -ge 1 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator"))) | .metadata.labels.sigla' | sort -u)" = "null" ]
 }
 
 @test "la sigla llega del build_context al contexto de render en create y en delete" {

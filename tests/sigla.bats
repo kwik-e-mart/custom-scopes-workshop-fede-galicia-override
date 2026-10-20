@@ -78,3 +78,10 @@ setup() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   [ "$(head -1 <<< "$output" | jq -c .)" = '{"k8s_modifiers":{"deployment":{}}}' ]
 }
+
+@test "los workflows que re-aplican objetos agregan la sigla después de build context" {
+  local wf
+  for wf in initial blue_green switch_traffic rollback finalize; do
+    [ "$(yq '.steps[] | select(.name == "add_sigla_label") | .after + " " + .file' "${BATS_TEST_DIRNAME}/../override/deployment/workflows/$wf.yaml")" = 'build context $OVERRIDES_PATH/deployment/scripts/add_sigla_label' ] || { echo "$wf no corre add_sigla_label después de build context" >&2; false; }
+  done
+}
