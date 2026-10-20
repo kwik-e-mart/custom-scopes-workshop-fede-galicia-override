@@ -18,8 +18,8 @@ ConfigMap, así las repeticiones se comportan como en APIM aunque el pod se rein
 | `GET /v1/operations/{id}` | Estado de la operación (respaldo del polling). |
 
 Si el `callbackUrl` es de un link (`/link/{id}/action/{id}`), el mock lee el link en nullplatform y la API es
-la del service publicado (`apim-<serviceId>`), así la suscripción queda atada a lo que publicó el publisher.
-Si no, la API sale del RITM (`RITM0012345` → `api-0012345`). El id es `sub-<api>--<namespace>`: repetir la
+la del service publicado (`apim-<serviceId>`), así la suscripción queda atada a lo que publicó el publisher;
+si no puede leer el link responde `503`. Con otro callback, la API sale del RITM (`RITM0012345` → `api-0012345`). El id es `sub-<api>--<namespace>`: repetir la
 misma API en el mismo namespace da `409`, como una suscripción namespace × API ya existente.
 
 | RITM | Respuesta |
