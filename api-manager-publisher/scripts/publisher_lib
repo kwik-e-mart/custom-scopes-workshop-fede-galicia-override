@@ -73,9 +73,9 @@ require_parent_refs() {
 }
 fi
 
-if ! type -t require_scope_backend >/dev/null 2>&1; then
-require_scope_backend() {
-  local scope="$1" application_id="$2" namespace="$3" scopes scope_id routes
+if ! type -t require_scope_destination >/dev/null 2>&1; then
+require_scope_destination() {
+  local scope="$1" application_id="$2" scopes scope_id
   if [ -z "$scope" ]; then
     fail "publisher: falta el scope que atiende la API."
   fi
@@ -83,19 +83,32 @@ require_scope_backend() {
     fail "publisher: el contexto no trae application.id; no se puede resolver el scope."
   fi
   scopes=$(np scope list --application-id "$application_id" --status active --format json \
-    --query '[ (.results? // .) | .[]? | {slug, id, dimensions} ]') \
+    --query '[ (.results? // .) | .[]? | {slug, id, domain, dimensions} ]') \
     || fail "publisher: falló el listado de scopes de la aplicación $application_id."
   scope_id=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .id] | first // empty')
-  SCOPE_ENVIRONMENT=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
   if [[ ! "$scope_id" =~ ^[0-9]+$ ]]; then
     fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
   fi
-  routes=$(kubectl -n "$namespace" get httproute -l "nullplatform=true,scope_id=$scope_id" -o json) \
-    || fail "publisher: no se pudieron leer las rutas del scope '$scope' en el namespace $namespace."
-  SCOPE_BACKEND=$(printf %s "$routes" | jq -c '[.items[].spec.rules[]?.backendRefs[]? | select((.kind // "Service") == "Service")]
-    | sort_by(-(.weight // 1)) | first // empty | {kind: "Service", name, port}' 2>/dev/null) || SCOPE_BACKEND=""
-  if [ -z "$SCOPE_BACKEND" ]; then
-    fail "publisher: el scope '$scope' no tiene un despliegue con rutas en el cluster; desplegalo antes de publicar."
+  SCOPE_ENVIRONMENT=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
+  SCOPE_DOMAIN=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain // empty] | first // empty')
+  if [ -z "$SCOPE_DOMAIN" ]; then
+    fail "publisher: el scope '$scope' no tiene dominio; no hay a dónde mandar el tráfico de la API."
   fi
+}
+fi
+
+if ! type -t require_gateway_backend >/dev/null 2>&1; then
+require_gateway_backend() {
+  local gateway port="${APIM_GATEWAY_PORT:-8080}" namespace="${APIM_GATEWAY_NAMESPACE:-gateways}"
+  gateway=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].gateway.gateway_private_name // empty')
+  gateway="${gateway:-${INGRESS_GATEWAY_NAME:-}}"
+  if [ -z "$gateway" ]; then
+    fail "publisher: no hay gateway privado: falta providers[\"container-orchestration\"].gateway.gateway_private_name o INGRESS_GATEWAY_NAME en el agente."
+  fi
+  if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]]; then
+    fail "publisher: APIM_GATEWAY_PORT inválido: '$port'."
+  fi
+  GATEWAY_BACKEND=$(jq -nc --arg name "$gateway" --arg namespace "$namespace" --argjson port "$port" \
+    '{kind: "Service", name: $name, namespace: $namespace, port: $port}')
 }
 fi

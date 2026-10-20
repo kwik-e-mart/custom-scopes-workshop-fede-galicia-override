@@ -9,7 +9,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 ## Cómo se usa
 
 - **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (APIM genera su
-  HTTPRoute contra el Service del despliegue activo de ese scope), la referencia del repo (`branch` / `tag` / `commit`,
+  HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope), la referencia del repo (`branch` / `tag` / `commit`,
   por default `main`), el legajo y, opcional, el rate limit (`window` + `hits_per_window`). La acción queda en
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
@@ -32,13 +32,12 @@ Qué se manda a APIM y de dónde sale:
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
 | `metadata.parentRefs` | `APIM_PUBLISH_PARENT_REFS` (hasta que exista la API de scheduler) |
-| `metadata.backend` | Service del despliegue activo del scope: el backend con más peso de sus HTTPRoute (`nullplatform=true,scope_id=<id>`) |
+| `metadata.backend` | gateway privado: `name` de `providers["container-orchestration"].gateway.gateway_private_name` (o `INGRESS_GATEWAY_NAME`), `namespace` `APIM_GATEWAY_NAMESPACE` (`gateways`), `port` `APIM_GATEWAY_PORT` (`8080`) |
+| `metadata.backend.destinationFqdn` | `https://` + dominio del scope elegido; APIM reescribe el host a ese valor |
 | `callbackUrl` | la acción de nullplatform |
 
-> [!WARNING]
-> El HTTPRoute de APIM apunta al Service del despliegue que estaba activo al publicar. Después de un deploy
-> nuevo del scope, ese Service cambia (`d-<scope>-<deployment>`) y la ruta de APIM queda apuntando al anterior
-> hasta que se republique. Cómo sincronizarlo está pendiente de definir con APIM.
+El tráfico de la API vuelve a entrar por el gateway privado con el host del scope, así que siempre llega al
+despliegue activo del scope (también durante un blue-green) sin republicar.
 
 ## Configuración del agente
 
@@ -48,6 +47,8 @@ Qué se manda a APIM y de dónde sale:
 | `APIM_PUBLISH_PARENT_REFS` | Gateways: `namespace/nombre[:listener]` separados por coma (por ejemplo `gateways/s2s-ingress`) o una lista JSON |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
 | `APIM_PUBLISH_ENVIRONMENT` | **solo para pruebas**: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope en todo lo que publique ese agente. Nunca en un agente productivo: un scope de dev quedaría publicado como `prd` |
+| `INGRESS_GATEWAY_NAME` | gateway privado cuando el provider no trae `gateway.gateway_private_name` |
+| `APIM_GATEWAY_NAMESPACE`, `APIM_GATEWAY_PORT` | opcionales: namespace (`gateways`) y puerto (`8080`) del gateway privado que va como backend |
 | `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
 | `APIM_CA_CERT` | opcional: CA con la que validar a APIM si usa una privada, en PEM o en base64 |
 

@@ -15,12 +15,14 @@ set_request() {
   NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" \
     '{notification:{id:"act-1",type:"create",service:{id:"svc-1",attributes:$a},parameters:$p}}')
   export NP_MOCK_SCOPES
-  NP_MOCK_SCOPES=$(jq -nc --arg env "$3" '[{slug:"main",id:1049050904,dimensions:{environment:$env}},{slug:"draft",id:555,dimensions:{environment:$env}}]')
+  NP_MOCK_SCOPES=$(jq -nc --arg env "$3" '[{slug:"main",id:1049050904,domain:"test-kuadrant-main.ms.ws.bancogalicia.com.ar",dimensions:{environment:$env}},{slug:"draft",id:555,domain:"test-kuadrant-draft.ms.ws.bancogalicia.com.ar",dimensions:{environment:$env}}]')
 }
 
 set_context() {
-  CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" \
-    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":{cluster:({namespace:"payments"} + (if $cluster == "" then {} else {name:$cluster} end))}}}')
+  CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" --arg gateway "${3-gateway-private}" \
+    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":(
+      {cluster:({namespace:"payments"} + (if $cluster == "" then {} else {name:$cluster} end))}
+      + (if $gateway == "" then {} else {gateway:{gateway_private_name:$gateway}} end))}}')
 }
 
 pushed() {
@@ -38,7 +40,8 @@ pushed() {
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
-   "backend":{"kind":"Service","name":"d-1049050904-222","namespace":"payments","port":8080}}}
+   "backend":{"kind":"Service","name":"gateway-private","namespace":"gateways","port":8080,
+              "destinationFqdn":"https://test-kuadrant-main.ms.ws.bancogalicia.com.ar"}}}
 JSON
 )" ]
   [ -z "$(np_last_update_flag --status)" ]
@@ -114,11 +117,48 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "el backend es el Service del despliegue activo del scope" {
+@test "el backend es el gateway privado del provider y el destino es el dominio del scope elegido" {
+  set_request '{}' '{"scope":"draft","ref_type":"branch","ref":"main"}' qas
   queue_response 200 "$(pushed)"
   run_step
-  grep -q -- "-n payments get httproute -l nullplatform=true,scope_id=1049050904 -o json" "$KUBECTL_CALLS_LOG"
-  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"kind":"Service","name":"d-1049050904-222","namespace":"payments","port":8080}' ]
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"https://test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"gateway-private","namespace":"gateways","port":8080}' ]
+}
+
+@test "sin gateway privado en el provider usa INGRESS_GATEWAY_NAME" {
+  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc ""
+  export INGRESS_GATEWAY_NAME=s2s-ingress
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .metadata.backend.name "$CURL_BODIES_DIR/0.json")" = "s2s-ingress" ]
+}
+
+@test "el gateway del provider gana sobre INGRESS_GATEWAY_NAME" {
+  export INGRESS_GATEWAY_NAME=s2s-ingress
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .metadata.backend.name "$CURL_BODIES_DIR/0.json")" = "gateway-private" ]
+}
+
+@test "APIM_GATEWAY_PORT y APIM_GATEWAY_NAMESPACE cambian el destino del gateway" {
+  export APIM_GATEWAY_PORT=443 APIM_GATEWAY_NAMESPACE=istio-gateways
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -c '.metadata.backend | [.port, .namespace]' "$CURL_BODIES_DIR/0.json")" = '[443,"istio-gateways"]' ]
+}
+
+@test "sin gateway privado ni INGRESS_GATEWAY_NAME falla sin llamar a APIM" {
+  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc ""
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *gateway_private_name*INGRESS_GATEWAY_NAME* ]]
+}
+
+@test "un APIM_GATEWAY_PORT que no es un puerto falla sin llamar a APIM" {
+  export APIM_GATEWAY_PORT=http
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_GATEWAY_PORT* ]]
 }
 
 @test "un scope que no es de la aplicacion falla sin llamar a APIM" {
@@ -128,18 +168,11 @@ JSON
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"otro"* ]]
 }
 
-@test "un scope sin despliegue en el cluster falla sin llamar a APIM" {
-  export KUBECTL_MOCK_ROUTES='{"items":[]}'
+@test "un scope sin dominio falla sin llamar a APIM" {
+  NP_MOCK_SCOPES='[{"slug":"main","id":1049050904,"dimensions":{"environment":"qas"}}]'
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"despliegue"* ]]
-}
-
-@test "si no se pueden leer las rutas del scope falla sin llamar a APIM" {
-  export KUBECTL_MOCK_FAIL=1
-  run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"rutas"* ]]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"dominio"* ]]
 }
 
 @test "el ambiente sale de la dimension del scope elegido: dev no se publica" {
