@@ -69,6 +69,11 @@ case "$*" in
   *"get svc reports -o json"*)
     echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080,"targetPort":8080,"protocol":"TCP"}]}}' ;;
   *"get svc -o json"*)   echo '{"items":[]}' ;;
+  *"get authpolicy.kuadrant.io -l egress-interceptor/managed=true"*)
+    # El reconcile espera Enforced en cada validador que emitió; el mock lista el de esta route.
+    printf 's2s-validator-k-8-s-reports-internal' ;;
+  *"get httproute -o json"*)
+    echo '{"items":[{"metadata":{"name":"k-8-s-reports-internal"},"spec":{"hostnames":["f.example"]}}]}' ;;
   *"get referencegrant"*)
     if [ -n "${FALLA_GRANTS:-}" ]; then
       echo 'Error from server (Forbidden): referencegrants.gateway.networking.k8s.io is forbidden: User "system:serviceaccount:nullplatform-tools:np-agent" cannot list resource "referencegrants" in API group "gateway.networking.k8s.io" in the namespace "example"' >&2
@@ -123,7 +128,7 @@ correr() {
   NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
   NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
-  INTERCEPTIONS_JSON='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":50}]' \
+  INTERCEPTIONS_JSON='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":50,"ingress_route":"k-8-s-reports-internal"}]' \
   bash -c '
     source "'"$SVC_DIR"'/logging"
     # ESTE `if !` es lo que desactiva errexit en el script sourceado, igual que el runner del CLI.
@@ -448,16 +453,18 @@ correr_delete() {
 @test "con origen EKS tambien se exige que el validador de ingreso quede Enforced" {
   # Era el agujero: el wait vivia dentro del if de plataforma, asi que con origen EKS el service
   # desviaba el trafico sin haber verificado nunca que el ingreso valide el token.
-  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="authpolicy/s2s-validator" run correr
+  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="authpolicy/s2s-validator-" run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"SIN validar el token"* ]]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
-@test "con origen EKS el validador se espera en el namespace del Gateway" {
+@test "con origen EKS el validador se espera donde vive la route del scope" {
+  # Con origen EKS la route del destino es la del scope y vive en el namespace de la app, asi que
+  # el validador que cuelga de ella va ahi y no en el del Gateway.
   SIGNING_STRATEGY=cluster-keys run correr
-  run grep -c -- '-n gateways wait --for=condition=Enforced authpolicy/s2s-validator' "$KUBECTL_CALLS"
+  run grep -c -- '-n payments wait --for=condition=Enforced authpolicy/s2s-validator-' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
 }
 
