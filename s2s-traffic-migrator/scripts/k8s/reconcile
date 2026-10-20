@@ -10,9 +10,6 @@ GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
-# El Gateway NO está acá: con NAMESPACE_SETUP_ENABLED=false lo crea el chart del namespace y
-# borrarlo dejaría sin egreso a todo el namespace, no sólo a esta instancia. Con el flag en true se
-# agrega abajo, que es el único caso en que es nuestro.
 MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io"
 [ "${NAMESPACE_SETUP_ENABLED:-false}" = "true" ] && MANAGED_KINDS="${MANAGED_KINDS},gateway.gateway.networking.k8s.io"
 GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
@@ -33,9 +30,6 @@ set_selector() {  # <svc> <json del selector>
     -p "[{\"op\":\"replace\",\"path\":\"/spec/selector\",\"value\":$2}]"
 }
 
-# Devuelve vacío SOLO si el Service no existe. Un Forbidden o un error de API abortan: tratarlos
-# como "sin selector" manda al revert y al swap por la rama equivocada, sobre un dato que es el
-# único registro de cómo volver atrás.
 current_selector() {
   local salida
   salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath='{.spec.selector}' 2>&1) && { printf '%s' "$salida"; return 0; }
@@ -274,9 +268,6 @@ if [ "$PLATFORM" != "eks" ]; then
   for svc in $DECLARED_SERVICES; do
     PERCENT=$(echo "$INTERCEPTIONS_JSON" | jq -r --arg s "$svc" '.[] | select(.service_name==$s) | .percent')
     [ "$PERCENT" -lt 100 ] || continue
-    # El stderr NO se descarta: un Forbidden devuelve vacío igual que un Service sin pods, y
-    # tratarlos igual hace que el service acuse "no tiene endpoints" sobre un destino que está
-    # perfectamente sano. Un NotFound sí es ausencia y cae al siguiente candidato.
     LOCAL_ENDPOINTS=""
     for candidato in "${svc}-local" "$svc"; do
       if salida=$(kubectl -n "$NAMESPACE" get endpoints "$candidato" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>&1); then
@@ -518,9 +509,6 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
   die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
 fi
 
-# Lo que la AuthPolicy necesita es el Secret de la clave, no el Job. Con el alta de namespace
-# delegada al chart el Job no es nuestro ni vive acá, así que se espera el Secret; sólo cuando lo
-# emitimos nosotros se espera al Job, que da un error mucho mejor.
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
   if [ "$NAMESPACE_SETUP_ENABLED" = "true" ]; then
     if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/rotar-$NAMESPACE-init" --timeout=180s; then
@@ -530,8 +518,6 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
   fi
 fi
 
-# El endpoint de JWKS es del chart, pero si no está el validador no puede bajar nada y el destino
-# responde 401. Se chequea que EXISTA, no qué sirve: su contenido es responsabilidad del chart.
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
   if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
     log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
