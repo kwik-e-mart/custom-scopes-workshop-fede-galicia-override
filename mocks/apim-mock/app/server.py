@@ -19,6 +19,7 @@ ENVIRONMENTS = ["dev", "int", "qas", "prd"]
 LEGAJO_PATTERN = re.compile(r"l[0-9]{7}")
 NAMESPACE_PATTERN = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 WINDOW_PATTERN = re.compile(r"([0-9]{1,5}(h|m|s|ms)){1,4}")
+HOSTNAME_PATTERN = re.compile(r"([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
 CALLBACK_PATH = re.compile(r"/(service|link)/[A-Za-z0-9_-]+/action/[A-Za-z0-9_-]+")
 CALLBACK_ENTITY = re.compile(r"/(service|link)/([A-Za-z0-9_-]+)/action/[A-Za-z0-9_-]+$")
 GATEWAY_API = "/apis/gateway.networking.k8s.io/v1"
@@ -247,18 +248,34 @@ def api_object_paths(namespace, name):
     ]
 
 
+def destination_host(destination):
+    if not isinstance(destination, str):
+        return None
+    parsed = urllib.parse.urlparse(destination)
+    if parsed.scheme != "https" or parsed.path not in ("", "/") or parsed.query or parsed.params or parsed.fragment:
+        return None
+    if parsed.port is not None or parsed.username or not parsed.hostname:
+        return None
+    return parsed.hostname if HOSTNAME_PATTERN.fullmatch(parsed.hostname) else None
+
+
 def api_manifests(publication):
     namespace, name, api_id = publication["namespace"], publication["apiName"], publication["apiId"]
     labels = {**publication.get("labels", {}), "app.kubernetes.io/managed-by": "apim-mock", "api-id": api_id}
     metadata = {"name": name, "namespace": namespace, "labels": labels}
     target = {"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": name}
     backend = {"group": "", "kind": "Service", "name": name, "namespace": namespace, "port": 8080, "weight": 1}
-    backend.update(publication.get("backend") or {})
+    requested = dict(publication.get("backend") or {})
+    destination = requested.pop("destinationFqdn", None)
+    backend.update(requested)
+    rule = {"matches": [{"path": {"type": "PathPrefix", "value": "/"}}], "backendRefs": [backend]}
+    if destination:
+        rule["filters"] = [{"type": "URLRewrite", "urlRewrite": {"hostname": destination_host(destination)}}]
     manifests = [
         (f"{GATEWAY_API}/namespaces/{namespace}/httproutes/{name}", {
             "apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": metadata,
             "spec": {"parentRefs": publication["parentRefs"], "hostnames": [publication["hostname"]],
-                     "rules": [{"matches": [{"path": {"type": "PathPrefix", "value": "/"}}], "backendRefs": [backend]}]},
+                     "rules": [rule]},
         }),
         (f"{KUADRANT_API}/namespaces/{namespace}/authpolicies/{name}", {
             "apiVersion": "kuadrant.io/v1", "kind": "AuthPolicy", "metadata": metadata,
@@ -682,6 +699,8 @@ class App:
         backend = metadata.get("backend")
         if backend is not None and not (isinstance(backend, dict) and is_text(backend.get("name"))):
             return "metadata.backend tiene que tener al menos name."
+        if backend is not None and "destinationFqdn" in backend and not destination_host(backend["destinationFqdn"]):
+            return "metadata.backend.destinationFqdn tiene que ser https://<hostname>, sin path ni puerto."
         if not NAMESPACE_PATTERN.fullmatch(metadata["namespace"]) or not self.namespace_allowed_for_objects(metadata["namespace"]):
             return f"El mock no puede publicar en el namespace {metadata['namespace']}."
         return None

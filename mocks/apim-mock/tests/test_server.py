@@ -772,6 +772,34 @@ class PublishedObjectsTest(unittest.TestCase):
         self.assertIn("request.headers.app_id", json.dumps(auth["spec"]["rules"]["authorization"]))
         self.assertEqual(k8s.objects[RLP]["spec"]["limits"]["apim-limit"]["rates"], [{"limit": 100, "window": "1m"}])
 
+    def test_con_destino_reescribe_el_host_y_manda_al_gateway(self):
+        app, k8s, _, scheduler = make_app()
+        body = publish_body()
+        body["metadata"]["backend"] = {"kind": "Service", "name": "gateway-private", "namespace": "gateways", "port": 8080,
+                                       "destinationFqdn": "https://test-kuadrant-main.ms.ws.bancogalicia.com.ar"}
+        call(app, "POST", PUBLISH, body)
+        scheduler.run_all()
+        rule = k8s.objects[ROUTE]["spec"]["rules"][0]
+        self.assertEqual(rule["backendRefs"],
+                         [{"group": "", "kind": "Service", "name": "gateway-private", "namespace": "gateways", "port": 8080, "weight": 1}])
+        self.assertEqual(rule["filters"],
+                         [{"type": "URLRewrite", "urlRewrite": {"hostname": "test-kuadrant-main.ms.ws.bancogalicia.com.ar"}}])
+
+    def test_sin_destino_la_ruta_no_reescribe(self):
+        app, k8s, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        self.assertNotIn("filters", k8s.objects[ROUTE]["spec"]["rules"][0])
+
+    def test_un_destino_que_no_es_https_con_host_responde_400(self):
+        for fqdn in ["http://app.bancogalicia.com.ar", "app.bancogalicia.com.ar", "https://", "https://app.bancogalicia.com.ar/path", "https://a b", 8080]:
+            app, _, _, _ = make_app()
+            body = publish_body()
+            body["metadata"]["backend"] = {"kind": "Service", "name": "gateway-private", "namespace": "gateways", "port": 8080, "destinationFqdn": fqdn}
+            status, response = call(app, "POST", PUBLISH, body)
+            self.assertEqual(status, 400, fqdn)
+            self.assertIn("destinationFqdn", response["message"], fqdn)
+
     def test_el_backend_del_pedido_reemplaza_al_default(self):
         app, k8s, _, scheduler = make_app()
         body = publish_body()

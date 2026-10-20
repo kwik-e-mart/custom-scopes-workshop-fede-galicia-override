@@ -52,7 +52,8 @@ El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin c
 
 Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadata.name`:
 - un `HTTPRoute` colgado de `metadata.parentRefs`, con el `hostname` publicado, `PathPrefix /` y el backend de
-  `metadata.backend` (o el Service `metadata.name:8080`);
+  `metadata.backend` (o el Service `metadata.name:8080`); si viene `metadata.backend.destinationFqdn`
+  (`https://<host>`), la regla reescribe el host a ese valor (`URLRewrite`) y el backend es el gateway;
 - una `AuthPolicy` que pide `app_key` (credenciales con `api-id` de la API) y `app_id` igual al de la credencial;
 - una `RateLimitPolicy` con `hitsPerWindow` por `window`, solo si vienen los dos.
 
