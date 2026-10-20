@@ -18,7 +18,11 @@ PLAN_IDS = [plan["id"] for plan in PLANS]
 ENVIRONMENTS = ["dev", "int", "qas", "prd"]
 LEGAJO_PATTERN = re.compile(r"l[0-9]{7}")
 NAMESPACE_PATTERN = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+WINDOW_PATTERN = re.compile(r"([0-9]{1,5}(h|m|s|ms)){1,4}")
 CALLBACK_PATH = re.compile(r"/(service|link)/[A-Za-z0-9_-]+/action/[A-Za-z0-9_-]+")
+CALLBACK_ENTITY = re.compile(r"/(service|link)/([A-Za-z0-9_-]+)/action/[A-Za-z0-9_-]+$")
+GATEWAY_API = "/apis/gateway.networking.k8s.io/v1"
+KUADRANT_API = "/apis/kuadrant.io/v1"
 RITM_CONFLICT = "RITM9990409"
 RITM_NOT_APPROVED = "RITM9990422"
 RITM_UNAVAILABLE = "RITM9990503"
@@ -104,13 +108,13 @@ class ConfigMapStore:
             raise RuntimeError(f"no se pudo guardar el ConfigMap {self.name}: HTTP {status}")
 
 
-def json_http(method, url, headers, body, context=None):
+def json_http(method, url, headers, body, context=None, content_type="application/json"):
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(url, data=data, method=method)
     for key, value in headers.items():
         request.add_header(key, value)
     if data is not None:
-        request.add_header("Content-Type", "application/json")
+        request.add_header("Content-Type", content_type)
     try:
         with urllib.request.urlopen(request, timeout=15, context=context) as response:
             raw = response.read()
@@ -132,7 +136,11 @@ class K8sClient:
     def request(self, method, path, body=None):
         with open(self.token_path) as handle:
             token = handle.read().strip()
-        return json_http(method, f"{self.api_url}{path}", {"Authorization": f"Bearer {token}"}, body, self.context)
+        headers = {"Authorization": f"Bearer {token}"}
+        if method == "APPLY":
+            return json_http("PATCH", f"{self.api_url}{path}?fieldManager=apim-mock&force=true",
+                             headers, body, self.context, "application/apply-patch+yaml")
+        return json_http(method, f"{self.api_url}{path}", headers, body, self.context)
 
 
 class Notifier:
@@ -147,6 +155,29 @@ class Notifier:
                 and target.netloc == urllib.parse.urlparse(self.np_api_url).netloc
                 and CALLBACK_PATH.fullmatch(target.path) is not None
                 and not (target.query or target.fragment or target.params))
+
+    def token(self):
+        code, token = self.http("POST", f"{self.np_api_url}/token", {}, {"api_key": self.api_key})
+        if code != 200 or not token or not token.get("access_token"):
+            return None
+        return token["access_token"]
+
+    def link_service_id(self, link_id):
+        if not self.api_key:
+            return None
+        try:
+            token = self.token()
+            if not token:
+                return None
+            code, link = self.http("GET", f"{self.np_api_url}/link/{link_id}", {"Authorization": f"Bearer {token}"}, None)
+        except Exception as error:
+            log(f"apim-mock: no se pudo leer el link {link_id}: {error}")
+            return None
+        if code != 200 or not isinstance(link, dict):
+            log(f"apim-mock: no se pudo leer el link {link_id} (HTTP {code})")
+            return None
+        service_id = link.get("service_id") or link.get("serviceId")
+        return str(service_id) if service_id else None
 
     def notify(self, callback_url, message, level="info", status=None):
         if not callback_url or not self.api_key:
@@ -195,8 +226,62 @@ def publication_ref(body):
     return body.get("branch") or body.get("tag") or body.get("commit")
 
 
+def callback_entity(callback_url):
+    if not isinstance(callback_url, str):
+        return None, None
+    match = CALLBACK_ENTITY.search(urllib.parse.urlparse(callback_url).path)
+    if not match:
+        return None, None
+    return match.group(1), match.group(2)
+
+
+def credential_secret_name(subscription_id):
+    return "apim-cred-" + hashlib.sha256(subscription_id.encode()).hexdigest()[:20]
+
+
+def api_object_paths(namespace, name):
+    return [
+        f"{GATEWAY_API}/namespaces/{namespace}/httproutes/{name}",
+        f"{KUADRANT_API}/namespaces/{namespace}/authpolicies/{name}",
+        f"{KUADRANT_API}/namespaces/{namespace}/ratelimitpolicies/{name}",
+    ]
+
+
+def api_manifests(publication):
+    namespace, name, api_id = publication["namespace"], publication["apiName"], publication["apiId"]
+    labels = {**publication.get("labels", {}), "app.kubernetes.io/managed-by": "apim-mock", "api-id": api_id}
+    metadata = {"name": name, "namespace": namespace, "labels": labels}
+    target = {"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": name}
+    backend = {"group": "", "kind": "Service", "name": name, "namespace": namespace, "port": 8080, "weight": 1}
+    backend.update(publication.get("backend") or {})
+    manifests = [
+        (f"{GATEWAY_API}/namespaces/{namespace}/httproutes/{name}", {
+            "apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute", "metadata": metadata,
+            "spec": {"parentRefs": publication["parentRefs"], "hostnames": [publication["hostname"]],
+                     "rules": [{"matches": [{"path": {"type": "PathPrefix", "value": "/"}}], "backendRefs": [backend]}]},
+        }),
+        (f"{KUADRANT_API}/namespaces/{namespace}/authpolicies/{name}", {
+            "apiVersion": "kuadrant.io/v1", "kind": "AuthPolicy", "metadata": metadata,
+            "spec": {"targetRef": target, "rules": {
+                "authentication": {"apim-app-key": {
+                    "apiKey": {"selector": {"matchLabels": {"api-id": api_id}}, "allNamespaces": True},
+                    "credentials": {"customHeader": {"name": "app_key"}}}},
+                "authorization": {"apim-app-id": {"patternMatching": {"patterns": [
+                    {"predicate": "auth.identity.metadata.labels['app-id'] == request.headers.app_id"}]}}}}},
+        }),
+    ]
+    if publication.get("window") and publication.get("hitsPerWindow"):
+        manifests.append((f"{KUADRANT_API}/namespaces/{namespace}/ratelimitpolicies/{name}", {
+            "apiVersion": "kuadrant.io/v1", "kind": "RateLimitPolicy", "metadata": metadata,
+            "spec": {"targetRef": target, "limits": {"apim-limit": {"rates": [
+                {"limit": publication["hitsPerWindow"], "window": publication["window"]}]}}},
+        }))
+    return manifests
+
+
 class App:
-    def __init__(self, store, k8s, notifier, scheduler, settings):
+    def __init__(self, store, k8s, notifier, scheduler, settings, link_service_id=None):
+        self.link_service_id = link_service_id or (lambda link_id: None)
         self.store = store
         self.k8s = k8s
         self.notifier = notifier
@@ -260,10 +345,13 @@ class App:
         if not isinstance(body, dict):
             return problem(400, "Bad Request", "El cuerpo tiene que ser un objeto JSON.")
         headers = {key.lower(): value for key, value in headers.items()}
+        link_api_id = None
+        if method == "POST" and path == "/v1/subscriptions":
+            link_api_id = self.link_api_id(body.get("callbackUrl"))
         outbox = []
         with self.lock:
             try:
-                result = self.route(method, path, headers, body, outbox)
+                result = self.route(method, path, headers, body, outbox, link_api_id)
             except Exception as error:
                 log(f"apim-mock: error en {method} {path}: {error}")
                 outbox = []
@@ -272,12 +360,19 @@ class App:
             self.notifier.notify(*notification[:2], **notification[2])
         return result
 
-    def route(self, method, path, headers, body, outbox):
+    def link_api_id(self, callback_url):
+        entity, entity_id = callback_entity(callback_url)
+        if entity != "link":
+            return None
+        service_id = self.link_service_id(entity_id)
+        return f"apim-{service_id}" if service_id else None
+
+    def route(self, method, path, headers, body, outbox, link_api_id=None):
         key = headers.get("idempotency-key", "")
         if path == "/v1/plans" and method == "GET":
             return 200, {"items": PLANS}
         if path == "/v1/subscriptions" and method == "POST":
-            return self.create_subscription(body, key, outbox)
+            return self.create_subscription(body, key, outbox, link_api_id)
         match = re.fullmatch(r"/v1/subscriptions/([^/]+)", path)
         if match and method == "GET":
             return self.get_subscription(match.group(1))
@@ -325,6 +420,14 @@ class App:
         self.state["operations"][operation["id"]] = operation
         return operation
 
+    def namespace_allowed_for_objects(self, namespace):
+        if namespace.startswith("kube-") or namespace == "default":
+            return False
+        allowed = self.settings.get("allowed_namespaces") or []
+        if allowed:
+            return namespace in allowed
+        return bool(self.settings.get("allow_all_namespaces", False))
+
     def namespace_rejection(self, namespace):
         if namespace.startswith("kube-") or namespace == "default":
             return f"El namespace {namespace} no se puede suscribir desde el mock."
@@ -337,7 +440,7 @@ class App:
             return "El mock no tiene namespaces permitidos configurados para crear la credencial."
         return None
 
-    def create_subscription(self, body, key, outbox):
+    def create_subscription(self, body, key, outbox, link_api_id=None):
         if not key:
             return problem(400, "Bad Request", "Falta el header Idempotency-Key.")
         replayed = self.replay(key, body)
@@ -354,7 +457,7 @@ class App:
         if rejection:
             return problem(422, "Unprocessable Entity", rejection)
         digits = re.sub(r"[^0-9]", "", ritm) or "0"
-        api_id = f"api-{digits}"
+        api_id = link_api_id or f"api-{digits}"
         subscription_id = f"sub-{api_id}--{namespace}"
         if ritm == RITM_UNAVAILABLE:
             return problem(503, "Service Unavailable", f"ServiceNow no responde (mock: {RITM_UNAVAILABLE}).")
@@ -369,6 +472,7 @@ class App:
         self.state["subscriptions"][subscription_id] = {
             "id": subscription_id, "apiId": api_id, "consumerNamespace": namespace, "planId": body["planId"],
             "approvalRef": ritm, "tenant": self.settings["tenant"], "state": "Syncing", "operationId": operation["id"],
+            "credentialSecret": credential_secret_name(subscription_id),
         }
         self.remember(key, body, 202, operation)
         self.save()
@@ -408,8 +512,9 @@ class App:
             else:
                 notification = None
                 namespace = subscription["consumerNamespace"]
+                pending = dict(subscription)
         if notification is None:
-            secret_created = self.ensure_credential_secret(namespace)
+            secret_created = self.ensure_credential_secret(namespace) and self.ensure_gateway_credential(pending)
             with self.lock:
                 operation, subscription = self.pending_subscription(operation_id)
                 if not operation or not subscription:
@@ -445,11 +550,48 @@ class App:
             return False
         return True
 
+    def ensure_gateway_credential(self, subscription):
+        if not self.settings.get("create_secret", True):
+            return True
+        namespace = subscription["consumerNamespace"]
+        credentials_namespace = self.settings.get("credentials_namespace", "kuadrant-system")
+        name = subscription.get("credentialSecret") or credential_secret_name(subscription["id"])
+        manifest = {
+            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {
+                "name": name, "namespace": credentials_namespace,
+                "labels": {"authorino.kuadrant.io/managed-by": "authorino", "app.kubernetes.io/managed-by": "apim-mock",
+                           "api-id": subscription["apiId"], "app-id": f"mock-app-{namespace}", "consumer-ns": namespace},
+                "annotations": {"secret.kuadrant.io/plan-id": subscription["planId"],
+                                "apim.bancogalicia/approval-ref": subscription["approvalRef"]},
+            },
+            "stringData": {"api_key": f"mock-key-{namespace}"},
+        }
+        try:
+            status, _ = self.k8s.request("APPLY", f"/api/v1/namespaces/{credentials_namespace}/secrets/{name}", manifest)
+        except Exception as error:
+            log(f"apim-mock: no se pudo crear la credencial del gateway para {subscription['id']}: {error}")
+            return False
+        if status not in (200, 201):
+            log(f"apim-mock: no se pudo crear la credencial del gateway para {subscription['id']}: HTTP {status}")
+            return False
+        return True
+
+    def delete_gateway_credential(self, subscription):
+        if not self.settings.get("create_secret", True):
+            return
+        credentials_namespace = self.settings.get("credentials_namespace", "kuadrant-system")
+        name = subscription.get("credentialSecret") or credential_secret_name(subscription["id"])
+        try:
+            self.k8s.request("DELETE", f"/api/v1/namespaces/{credentials_namespace}/secrets/{name}")
+        except Exception as error:
+            log(f"apim-mock: no se pudo borrar la credencial {name}: {error}")
+
     def get_subscription(self, subscription_id):
         subscription = self.state["subscriptions"].get(subscription_id)
         if not subscription:
             return problem(404, "Not Found", f"No existe la suscripción {subscription_id}.")
-        return 200, {field: value for field, value in subscription.items() if field != "operationId"}
+        return 200, {field: value for field, value in subscription.items() if field not in ("operationId", "credentialSecret")}
 
     def change_plan(self, subscription_id, body, key, outbox):
         if subscription_id not in self.state["subscriptions"]:
@@ -494,6 +636,7 @@ class App:
             return replayed
         if subscription_id not in self.state["subscriptions"]:
             return problem(404, "Not Found", f"No existe la suscripción {subscription_id}.")
+        self.delete_gateway_credential(self.state["subscriptions"][subscription_id])
         del self.state["subscriptions"][subscription_id]
         operation = self.new_operation("revoke", subscription_id, "")
         operation["state"] = "Succeeded"
@@ -515,6 +658,11 @@ class App:
         legajo = body.get("legajo")
         if legajo is not None and not (isinstance(legajo, str) and LEGAJO_PATTERN.fullmatch(legajo)):
             return "El legajo tiene que tener el formato l#######."
+        window, hits = body.get("window"), body.get("hitsPerWindow")
+        if window is not None or hits is not None:
+            valid_hits = isinstance(hits, int) and not isinstance(hits, bool) and hits > 0
+            if not (isinstance(window, str) and WINDOW_PATTERN.fullmatch(window) and valid_hits):
+                return "El rate limit necesita window (por ejemplo 1m) y hitsPerWindow entero mayor a 0, los dos juntos."
         metadata = body.get("metadata")
         if not isinstance(metadata, dict):
             return "El campo metadata es obligatorio."
@@ -528,6 +676,11 @@ class App:
         hostnames = metadata.get("hostnames")
         if hostnames is not None and not (isinstance(hostnames, list) and all(is_text(host) for host in hostnames)):
             return "metadata.hostnames tiene que ser una lista de hostnames."
+        backend = metadata.get("backend")
+        if backend is not None and not (isinstance(backend, dict) and is_text(backend.get("name"))):
+            return "metadata.backend tiene que tener al menos name."
+        if not NAMESPACE_PATTERN.fullmatch(metadata["namespace"]) or not self.namespace_allowed_for_objects(metadata["namespace"]):
+            return f"El mock no puede publicar en el namespace {metadata['namespace']}."
         return None
 
     def publish(self, body, outbox):
@@ -536,7 +689,8 @@ class App:
             return publish_error(error)
         metadata = body["metadata"]
         name, namespace, tenant, environment = metadata["name"], metadata["namespace"], body["tenant"], body["environment"]
-        api_id = f"{namespace}-{name}-{tenant}-1"
+        entity, entity_id = callback_entity(body.get("callbackUrl"))
+        api_id = f"apim-{entity_id}" if entity == "service" else f"{namespace}-{name}-{tenant}-1"
         ref = publication_ref(body)
         existing = self.state["publications"].get(api_id)
         if existing and existing["ref"] == ref:
@@ -549,6 +703,8 @@ class App:
             "repository": f"{body['organization']}/{body['repository']}",
             "manifestPath": f"clusters/{body['cluster']}/apis/{namespace}/{name}",
             "callbackUrl": callback_url if isinstance(callback_url, str) else "",
+            "labels": metadata.get("labels") or {}, "parentRefs": metadata["parentRefs"],
+            "backend": metadata.get("backend") or {}, "window": body.get("window"), "hitsPerWindow": body.get("hitsPerWindow"),
         }
         self.state["publications"][api_id] = publication
         self.save()
@@ -565,15 +721,40 @@ class App:
         self.schedule(self.complete_publication, api_id, ref)
         return 200, response
 
+    def apply_api_objects(self, publication):
+        for path, manifest in api_manifests(publication):
+            try:
+                status, _ = self.k8s.request("APPLY", path, manifest)
+            except Exception as error:
+                log(f"apim-mock: no se pudo aplicar {path}: {error}")
+                return False
+            if status not in (200, 201):
+                log(f"apim-mock: no se pudo aplicar {path}: HTTP {status}")
+                return False
+        return True
+
+    def delete_api_objects(self, publication):
+        for path in api_object_paths(publication["namespace"], publication["apiName"]):
+            try:
+                self.k8s.request("DELETE", path)
+            except Exception as error:
+                log(f"apim-mock: no se pudo borrar {path}: {error}")
+
     def complete_publication(self, api_id, ref):
         with self.lock:
             publication = self.state["publications"].get(api_id)
             if not publication or publication["ref"] != ref or publication["status"] != "pushed":
                 return
-            if publication["repository"].split("/", 1)[1].startswith("fail-"):
+            pending = dict(publication)
+        applied = pending["repository"].split("/", 1)[1].startswith("fail-") is False and self.apply_api_objects(pending)
+        with self.lock:
+            publication = self.state["publications"].get(api_id)
+            if not publication or publication["ref"] != ref or publication["status"] != "pushed":
+                return
+            if not applied:
                 del self.state["publications"][api_id]
                 self.save()
-                notification = (publication["callbackUrl"], "Argo no sincronizó (mock: repo fail-*); se eliminaron los manifiestos.",
+                notification = (publication["callbackUrl"], "Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); se eliminaron los manifiestos.",
                                 {"level": "error", "status": "failed"})
             else:
                 publication["status"] = "registered"
@@ -584,6 +765,7 @@ class App:
     def unpublish(self, api_id):
         if api_id not in self.state["publications"]:
             return 404, {"status": "error", "message": f"No existe la publicación {api_id}."}
+        self.delete_api_objects(self.state["publications"][api_id])
         del self.state["publications"][api_id]
         self.save()
         return 200, {"status": "deleted", "apiId": api_id}
@@ -660,9 +842,10 @@ def main():
         "own_namespace": namespace,
         "allowed_namespaces": [item for item in os.environ.get("ALLOWED_NAMESPACES", "").split(",") if item],
         "allow_all_namespaces": os.environ.get("ALLOW_ALL_NAMESPACES", "false") == "true",
+        "credentials_namespace": os.environ.get("CREDENTIALS_NAMESPACE", "kuadrant-system"),
         "max_history": int(os.environ.get("MAX_HISTORY", "200")),
     }
-    app = App(store, k8s, notifier, timer_scheduler, settings)
+    app = App(store, k8s, notifier, timer_scheduler, settings, notifier.link_service_id)
     port = int(os.environ.get("PORT", "8080"))
     log(f"apim-mock: escuchando en :{port} (estado en {type(store).__name__})")
     ThreadingHTTPServer(("0.0.0.0", port), make_handler(app)).serve_forever()

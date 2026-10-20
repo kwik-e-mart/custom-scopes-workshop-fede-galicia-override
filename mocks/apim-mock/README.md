@@ -13,12 +13,14 @@ ConfigMap, así las repeticiones se comportan como en APIM aunque el pod se rein
 | `POST /v1/subscriptions` | `202` con la operación `Committed`; a los `callbackDelaySeconds` crea el Secret de la credencial y avisa `success` al `callbackUrl`. |
 | `GET /v1/subscriptions/{id}` | La suscripción (`Syncing` → `Registered`) o `404`. |
 | `PATCH /v1/subscriptions/{id}` | Cambio de plan: `202`, aplica el plan y avisa `success`. |
-| `DELETE /v1/subscriptions/{id}` | Baja: `202` (no avisa: el contrato no trae `callbackUrl`). No borra el Secret, que es del namespace. |
+| `DELETE /v1/subscriptions/{id}` | Baja: `202` (no avisa: el contrato no trae `callbackUrl`). Borra la credencial del gateway; no borra el Secret del namespace. |
 | `GET /v1/plans` | `bronze` (5), `gold` (20), `no-limits`. |
 | `GET /v1/operations/{id}` | Estado de la operación (respaldo del polling). |
 
-La API sale del RITM (`RITM0012345` → `api-0012345`) y el id es `sub-api-0012345--<namespace>`: repetir el
-mismo RITM en el mismo namespace da `409`, como una suscripción namespace × API ya existente.
+Si el `callbackUrl` es de un link (`/link/{id}/action/{id}`), el mock lee el link en nullplatform y la API es
+la del service publicado (`apim-<serviceId>`), así la suscripción queda atada a lo que publicó el publisher.
+Si no, la API sale del RITM (`RITM0012345` → `api-0012345`). El id es `sub-<api>--<namespace>`: repetir la
+misma API en el mismo namespace da `409`, como una suscripción namespace × API ya existente.
 
 | RITM | Respuesta |
 |---|---|
@@ -33,7 +35,9 @@ cuerpo → `422`; con el mismo cuerpo (o una baja repetida) → la misma operaci
 `default` no se pueden suscribir.
 
 **Credencial**: en el primer alta exitosa de un namespace crea `secret-apim-<tenant>` (`b2c` por default) en ese
-namespace con `app_id = mock-app-<namespace>` y `app_key = mock-key-<namespace>`.
+namespace con `app_id = mock-app-<namespace>` y `app_key = mock-key-<namespace>`. Por cada suscripción crea
+además la credencial que lee Authorino en `credentialSecrets.gatewayNamespace` (`kuadrant-system`), con
+`api_key = mock-key-<namespace>` y los labels `api-id` y `app-id`.
 
 **API Publisher** (contrato: [`api-manager-publisher/docs/CONTRATO-APIM-PUBLISHER.md`](../../api-manager-publisher/docs/CONTRATO-APIM-PUBLISHER.md)):
 
@@ -42,8 +46,18 @@ namespace con `app_id = mock-app-<namespace>` y `app_key = mock-key-<namespace>`
 | `POST /v1/kuadrant/manifests/publish` | Valida la firma (`400 {status: error, message}`); `200 pushed` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
 | `DELETE /v1/kuadrant/manifests/{apiId}` | **Provisorio** hasta que APIM pase el endpoint real: `200` o `404`. |
 
-Publicar otra vez el mismo `apiId` con el mismo branch/tag/commit → `400 ya está publicada`; con otro ref →
-`200` (republicación).
+El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin callback de service,
+`<namespace>-<name>-<tenant>-1`. Publicar otra vez el mismo `apiId` con el mismo branch/tag/commit →
+`400 ya está publicada`; con otro ref → `200` (republicación).
+
+Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadata.name`:
+- un `HTTPRoute` colgado de `metadata.parentRefs`, con el `hostname` publicado, `PathPrefix /` y el backend de
+  `metadata.backend` (o el Service `metadata.name:8080`);
+- una `AuthPolicy` que pide `app_key` (credenciales con `api-id` de la API) y `app_id` igual al de la credencial;
+- una `RateLimitPolicy` con `hitsPerWindow` por `window`, solo si vienen los dos.
+
+Si el cluster los rechaza, avisa `failed` y borra la publicación. La baja los borra. Solo publica en los
+namespaces de `credentialSecrets` (si no, `400`).
 
 **Utilidades**: `GET /mock/state` (todo el estado), `POST /mock/reset` (lo vacía), `GET /healthz`.
 
@@ -74,10 +88,12 @@ Después, en el agente: `API_SUBSCRIBER_URL=https://<hostname>` y `API_SUBSCRIBE
 `mock.token` es obligatorio (el mock no arranca sin token): es el Bearer que manda el service, y viaja en un
 Secret del chart.
 
-Para dejar la credencial donde vive la app, el chart da permiso de **crear** (no leer) Secrets:
+En los namespaces de las apps el chart da permiso de **crear** (no leer) Secrets y de aplicar y borrar
+`HTTPRoute`, `AuthPolicy` y `RateLimitPolicy`:
 - `credentialSecrets.namespaces: [ns-a, ns-b]` (obligatorio) crea un Role por namespace y el mock rechaza los demás;
 - `credentialSecrets.allowAllNamespaces=true` usa un ClusterRole en lugar de la lista: solo para clusters de prueba;
-- `credentialSecrets.create=false` lo apaga y el alta termina igual sin Secret.
+- `credentialSecrets.gatewayNamespace` (`kuadrant-system`) recibe un Role para las credenciales de Authorino;
+- `credentialSecrets.create=false` apaga los Secrets y el alta termina igual sin credencial.
 
 ## Imagen
 

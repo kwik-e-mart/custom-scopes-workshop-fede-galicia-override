@@ -1,6 +1,6 @@
 image:
   repository: ""
-  tag: "0.1.1"
+  tag: "0.2.0"
   pullPolicy: IfNotPresent
 
 mock:
@@ -19,6 +19,7 @@ credentialSecrets:
   create: true
   namespaces: []
   allowAllNamespaces: false
+  gatewayNamespace: kuadrant-system
 
 service:
   port: 80

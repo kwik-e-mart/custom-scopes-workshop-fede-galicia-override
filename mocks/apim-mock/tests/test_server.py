@@ -15,6 +15,7 @@ class FakeK8s:
     def __init__(self):
         self.calls = []
         self.objects = {}
+        self.fail_apply_for = ""
 
     def request(self, method, path, body=None):
         self.calls.append((method, path, body))
@@ -32,6 +33,16 @@ class FakeK8s:
         if method == "PUT":
             self.objects[path] = body
             return 200, body
+        if method == "APPLY":
+            if self.fail_apply_for and self.fail_apply_for in path:
+                return 403, {"kind": "Status", "code": 403}
+            self.objects[path] = body
+            return 200, body
+        if method == "DELETE":
+            if path in self.objects:
+                del self.objects[path]
+                return 200, {}
+            return 404, {"kind": "Status", "code": 404}
         return 405, None
 
 
@@ -58,15 +69,16 @@ class ManualScheduler:
 CALLBACK = "https://api.nullplatform.com/service/svc-1/action/act-1"
 
 
-def make_app(**config):
+def make_app(link_services=None, **config):
     k8s = FakeK8s()
     notifier = FakeNotifier()
     scheduler = ManualScheduler()
+    links = link_services or {}
     settings = {"token": "", "tenant": "b2c", "callback_delay": 0, "domain": "bancogalicia.com.ar",
                 "create_secret": True, "own_namespace": "apim-mock", "allowed_namespaces": [], "allow_all_namespaces": True,
                 "max_history": 200}
     settings.update(config)
-    app = server.App(server.MemoryStore(), k8s, notifier, scheduler, settings)
+    app = server.App(server.MemoryStore(), k8s, notifier, scheduler, settings, links.get)
     return app, k8s, notifier, scheduler
 
 
@@ -469,7 +481,7 @@ class PublisherTest(unittest.TestCase):
         status, body = call(app, "POST", PUBLISH, publish_body())
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "pushed")
-        self.assertEqual(body["apiId"], "test-kuadrant-test-kuadrant-b2c-1")
+        self.assertEqual(body["apiId"], "apim-svc-1")
         self.assertEqual(body["hostname"], "test-kuadrant-test-kuadrant-b2c-qas.bancogalicia.com.ar")
         self.assertEqual(body["manifestPath"], "clusters/cluster1/apis/test-kuadrant/test-kuadrant")
         self.assertEqual(body["repository"], "zosc-zosconnect/test-kuadrant")
@@ -487,7 +499,7 @@ class PublisherTest(unittest.TestCase):
         scheduler.run_all()
         self.assertEqual([c["status"] for c in notifier.calls], [None, "success"])
         _, state = call(app, "GET", "/mock/state")
-        self.assertEqual(state["publications"]["test-kuadrant-test-kuadrant-b2c-1"]["status"], "registered")
+        self.assertEqual(state["publications"]["apim-svc-1"]["status"], "registered")
 
     def test_republicar_el_mismo_ref_responde_400(self):
         app, _, _, scheduler = make_app()
@@ -556,9 +568,9 @@ class PublisherTest(unittest.TestCase):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        status, _ = call(app, "DELETE", "/v1/kuadrant/manifests/test-kuadrant-test-kuadrant-b2c-1")
+        status, _ = call(app, "DELETE", "/v1/kuadrant/manifests/apim-svc-1")
         self.assertEqual(status, 200)
-        status, _ = call(app, "DELETE", "/v1/kuadrant/manifests/test-kuadrant-test-kuadrant-b2c-1")
+        status, _ = call(app, "DELETE", "/v1/kuadrant/manifests/apim-svc-1")
         self.assertEqual(status, 404)
 
 
@@ -717,6 +729,126 @@ class MainTest(unittest.TestCase):
                                 env=env, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MOCK_TOKEN", result.stderr)
+
+
+ROUTE = "/apis/gateway.networking.k8s.io/v1/namespaces/test-kuadrant/httproutes/test-kuadrant"
+AUTH = "/apis/kuadrant.io/v1/namespaces/test-kuadrant/authpolicies/test-kuadrant"
+RLP = "/apis/kuadrant.io/v1/namespaces/test-kuadrant/ratelimitpolicies/test-kuadrant"
+LINK_CALLBACK = "https://api.nullplatform.com/link/l-1/action/a-1"
+
+
+class PublishedObjectsTest(unittest.TestCase):
+    def test_el_api_id_es_apim_mas_el_id_del_service_del_callback(self):
+        app, _, _, _ = make_app()
+        _, body = call(app, "POST", PUBLISH, publish_body())
+        self.assertEqual(body["apiId"], "apim-svc-1")
+
+    def test_sin_callback_de_service_usa_el_api_id_de_apim(self):
+        app, _, _, _ = make_app()
+        _, body = call(app, "POST", PUBLISH, publish_body(callbackUrl=""))
+        self.assertEqual(body["apiId"], "test-kuadrant-test-kuadrant-b2c-1")
+
+    def test_publicar_crea_la_ruta_la_authpolicy_y_el_rate_limit(self):
+        app, k8s, notifier, scheduler = make_app()
+        _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "success")
+        route = k8s.objects[ROUTE]
+        self.assertEqual(route["kind"], "HTTPRoute")
+        self.assertEqual(route["spec"]["parentRefs"], publish_body()["metadata"]["parentRefs"])
+        self.assertEqual(route["spec"]["hostnames"], [response["hostname"]])
+        self.assertEqual(route["spec"]["rules"][0]["matches"], [{"path": {"type": "PathPrefix", "value": "/"}}])
+        self.assertEqual(route["spec"]["rules"][0]["backendRefs"],
+                         [{"group": "", "kind": "Service", "name": "test-kuadrant", "namespace": "test-kuadrant", "port": 8080, "weight": 1}])
+        auth = k8s.objects[AUTH]
+        self.assertEqual(auth["spec"]["targetRef"]["name"], "test-kuadrant")
+        key = auth["spec"]["rules"]["authentication"]["apim-app-key"]
+        self.assertEqual(key["apiKey"]["selector"]["matchLabels"], {"api-id": "apim-svc-1"})
+        self.assertEqual(key["credentials"], {"customHeader": {"name": "app_key"}})
+        self.assertIn("request.headers.app_id", json.dumps(auth["spec"]["rules"]["authorization"]))
+        self.assertEqual(k8s.objects[RLP]["spec"]["limits"]["apim-limit"]["rates"], [{"limit": 100, "window": "1m"}])
+
+    def test_el_backend_del_pedido_reemplaza_al_default(self):
+        app, k8s, _, scheduler = make_app()
+        body = publish_body()
+        body["metadata"]["backend"] = {"kind": "Service", "name": "d-1-2", "namespace": "test-kuadrant", "port": 8080}
+        call(app, "POST", PUBLISH, body)
+        scheduler.run_all()
+        self.assertEqual(k8s.objects[ROUTE]["spec"]["rules"][0]["backendRefs"][0]["name"], "d-1-2")
+
+    def test_rate_limit_invalido_responde_400(self):
+        for window, hits in [("1m", None), (None, 10), ("1 minuto", 10), ("1m", "10"), ("1m", 0), ("1m", True)]:
+            fields = {key: value for key, value in (("window", window), ("hitsPerWindow", hits)) if value is not None}
+            app, _, _, _ = make_app()
+            status, body = call(app, "POST", PUBLISH, publish_body(**fields))
+            self.assertEqual((status, body["status"]), (400, "error"), fields)
+            self.assertIn("window", body["message"], fields)
+
+    def test_sin_rate_limit_no_crea_ratelimitpolicy(self):
+        app, k8s, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        self.assertNotIn(RLP, k8s.objects)
+
+    def test_si_kubernetes_rechaza_la_ruta_la_publicacion_se_cancela(self):
+        app, k8s, notifier, scheduler = make_app()
+        k8s.fail_apply_for = "/httproutes/"
+        _, response = call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        _, state = call(app, "GET", "/mock/state")
+        self.assertNotIn(response["apiId"], state["publications"])
+
+    def test_publicar_en_un_namespace_no_permitido_responde_400(self):
+        app, _, _, _ = make_app(allow_all_namespaces=False, allowed_namespaces=["payments"])
+        status, body = call(app, "POST", PUBLISH, publish_body())
+        self.assertEqual(status, 400)
+        self.assertIn("test-kuadrant", body["message"])
+
+    def test_la_baja_provisoria_borra_los_objetos(self):
+        app, k8s, _, scheduler = make_app()
+        _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        call(app, "DELETE", f"/v1/kuadrant/manifests/{response['apiId']}")
+        for path in (ROUTE, AUTH, RLP):
+            self.assertNotIn(path, k8s.objects)
+
+
+class LinkSubscriptionTest(unittest.TestCase):
+    def test_la_suscripcion_de_un_link_apunta_a_la_api_del_service_del_link(self):
+        app, _, _, _ = make_app(link_services={"l-1": "svc-pub"})
+        status, body = subscribe(app, callback=LINK_CALLBACK)
+        self.assertEqual(status, 202)
+        self.assertEqual(body["target"], "sub-apim-svc-pub--sigla-x-qa")
+
+    def test_la_suscripcion_crea_la_credencial_que_lee_la_authpolicy(self):
+        app, k8s, notifier, scheduler = make_app(link_services={"l-1": "svc-pub"})
+        subscribe(app, plan="gold", callback=LINK_CALLBACK)
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "success")
+        credentials = [o for p, o in k8s.objects.items() if p.startswith("/api/v1/namespaces/kuadrant-system/secrets/")]
+        self.assertEqual(len(credentials), 1)
+        labels = credentials[0]["metadata"]["labels"]
+        self.assertEqual(labels["authorino.kuadrant.io/managed-by"], "authorino")
+        self.assertEqual(labels["api-id"], "apim-svc-pub")
+        self.assertEqual(labels["app-id"], "mock-app-sigla-x-qa")
+        self.assertEqual(labels["consumer-ns"], "sigla-x-qa")
+        self.assertEqual(credentials[0]["metadata"]["annotations"]["secret.kuadrant.io/plan-id"], "gold")
+        self.assertEqual(credentials[0]["stringData"], {"api_key": "mock-key-sigla-x-qa"})
+        consumer = k8s.objects["/api/v1/namespaces/sigla-x-qa/secrets/secret-apim-b2c"]
+        self.assertEqual(consumer["stringData"]["app_key"], "mock-key-sigla-x-qa")
+
+    def test_la_baja_borra_la_credencial_del_gateway(self):
+        app, k8s, _, scheduler = make_app(link_services={"l-1": "svc-pub"})
+        subscribe(app, callback=LINK_CALLBACK)
+        scheduler.run_all()
+        call(app, "DELETE", "/v1/subscriptions/sub-apim-svc-pub--sigla-x-qa", None, {"Idempotency-Key": "k-del"})
+        self.assertEqual([p for p in k8s.objects if p.startswith("/api/v1/namespaces/kuadrant-system/secrets/")], [])
+
+    def test_un_link_que_no_se_puede_resolver_usa_la_api_del_ritm(self):
+        app, _, _, _ = make_app()
+        _, body = subscribe(app, callback=LINK_CALLBACK)
+        self.assertEqual(body["target"], "sub-api-0012345--sigla-x-qa")
 
 
 if __name__ == "__main__":
