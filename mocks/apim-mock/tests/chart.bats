@@ -57,7 +57,7 @@ kinds() {
 @test "el deployment corre una sola replica con el estado en un configmap" {
   deployment=$(render | yq -N 'select(.kind == "Deployment")')
   [ "$(yq -N '.spec.replicas' <<<"$deployment")" = "1" ]
-  [ "$(yq -N '.spec.template.spec.containers[0].image' <<<"$deployment")" = "public.ecr.aws/test/apim-mock:0.2.2" ]
+  [ "$(yq -N '.spec.template.spec.containers[0].image' <<<"$deployment")" = "public.ecr.aws/test/apim-mock:0.2.3" ]
   [ "$(yq -N '.spec.template.spec.containers[0].env[] | select(.name == "STATE_BACKEND") | .value' <<<"$deployment")" = "configmap" ]
   [ "$(yq -N '.spec.template.spec.containers[0].env[] | select(.name == "POD_NAMESPACE") | .valueFrom.fieldRef.fieldPath' <<<"$deployment")" = "metadata.namespace" ]
   [ "$(yq -N '.spec.template.spec.serviceAccountName' <<<"$deployment")" = "mock-apim-mock" ]
