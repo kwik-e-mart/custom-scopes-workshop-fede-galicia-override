@@ -9,7 +9,7 @@ module "service_definition" {
   local_specs_path  = abspath("${path.module}/../..")
   repository_branch = "main"
 
-  available_actions = ["publish-api", "republish-api", "unpublish-api"]
+  available_actions = []
   available_links   = ["connect"]
 
   extra_visibile_to_nrns = var.extra_visible_to_nrns

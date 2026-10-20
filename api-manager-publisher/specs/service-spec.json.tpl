@@ -8,7 +8,7 @@
     "provider": "Kuadrant",
     "sub_category": "API Exposure"
   },
-  "use_default_actions": false,
+  "use_default_actions": true,
   "attributes": {
     "schema": {
       "type": "object",
