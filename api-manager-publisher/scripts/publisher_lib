@@ -94,6 +94,9 @@ require_scope_destination() {
   if [ -z "$SCOPE_DOMAIN" ]; then
     fail "publisher: el scope '$scope' no tiene dominio; no hay a dónde mandar el tráfico de la API."
   fi
+  if [[ ! "$SCOPE_DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]; then
+    fail "publisher: el dominio del scope '$scope' no es un hostname válido: '$SCOPE_DOMAIN'."
+  fi
 }
 fi
 
@@ -104,6 +107,12 @@ require_gateway_backend() {
   gateway="${gateway:-${INGRESS_GATEWAY_NAME:-}}"
   if [ -z "$gateway" ]; then
     fail "publisher: no hay gateway privado: falta providers[\"container-orchestration\"].gateway.gateway_private_name o INGRESS_GATEWAY_NAME en el agente."
+  fi
+  if [[ ! "$gateway" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    fail "publisher: el gateway privado '$gateway' no es un nombre de Kubernetes válido."
+  fi
+  if [[ ! "$namespace" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    fail "publisher: APIM_GATEWAY_NAMESPACE inválido: '$namespace'."
   fi
   if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]]; then
     fail "publisher: APIM_GATEWAY_PORT inválido: '$port'."

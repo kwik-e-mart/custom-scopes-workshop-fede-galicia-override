@@ -273,3 +273,21 @@ JSON
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
+
+@test "un dominio de scope que no es un hostname falla sin llamar a APIM" {
+  NP_MOCK_SCOPES='[{"slug":"main","id":1049050904,"domain":"app.bancogalicia.com.ar/otra?x=1","dimensions":{"environment":"qas"}}]'
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"dominio"* ]]
+}
+
+@test "un gateway o namespace que no es un nombre de kubernetes falla sin llamar a APIM" {
+  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc "Gateway Privado"
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"Gateway Privado"* ]] || false
+  set_context https://github.com/zosc-zosconnect/test-kuadrant
+  export APIM_GATEWAY_NAMESPACE="gateways/../x"
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+}
