@@ -294,6 +294,7 @@ jq -n \
   --arg cluster_label "$CLUSTER_LABEL" \
   --arg platform "$PLATFORM" \
   --arg managed_label "$MANAGED_LABEL" \
+  --arg sigla "${SIGLA:-}" \
   --arg role_label "$ROLE_LABEL" \
   --arg original_selector_annotation "$ORIGINAL_SELECTOR_ANNOTATION" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \

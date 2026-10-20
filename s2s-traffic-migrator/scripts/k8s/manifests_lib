@@ -17,6 +17,16 @@ MANIFESTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${SERVICES_MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/services}"
 : "${SIGNING_MANIFESTS_DIR:=$MANIFESTS_LIB_DIR/../../manifests/signing}"
 
+if ! type -t label_sigla >/dev/null 2>&1; then
+label_sigla() {
+  SIGLA="$2" yq -i '
+      (select(.metadata) | .metadata.labels.sigla) = strenv(SIGLA)
+    | (select(.kind == "Deployment" or .kind == "Job") | .spec.template.metadata.labels.sigla) = strenv(SIGLA)
+    | (select(.kind == "CronJob") | (.spec.jobTemplate.metadata.labels.sigla, .spec.jobTemplate.spec.template.metadata.labels.sigla)) = strenv(SIGLA)
+  ' "$1"
+}
+fi
+
 # render_manifests <contexto.json> <outdir>
 # Renderiza cada template al outdir y escribe en stdout, en orden de aplicación, la ruta de los
 # que quedaron con contenido.
@@ -64,10 +74,20 @@ render_manifests() {
   # cuando su condición no se cumple, y `kubectl apply -f` sobre un archivo vacío es un error.
   # gomplate directamente NO crea el archivo cuando la salida es vacía, así que se contemplan las
   # dos formas: inexistente y en blanco.
+  local sigla
+  if ! sigla=$(jq -r '.sigla // empty' "$ctx"); then
+    log error "egress-interceptor: no se pudo leer la sigla del contexto de render '$ctx'"
+    return 1
+  fi
+
   for out in "${outs[@]}"; do
     if [ ! -f "$out" ] || [ -z "$(tr -d '[:space:]' <"$out")" ]; then
       rm -f "$out"
       continue
+    fi
+    if [ -n "$sigla" ] && ! label_sigla "$out" "$sigla"; then
+      log error "egress-interceptor: no se pudo agregar el label sigla a $(basename "$out")"
+      return 1
     fi
     printf '%s\n' "$out"
   done
