@@ -825,6 +825,39 @@ class PublishedObjectsTest(unittest.TestCase):
         for path in (ROUTE, AUTH, RLP):
             self.assertNotIn(path, k8s.objects)
 
+    def test_republicar_con_otro_nombre_borra_los_objetos_viejos(self):
+        app, k8s, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        body = publish_body(branch="develop", window="1m", hitsPerWindow=100)
+        body["metadata"]["name"] = "otra-api"
+        call(app, "POST", PUBLISH, body)
+        scheduler.run_all()
+        for path in (ROUTE, AUTH, RLP):
+            self.assertNotIn(path, k8s.objects)
+        self.assertIn("/apis/gateway.networking.k8s.io/v1/namespaces/test-kuadrant/httproutes/otra-api", k8s.objects)
+
+    def test_republicar_sin_rate_limit_borra_la_ratelimitpolicy(self):
+        app, k8s, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        call(app, "POST", PUBLISH, publish_body(branch="develop"))
+        scheduler.run_all()
+        self.assertNotIn(RLP, k8s.objects)
+        self.assertIn(ROUTE, k8s.objects)
+
+    def test_si_falla_la_republicacion_no_quedan_los_objetos_viejos(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        body = publish_body(branch="develop")
+        body["metadata"]["name"] = "otra-api"
+        k8s.fail_apply_for = "/authpolicies/"
+        call(app, "POST", PUBLISH, body)
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        self.assertEqual([p for p in k8s.objects if "/apis/" in p], [])
+
     def test_la_baja_provisoria_borra_los_objetos(self):
         app, k8s, _, scheduler = make_app()
         _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))

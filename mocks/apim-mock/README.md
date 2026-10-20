@@ -56,7 +56,9 @@ Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadat
 - una `AuthPolicy` que pide `app_key` (credenciales con `api-id` de la API) y `app_id` igual al de la credencial;
 - una `RateLimitPolicy` con `hitsPerWindow` por `window`, solo si vienen los dos.
 
-Si el cluster los rechaza, avisa `failed` y borra la publicación. La baja los borra. Solo publica en los
+Al republicar borra lo que la versión anterior creó y la nueva ya no usa (otro nombre o namespace, o la
+`RateLimitPolicy` si se sacó el rate limit). Si el cluster los rechaza, avisa `failed` y borra la publicación
+y sus objetos. La baja los borra. Solo publica en los
 namespaces de `credentialSecrets` (si no, `400`).
 
 **Utilidades**: `GET /mock/state` (todo el estado), `POST /mock/reset` (lo vacía), `GET /healthz`.
