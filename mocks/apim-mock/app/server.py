@@ -698,6 +698,10 @@ class App:
         existing = self.state["publications"].get(api_id)
         if existing and existing["ref"] == ref:
             return publish_error(f"La API {api_id} ya está publicada en {ref}.")
+        stale_paths = []
+        if existing:
+            previous = set(existing.get("stalePaths", [])) | set(api_object_paths(existing["namespace"], existing["apiName"]))
+            stale_paths = sorted(previous - set(api_object_paths(namespace, name)))
         hostnames = metadata.get("hostnames") or [f"{namespace}-{name}-{tenant}-{environment}.{self.settings['domain']}"]
         callback_url = body.get("callbackUrl")
         publication = {
@@ -708,6 +712,7 @@ class App:
             "callbackUrl": callback_url if isinstance(callback_url, str) else "",
             "labels": metadata.get("labels") or {}, "parentRefs": metadata["parentRefs"],
             "backend": metadata.get("backend") or {}, "window": body.get("window"), "hitsPerWindow": body.get("hitsPerWindow"),
+            "stalePaths": stale_paths,
         }
         self.state["publications"][api_id] = publication
         self.save()
@@ -737,7 +742,15 @@ class App:
         return True
 
     def delete_api_objects(self, publication):
-        for path in api_object_paths(publication["namespace"], publication["apiName"]):
+        self.delete_paths(api_object_paths(publication["namespace"], publication["apiName"]) + publication.get("stalePaths", []))
+
+    def delete_unused_objects(self, publication):
+        applied = {path for path, _ in api_manifests(publication)}
+        own = [path for path in api_object_paths(publication["namespace"], publication["apiName"]) if path not in applied]
+        self.delete_paths(own + publication.get("stalePaths", []))
+
+    def delete_paths(self, paths):
+        for path in paths:
             try:
                 self.k8s.request("DELETE", path)
             except Exception as error:
@@ -766,6 +779,8 @@ class App:
                 notification = (publication["callbackUrl"], f"API publicada y registrada en {publication['hostname']}.", {"status": "success"})
         if not publication or (current and not applied):
             self.delete_api_objects(pending)
+        elif current:
+            self.delete_unused_objects(pending)
         if notification:
             self.notifier.notify(*notification[:2], **notification[2])
 
