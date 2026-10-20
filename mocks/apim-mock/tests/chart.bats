@@ -57,7 +57,7 @@ kinds() {
 @test "el deployment corre una sola replica con el estado en un configmap" {
   deployment=$(render | yq -N 'select(.kind == "Deployment")')
   [ "$(yq -N '.spec.replicas' <<<"$deployment")" = "1" ]
-  [ "$(yq -N '.spec.template.spec.containers[0].image' <<<"$deployment")" = "public.ecr.aws/test/apim-mock:0.2.3" ]
+  [ "$(yq -N '.spec.template.spec.containers[0].image' <<<"$deployment")" = "public.ecr.aws/test/apim-mock:0.2.4" ]
   [ "$(yq -N '.spec.template.spec.containers[0].env[] | select(.name == "STATE_BACKEND") | .value' <<<"$deployment")" = "configmap" ]
   [ "$(yq -N '.spec.template.spec.containers[0].env[] | select(.name == "POD_NAMESPACE") | .valueFrom.fieldRef.fieldPath' <<<"$deployment")" = "metadata.namespace" ]
   [ "$(yq -N '.spec.template.spec.serviceAccountName' <<<"$deployment")" = "mock-apim-mock" ]
@@ -165,4 +165,14 @@ kinds() {
 @test "sin crear secretos sigue pudiendo publicar en el namespace permitido" {
   run render --set credentialSecrets.create=false
   [ "$(yq -N 'select(.kind == "Role" and .metadata.name == "mock-apim-mock-credentials") | .metadata.namespace' <<<"$output")" = "sigla-x-qa" ]
+}
+
+@test "por default la ruta del mock solo expone /whoami" {
+  run render
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ROUTE_PATHS") | .value' <<<"$output")" = "/whoami" ]
+}
+
+@test "mock.routePaths vacio deja la ruta abierta con PathPrefix /" {
+  run render --set "mock.routePaths=null"
+  [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ROUTE_PATHS") | .value' <<<"$output")" = "" ]
 }
