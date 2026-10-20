@@ -5,7 +5,7 @@
   "selectors": {
     "category": "Networking",
     "imported": false,
-    "provider": "Kuadrant",
+    "provider": "API Manager",
     "sub_category": "API Exposure"
   },
   "use_default_actions": true,

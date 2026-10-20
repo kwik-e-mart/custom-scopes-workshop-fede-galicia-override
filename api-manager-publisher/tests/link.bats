@@ -25,6 +25,7 @@ link_context() {
   [ "$(jq -r .consumerNamespace "$CURL_BODIES_DIR/0.json")" = "ledger" ]
   [ "$(np_updates | tail -n1 | jq -c '.[0:3]')" = '["link","action","update"]' ]
   [ "$(np_last_update_flag --results | jq -c .)" = '{"subscription_id":"sub-api-0012345--ledger","operation_id":"op-1","consumer_namespace":"ledger","owns_subscription":true}' ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM_APP_ID y APIM_APP_KEY"*"próximo deploy"* ]] || false
 }
 
 @test "un 409 cierra el link success sin ser duenio" {
@@ -34,6 +35,7 @@ link_context() {
   run_step
   [ "$(np_last_update_flag --status)" = "success" ]
   [ "$(np_last_update_flag --results | jq -r .owns_subscription)" = "false" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM_APP_ID y APIM_APP_KEY"*"próximo deploy"* ]]
 }
 
 @test "el unlink da de baja si este link creo la suscripcion" {

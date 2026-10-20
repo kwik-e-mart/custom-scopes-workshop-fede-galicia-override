@@ -63,3 +63,12 @@ setup() {
   [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$CONNECT")" == "## Suscripción a la API"*"### FAQ"*"RITM"* ]] || false
   [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last]' "$CONNECT")" = '["approval_ref","plan_id","subscription_id","operation_id","consumer_namespace"]' ]
 }
+
+@test "el link y el override identifican al servicio con el mismo provider" {
+  [ "$(jq -r '.selectors.provider' "$SERVICE")" = "API Manager" ]
+  [ "$(yq -r '.configuration.APIM_PUBLISHER_PROVIDER' "${BATS_TEST_DIRNAME}/../override/values.yaml")" = "API Manager" ]
+}
+
+@test "el faq del link explica las env vars de la credencial" {
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$CONNECT")" == *"APIM_APP_ID"*"APIM_APP_KEY"*"deploy"* ]]
+}

@@ -232,7 +232,7 @@ inject_provider_env() {
     [ .[] | (.type | ascii_downcase) as $t |
       if   $t == "text"                        then { name, value: (.value // "") }
       elif $t == "ref" or $t == "reference"    then { name, valueFrom: { fieldRef:        { fieldPath: .value } } }
-      elif $t == "secret"                      then { name, valueFrom: { secretKeyRef:    { name: .value, key: .name } } }
+      elif $t == "secret"                      then { name, valueFrom: { secretKeyRef:    { name: .value, key: (.key // .name) } } }
       else                                          { name, valueFrom: { configMapKeyRef: { name: .value, key: .name } } }
       end ]')
   export PROVIDER_ENV_ENTRIES

@@ -271,14 +271,14 @@ request_subscription() {
         results=$(jq -nc --arg op "$operation_id" --arg ns "$namespace" \
           '{operation_id: $op, consumer_namespace: $ns, owns_subscription: false}')
       fi
-      report_progress "Suscripción en curso (operación $operation_id). APIM avisa cuando quede activa." "$results" \
+      report_progress "Suscripción en curso (operación $operation_id). APIM avisa cuando quede activa.${SUBSCRIPTION_CREDENTIAL_HINT:+ $SUBSCRIPTION_CREDENTIAL_HINT}" "$results" \
         || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
       ;;
     409)
       subscription_id=$(apim_problem_detail "$APIM_BODY" | grep -oE "$SUBSCRIPTION_ID_PATTERN" | head -n1 || true)
       results=$(jq -nc --arg ns "$namespace" --arg sub "$subscription_id" \
         '{consumer_namespace: $ns, owns_subscription: false} + (if $sub == "" then {} else {subscription_id: $sub} end)')
-      close_action success "Tu namespace ya tiene acceso a esta API." "$results"
+      close_action success "Tu namespace ya tiene acceso a esta API.${SUBSCRIPTION_CREDENTIAL_HINT:+ $SUBSCRIPTION_CREDENTIAL_HINT}" "$results"
       ;;
     *)
       fail "subscriber: APIM rechazó la suscripción (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
