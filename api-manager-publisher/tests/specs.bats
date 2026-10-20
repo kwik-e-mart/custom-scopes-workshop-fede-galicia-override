@@ -54,3 +54,12 @@ setup() {
   [ "$(jq -c '.attributes.schema.properties.owns_subscription | {type, visibleOn}' "$CONNECT")" = '{"type":"boolean","visibleOn":[]}' ]
   [ "$(jq -r '.attributes.schema.properties.approval_ref.pattern' "$CONNECT")" = '^RITM[0-9]+$' ]
 }
+
+@test "el link explica el ticket de suscripcion y que tiene que estar aprobado" {
+  [ "$(jq -r '.attributes.schema.properties.approval_ref.title' "$CONNECT")" = "Ticket de solicitud de suscripción (RITM)" ]
+  [[ "$(jq -r '.attributes.schema.properties.approval_ref.description' "$CONNECT")" == *"aprobado"*"falla"* ]] || false
+  [ "$(jq -r '.attributes.schema.uiSchema.elements[0].type' "$CONNECT")" = "Label" ]
+  [ "$(jq -r '.attributes.schema.uiSchema.elements[0].options.format' "$CONNECT")" = "markdown" ]
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$CONNECT")" == "## Suscripción a la API"*"### FAQ"*"RITM"* ]] || false
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last]' "$CONNECT")" = '["approval_ref","plan_id","subscription_id","operation_id","consumer_namespace"]' ]
+}
