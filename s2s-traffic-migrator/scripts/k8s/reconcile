@@ -29,10 +29,29 @@ set_selector() {  # <svc> <json del selector>
     -p "[{\"op\":\"replace\",\"path\":\"/spec/selector\",\"value\":$2}]"
 }
 
-current_selector() { kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath='{.spec.selector}' 2>/dev/null || true; }
+# Devuelve vacío SOLO si el Service no existe. Un Forbidden o un error de API abortan: tratarlos
+# como "sin selector" manda al revert y al swap por la rama equivocada, sobre un dato que es el
+# único registro de cómo volver atrás.
+current_selector() {
+  svc_campo "$1" '{.spec.selector}'
+}
+
+svc_campo() {  # <svc> <jsonpath>
+  local salida
+  if salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="$2" 2>&1); then
+    printf '%s' "$salida"
+    return 0
+  fi
+  case "$salida" in
+    *NotFound*|*not\ found*) return 0 ;;
+  esac
+  log error "egress-interceptor: no se pudo leer el Service '$1' de '$NAMESPACE'." >&2
+  log error "  $salida" >&2
+  exit 1
+}
 
 original_selector() {
-  kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}" 2>/dev/null || true
+  svc_campo "$1" "{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}"
 }
 
 # El orden importa y la verificación también: la annotation es el ÚNICO lugar donde vive el
@@ -254,8 +273,25 @@ if [ "$PLATFORM" != "eks" ]; then
   for svc in $DECLARED_SERVICES; do
     PERCENT=$(echo "$INTERCEPTIONS_JSON" | jq -r --arg s "$svc" '.[] | select(.service_name==$s) | .percent')
     [ "$PERCENT" -lt 100 ] || continue
-    LOCAL_ENDPOINTS=$(kubectl -n "$NAMESPACE" get endpoints "${svc}-local" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
-    [ -z "$LOCAL_ENDPOINTS" ] && LOCAL_ENDPOINTS=$(kubectl -n "$NAMESPACE" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+    # El stderr NO se descarta: un Forbidden devuelve vacío igual que un Service sin pods, y
+    # tratarlos igual hace que el service acuse "no tiene endpoints" sobre un destino que está
+    # perfectamente sano. Un NotFound sí es ausencia y cae al siguiente candidato.
+    LOCAL_ENDPOINTS=""
+    for candidato in "${svc}-local" "$svc"; do
+      if salida=$(kubectl -n "$NAMESPACE" get endpoints "$candidato" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>&1); then
+        LOCAL_ENDPOINTS="$salida"
+        [ -n "$LOCAL_ENDPOINTS" ] && break
+      else
+        case "$salida" in
+          *NotFound*|*not\ found*) ;;
+          *)
+            log error "egress-interceptor: no se pudo leer los endpoints de '$candidato' en '$NAMESPACE'."
+            log error "  $salida"
+            log error "  Sin ese dato no se puede saber si el destino local tiene backend. No se aplicó nada."
+            exit 1 ;;
+        esac
+      fi
+    done
     if [ -z "$LOCAL_ENDPOINTS" ]; then
       log error "egress-interceptor: '$svc' tiene percent=$PERCENT (<100) pero su destino local no tiene endpoints."
       log error "  Con ese peso, $((100 - PERCENT))% del tráfico iría a un backend vacío."
@@ -494,37 +530,16 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
       log error "$(kubectl -n "$NAMESPACE" logs "job/rotar-$NAMESPACE-init" --tail=20 2>&1)"
       exit 1
     fi
-  elif ! kubectl -n "$KEYS_NAMESPACE" get secret "$WRISTBAND_SECRET" >/dev/null 2>&1; then
-    log error "no existe el Secret de firma '$WRISTBAND_SECRET' en '$KEYS_NAMESPACE': la AuthPolicy nunca va a enforcear."
-    log error "  Ese objeto lo crea el chart del namespace. Verificá que haya corrido para '$NAMESPACE'."
-    log error "  Para crearlo desde acá, corré el service con NAMESPACE_SETUP_ENABLED=true."
-    exit 1
   fi
 fi
 
-# El `kid` del wristband ES el nombre del Secret de firma: Authorino lo deriva de ahí. Si el JWKS
-# publicado no trae una clave con ese kid, el token se firma bien y el destino igual responde 401
-# con "no lo firmó ninguna clave conocida", que no dice dónde mirar. Se chequea acá, que es donde
-# los dos nombres están a la vista.
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ -n "$LOCAL_JWKS_URL" ]; then
-  RESPUESTA=$(kubectl -n "$NAMESPACE" exec "deploy/$JWKS_SERVICE_NAME" -- \
-    curl -sf --max-time 10 "$LOCAL_JWKS_URL" 2>/dev/null) || RESPUESTA=""
-  KIDS=$(printf '%s' "$RESPUESTA" | jq -r '.keys[]?.kid' 2>/dev/null) || KIDS=""
-  if [ -z "$KIDS" ]; then
-    log error "el endpoint de JWKS no publica ninguna clave en la URL que va a consultar el validador."
-    log error "  URL: $LOCAL_JWKS_URL"
-    log error "  Paths que sí sirve:"
-    log error "$(kubectl -n "$NAMESPACE" exec "deploy/$JWKS_SERVICE_NAME" -- find /var/www/html -name jwks.json 2>&1 | sed 's/^/    /')"
-    log error "  Authorino va a recibir un 404 y el destino responde 401 'no lo firmó ninguna clave conocida'."
-    log error "  El chart publica un path por cada origen de validator.sources: falta el de este namespace."
-    exit 1
-  fi
-  if ! printf '%s\n' "$KIDS" | grep -qx "$WRISTBAND_SECRET"; then
-    log error "el JWKS que sirve $JWKS_SERVICE_NAME no publica la clave con la que se firma."
-    log error "  firma con kid: $WRISTBAND_SECRET"
-    log error "  el JWKS trae:  $(printf '%s' "$KIDS" | tr '\n' ' ')"
-    log error "  El destino va a responder 401 'no lo firmó ninguna clave conocida'."
-    log error "  Revisá que el JWKS de Vault ($VAULT_KV_CLUSTER/$NAMESPACE/jwks) corresponda a esa clave."
+# El endpoint de JWKS es del chart, pero si no está el validador no puede bajar nada y el destino
+# responde 401. Se chequea que EXISTA, no qué sirve: su contenido es responsabilidad del chart.
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
+  if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
+    log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
+    log error "  Sin él el validador no puede bajar las claves y el destino responde 401."
+    log error "  Ese objeto lo crea el chart del namespace, con validator.enabled."
     exit 1
   fi
 fi
@@ -604,7 +619,7 @@ for svc in $DECLARED_SERVICES; do
   CURRENT_SELECTOR=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath='{.spec.selector}')
   [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && continue
   # El selector original se captura una sola vez: es el dato con el que se revierte.
-  ALREADY_ANNOTATED=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath="{.metadata.annotations.$ORIGINAL_SELECTOR_ANNOTATION}" 2>/dev/null || true)
+  ALREADY_ANNOTATED=$(svc_campo "$svc" "{.metadata.annotations.$ORIGINAL_SELECTOR_ANNOTATION}")
   if [ -z "$ALREADY_ANNOTATED" ]; then
     # Guardar el selector del propio Gateway como "original" haría que el revert no revierta nada.
     [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }

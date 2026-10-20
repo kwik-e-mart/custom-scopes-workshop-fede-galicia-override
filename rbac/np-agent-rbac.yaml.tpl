@@ -34,6 +34,16 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # El ExternalSecret que baja el JWKS de Vault. Con NAMESPACE_SETUP_ENABLED=false sólo se lee,
+  # para no reaplicar lo que ya creó el chart del namespace.
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Para leer el log del Job de la clave cuando no termina. Sólo con NAMESPACE_SETUP_ENABLED=true,
+  # que es cuando el Job lo emite este service.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
