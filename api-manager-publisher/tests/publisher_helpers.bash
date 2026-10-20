@@ -8,7 +8,7 @@ setup_publisher() {
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
   export KUBECTL_MOCK_ROUTES='{"items":[{"metadata":{"name":"k-8-s-main-1049050904-internal"},"spec":{"rules":[{"backendRefs":[{"kind":"Service","name":"d-1049050904-111","port":8080,"weight":30},{"kind":"Service","name":"d-1049050904-222","port":8080,"weight":70}]}]}}]}'
-  unset APIM_CLUSTER_NAME NP_MOCK_SCOPE_FAIL KUBECTL_MOCK_FAIL APIM_PUBLISH_ENVIRONMENT
+  unset APIM_CLUSTER_NAME NP_MOCK_SCOPE_FAIL KUBECTL_MOCK_FAIL APIM_PUBLISH_ENVIRONMENT INGRESS_GATEWAY_NAME APIM_GATEWAY_PORT APIM_GATEWAY_NAMESPACE
 
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash

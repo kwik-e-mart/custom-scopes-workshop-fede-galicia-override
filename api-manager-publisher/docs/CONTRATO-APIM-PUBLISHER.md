@@ -53,16 +53,32 @@ cierre la acción de nullplatform con el formato del mini doc de avisos
 - En el API Subscriber: aceptar el `apiId` en el pedido de suscripción y rechazar el RITM si es de otra API.
   Sin eso, un link a la API X con un RITM aprobado para la API Y suscribe a Y.
 
-## Decisión vigente (2026-10-19)
+## Decisión vigente (2026-10-20)
 
-Se integra como dice el documento de APIM: APIM genera su propio HTTPRoute y el publish le manda en
-`metadata.backend` el **Service del despliegue activo** del scope (el backend con más peso de las rutas del
-scope). Pendiente de definir con APIM: cómo se sincroniza ese backend cuando el scope despliega una versión
-nueva (blue/green cambia el Service).
+APIM genera su propio HTTPRoute y hace el `URLRewrite`: el publish manda en `metadata.backend` el **gateway
+privado** (`kind: Service`, `name`, `namespace`, `port`) y, en `metadata.backend.destinationFqdn`, el dominio del
+scope (`https://<app>-<scope>.ms.ws.bancogalicia.com.ar`). Cada regla de la ruta de APIM reescribe el host a ese
+dominio y manda el pedido al gateway, que lo entrega a la ruta del scope: siempre llega al despliegue activo,
+también durante un blue/green, sin republicar.
 
-Alternativas evaluadas y descartadas por ahora:
-- Volver a entrar al Gateway con `URLRewrite` al dominio del scope: no se aprueba y, con s2s activo, el
-  validador de la ruta del scope rechaza al consumidor (401 `x-egress-token`), probado en `gal-kuadrant-poc`.
+```json
+"backend": {
+  "kind": "Service",
+  "name": "gateway-private",
+  "port": 8080,
+  "namespace": "gateways",
+  "destinationFqdn": "https://<app-name>-<scope-name>.ms.ws.bancogalicia.com.ar"
+}
+```
+
+Pendiente del lado de APIM y del cluster: el `ReferenceGrant` en `gateways` para el `backendRef` entre
+namespaces, el TLS hacia el gateway si el puerto es HTTPS, y que la AuthPolicy del scope acepte ese segundo
+paso (con s2s activo, el validador de la ruta del scope rechazó al consumidor con 401 `x-egress-token` en
+`gal-kuadrant-poc`).
+
+Alternativas evaluadas:
+- Mandar el Service del despliegue activo (decisión del 2026-10-19): el backend queda desactualizado con cada
+  deploy nuevo del scope.
 - Colgar las políticas de la ruta del scope (abajo): funciona, pero exige `merge`, `when` y llevar las
   operaciones del swagger a la autorización.
 

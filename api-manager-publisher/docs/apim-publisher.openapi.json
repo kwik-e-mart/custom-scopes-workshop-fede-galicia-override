@@ -114,7 +114,8 @@
           "name": { "type": "string", "example": "test-kuadrant" },
           "namespace": { "type": "string", "example": "test-kuadrant" },
           "port": { "type": "integer", "format": "int32", "example": 8080 },
-          "weight": { "type": "integer", "format": "int32", "example": 1 }
+          "weight": { "type": "integer", "format": "int32", "example": 1 },
+          "destinationFqdn": { "type": "string", "example": "https://test-kuadrant-main.ms.ws.bancogalicia.com.ar", "description": "Dominio del scope de nullplatform. Cada regla de la ruta reescribe el host a este valor (URLRewrite) y manda el pedido al backend, que es el gateway privado." }
         },
         "description": "Backend de la ruta. Si se omite, se usa un Service con el nombre de la API, el namespace indicado, puerto 8080 y peso 1."
       },

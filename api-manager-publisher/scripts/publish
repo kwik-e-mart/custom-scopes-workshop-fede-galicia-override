@@ -44,7 +44,8 @@ publish() {
   require_provider_namespace
   require_cluster_name
   require_parent_refs
-  require_scope_backend "$(printf %s "$params" | jq -r '.scope // empty')" "$(printf %s "${CONTEXT-}" | jq -r '.application.id // empty')" "$PROVIDER_NAMESPACE"
+  require_scope_destination "$(printf %s "$params" | jq -r '.scope // empty')" "$(printf %s "${CONTEXT-}" | jq -r '.application.id // empty')"
+  require_gateway_backend
   resolve_publish_environment "$SCOPE_ENVIRONMENT"
 
   local body
@@ -61,16 +62,17 @@ publish() {
     --arg hits "$hits" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
     --arg namespace "$PROVIDER_NAMESPACE" \
-    --argjson backend "$SCOPE_BACKEND" \
+    --argjson backend "$GATEWAY_BACKEND" \
+    --arg destination "https://$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
     '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
       tenant: $tenant, cluster: $cluster, callbackUrl: $callback,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
-                 backend: ($backend + {namespace: $namespace})}}
+                 backend: ($backend + {destinationFqdn: $destination})}}
      + (if $legajo == "" then {} else {legajo: $legajo} end)
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
-  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT sobre $(printf %s "$SCOPE_BACKEND" | jq -r .name)."
+  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
   apim_request POST /v1/kuadrant/manifests/publish "$body" ""
 
   local status message results
