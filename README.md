@@ -115,7 +115,7 @@ los headers que el patrón S2S le cuelga al request, para que no lleguen a la ap
 
 | Variable | Dónde | Qué saca |
 |----------|-------|----------|
-| `S2S_STRIP_HEADERS` | `override/values.yaml` | `x-np-token`, `x-np-origin`, `x-np-svc`, `x-np-scope`, `x-api-key` |
+| `S2S_STRIP_HEADERS` | `override/values.yaml` | `x-egress-token`, `x-np-origin`, `x-np-svc`, `x-np-scope`, `x-api-key`, `app_key`, `app_id` (la credencial de APIM que llega en el reingreso) |
 
 El motivo inmediato es de tamaño: hay aplicaciones Tomcat cerca del `maxHttpHeaderSize` con
 sus propios headers, y un JWT RS256 son ~400-800 bytes. El efecto secundario es de seguridad
