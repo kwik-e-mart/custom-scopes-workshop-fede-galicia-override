@@ -161,33 +161,21 @@ delete_own_services() {  # <rol>
     --ignore-not-found
 }
 
+# Cada validador cuelga de UNA route y es nuestro entero, así que no hay merge con nadie: se
+# aplica y listo. El merge existía porque el objeto era uno solo por Gateway y lo compartían todos
+# los namespaces de origen.
 reconcile_ingress_validator() {  # <archivo rendeado>
-  local archivo="$1" parche
-  if ! kubectl -n "$GATEWAY_NAMESPACE" get "authpolicy/$INGRESS_AUTHPOLICY" >/dev/null 2>&1; then
-    log info "egress-interceptor: $INGRESS_AUTHPOLICY no existe en $GATEWAY_NAMESPACE, se crea con las reglas de $NAMESPACE."
-    kubectl apply -f "$archivo"
-    return
-  fi
-  parche=$(kubectl create -f "$archivo" --dry-run=client -o json \
-    | jq -c '{spec:{rules:{authentication:.spec.rules.authentication, authorization:.spec.rules.authorization}}}') \
-    || return 1
-  log info "egress-interceptor: $INGRESS_AUTHPOLICY ya existe, se mergean sólo las reglas de $NAMESPACE."
-  kubectl -n "$GATEWAY_NAMESPACE" patch "authpolicy/$INGRESS_AUTHPOLICY" --type=merge -p "$parche"
+  kubectl apply -f "$1"
 }
 
+# Se borran por label y no por nombre: el nombre lleva el de la route del scope, que puede haber
+# cambiado entre el apply y el delete si el scope se redesplegó.
 delete_ingress_validator_rules() {
-  local actual restante
-  actual=$(kubectl -n "$GATEWAY_NAMESPACE" get "authpolicy/$INGRESS_AUTHPOLICY" -o json 2>/dev/null) || return 0
-  restante=$(printf %s "$actual" | jq -c --arg ns "$NAMESPACE" '
-      .spec.rules.authentication |= with_entries(select(.key != ("local-" + $ns) and .key != ("peer-" + $ns)))
-    | .spec.rules.authorization  |= ((. // {}) | with_entries(select(.key != ("claims-" + $ns))))') || return 1
-  if [ "$(printf %s "$restante" | jq '.spec.rules.authentication | length')" -eq 0 ]; then
-    log info "egress-interceptor: $NAMESPACE era el último emisor, se borra $INGRESS_AUTHPOLICY."
-    kubectl -n "$GATEWAY_NAMESPACE" delete "authpolicy/$INGRESS_AUTHPOLICY" --ignore-not-found
-    return
-  fi
-  log info "egress-interceptor: se sacan de $INGRESS_AUTHPOLICY sólo las reglas de $NAMESPACE."
-  printf %s "$restante" | kubectl apply -f -
+  local ns
+  for ns in "$NAMESPACE" "$GATEWAY_NAMESPACE"; do
+    kubectl -n "$ns" delete authpolicy.kuadrant.io \
+      -l "${MANAGED_LABEL}=true" --ignore-not-found 2>/dev/null || true
+  done
 }
 
 if [ "$ACTION" = "delete" ]; then
@@ -582,15 +570,20 @@ fi
 # ruidosamente: queda Accepted=True y el destino acepta tráfico sin validar el wristband. Se espera
 # siempre que el validador sea nuestro —con cluster-keys lo emite este service—, y no sólo con
 # origen OpenShift como cuando era un prerequisito del layer.
-if [ -n "$VALIDATOR_FILE" ] || [ "$PLATFORM" != "eks" ]; then
-  if ! kubectl -n "$GATEWAY_NAMESPACE" wait --for=condition=Enforced \
-       "authpolicy/$INGRESS_AUTHPOLICY" --timeout=180s; then
-    log error "la AuthPolicy de ingreso '$INGRESS_AUTHPOLICY' no llegó a Enforced=True en $GATEWAY_NAMESPACE."
-    log error "$(kubectl -n "$GATEWAY_NAMESPACE" get "authpolicy/$INGRESS_AUTHPOLICY" \
-      -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
-    log error "  El destino estaría aceptando tráfico del otro sustrato SIN validar el token."
-    exit 1
-  fi
+if [ -n "$VALIDATOR_FILE" ]; then
+  VALIDATOR_NS="$NAMESPACE"
+  [ "$PLATFORM" = "eks" ] || VALIDATOR_NS="$GATEWAY_NAMESPACE"
+  for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
+      -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    if ! kubectl -n "$VALIDATOR_NS" wait --for=condition=Enforced "authpolicy/$POL" --timeout=180s; then
+      log error "el validador '$POL' no llegó a Enforced=True en $VALIDATOR_NS."
+      log error "$(kubectl -n "$VALIDATOR_NS" get "authpolicy/$POL" \
+        -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
+      log error "  Con TargetNotFound, la HTTPRoute del scope no existe en $VALIDATOR_NS."
+      log error "  El destino estaría aceptando tráfico del otro sustrato SIN validar el token."
+      exit 1
+    fi
+  done
 fi
 
 # Converge al selector deseado en vez de actuar sólo la primera vez: un Service ya interceptado

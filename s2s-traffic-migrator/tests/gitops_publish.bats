@@ -63,11 +63,11 @@ original() {  # <service>
 }
 
 dos_reglas() {
-  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50,"original":'"$(original reports)"'},{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":100,"original":'"$(original checkout)"'}]'
+  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50, "ingress_route":"k-8-s-reports-internal","original":'"$(original reports)"'},{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":100, "ingress_route":"k-8-s-reports-internal","original":'"$(original checkout)"'}]'
 }
 
 una_regla() {
-  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50,"original":'"$(original reports)"'}]'
+  printf '%s' '[{"service_name":"reports","scope":"eks","scope_fqdn":"reports.example.io","percent":50, "ingress_route":"k-8-s-reports-internal","original":'"$(original reports)"'}]'
 }
 
 objetos() { yq -r '[.kind, (.metadata.namespace // ""), .metadata.name] | join("/")' "$@"; }
@@ -490,7 +490,7 @@ HOOK
   local ctx_a="$BATS_TEST_TMPDIR/ctx-a.json" mdir_a="$BATS_TEST_TMPDIR/m-a"
   cp "$CTX" "$ctx_a"
   cp -r "$MDIR" "$mdir_a"
-  make_render aws-us-east-1 '[{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":50,"original":'"$(original checkout)"'}]'
+  make_render aws-us-east-1 '[{"service_name":"checkout","scope":"eks","scope_fqdn":"checkout.example.io","percent":50, "ingress_route":"k-8-s-reports-internal","original":'"$(original checkout)"'}]'
   ( export NAMESPACE=payments; gitops_publish "$ctx_a" "$mdir_a" ) &
   ( export NAMESPACE=billing;  gitops_publish "$CTX" "$MDIR" ) &
   wait

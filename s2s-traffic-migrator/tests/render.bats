@@ -82,8 +82,8 @@ rendered_files() {
 # explican qué pasaría con la config equivocada (`LoadBalancer`, `insecureSkipVerify`) y una
 # aserción por substring los leería como si estuvieran configurados.
 rule_multi() {
-  jq -nc --arg f "$FQDN" '[{service_name:"reports", scope:"dev", scope_fqdn:$f, percent:100},
-                           {service_name:"ledger",  scope:"dev", scope_fqdn:("otro-" + $f), percent:100}]'
+  jq -nc --arg f "$FQDN" '[{service_name:"reports", scope:"dev", scope_fqdn:$f, percent:100, ingress_route:"k-8-s-reports-internal"},
+                           {service_name:"ledger",  scope:"dev", scope_fqdn:("otro-" + $f), percent:100, ingress_route:"k-8-s-ledger-internal"}]'
 }
 
 doc() {  # <render> <kind> [nombre]
@@ -98,7 +98,7 @@ named() { echo "$1" | yq "select(.kind == \"$2\" and .metadata.name == \"$3\") |
 
 rule() {  # <percent> [service]
   jq -nc --arg f "$FQDN" --argjson p "$1" --arg s "${2:-reports}" \
-    '[{service_name:$s, scope:"dev", scope_fqdn:$f, percent:$p}]'
+    '[{service_name:$s, scope:"dev", scope_fqdn:$f, percent:$p, ingress_route:("k-8-s-" + $s + "-internal")}]'
 }
 
 @test "el render es YAML válido y trae los cuatro objetos" {
@@ -380,13 +380,15 @@ rule() {  # <percent> [service]
 
 @test "soporta múltiples servicios con una route cada uno" {
   run render openshift "$(jq -nc --arg f "$FQDN" '[
-    {service_name:"reports", scope:"dev",  scope_fqdn:$f, percent:100},
-    {service_name:"ledger",  scope:"prod", scope_fqdn:"otro.example.io", percent:0}]')"
+    {service_name:"reports", scope:"dev",  scope_fqdn:$f, percent:100, ingress_route:"k-8-s-reports-internal"},
+    {service_name:"ledger",  scope:"prod", scope_fqdn:"otro.example.io", percent:0, ingress_route:"k-8-s-ledger-internal"}]')"
   [ "$status" -eq 0 ]
   echo "$output" | yq 'true' >/dev/null
-  # Un solo Gateway y una sola AuthPolicy para los dos.
+  # Un solo Gateway y una sola AuthPolicy de firma para los dos, pero un validador por destino:
+  # cada uno cuelga de la route de SU scope.
   [ "$(echo "$output" | yq -N '.kind' | grep -cx Gateway)" -eq 1 ]
-  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 2 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -cx sign)" -eq 1 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -c '^s2s-validator-')" -eq 2 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .metadata.name' | grep -c '^egress-gw-')" -eq 2 ]
 }
 
@@ -403,16 +405,17 @@ rule() {  # <percent> [service]
 @test "todo lo que emite el render queda marcado como propio" {
   # El `delete` borra por egress-interceptor/managed. Los alias `<svc>-local` que provisiona
   # Terraform NO la llevan, y por eso sobreviven al delete de la instancia.
-  # Con origen OS son cinco: Gateway, AuthPolicy, DestinationRule del peer, la route de egreso
-  # y la de ingreso —que vive en OTRO namespace y por eso el delete la borra aparte.
+  # Con origen OS son seis: Gateway, AuthPolicy, DestinationRule del peer, la route de egreso,
+  # la de ingreso —que vive en OTRO namespace y por eso el delete la borra aparte— y el validador
+  # que cuelga de esa route.
   run render openshift "$(rule 100)"
-  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 5 ]
+  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 6 ]
   [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 
   # Con origen EKS y rama local hay un DestinationRule más, y también tiene que quedar marcado o
   # el delete lo dejaría huérfano.
   run render eks "$(rule 30)"
-  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 5 ]
+  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 6 ]
   [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 }
 
@@ -538,14 +541,15 @@ rule() {  # <percent> [service]
 @test "sin ninguna regla quedan el Gateway, su AuthPolicy y el keygen de la clave" {
   # El keygen acompaña a la AuthPolicy y no a las reglas: la clave de firma tiene que existir
   # desde que hay una AuthPolicy que la referencia, haya o no tráfico declarado todavía.
+  # El validador NO está: cuelga de la route de un destino, y sin reglas no hay destino.
   run rendered_files openshift '[]'
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep -c .)" -eq 6 ]
+  [ "$(echo "$output" | grep -c .)" -eq 5 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
   [[ "$output" == *"20-authpolicy.yaml"* ]]
   [[ "$output" == *"15-keygen-rbac.yaml"* ]]
   [[ "$output" == *"16-keygen-jobs.yaml"* ]]
-  [[ "$output" == *"25-authpolicy-validator.yaml"* ]]
+  [[ "$output" != *"25-authpolicy-validator.yaml"* ]]
   [[ "$output" == *"17-jwks-endpoint.yaml"* ]]
 }
 
@@ -742,7 +746,7 @@ rule() {  # <percent> [service]
 @test "el jwksUrl del validador apunta EXACTAMENTE al endpoint que emitimos" {
   run render eks "$(rule 0)"
   local url svc port ruta
-  url=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication."local-payments".jwt.jwksUrl')
+  url=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication."local-payments".jwt.jwksUrl')
   svc=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .metadata.name + "." + .metadata.namespace')
   port=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .spec.ports[0].port')
   ruta=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.template.spec.volumes[0].projected.sources[0].secret.items[0].path')
@@ -808,7 +812,7 @@ rule() {  # <percent> [service]
   # dejaria al namespace sin poder recibir ni siquiera el trafico local.
   PEER_JWKS="" run render eks "$(rule 100)"
   local reglas
-  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication | keys | .[]')
+  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication | keys | .[]')
   [[ "$reglas" == *"local-payments"* ]]
   [[ "$reglas" != *"peer-payments"* ]]
 }
@@ -816,8 +820,19 @@ rule() {  # <percent> [service]
 @test "con PEER_JWKS_URL el validador si emite la regla del peer" {
   run render eks "$(rule 100)"
   local reglas
-  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and .metadata.name == "s2s-validator") | .spec.rules.authentication | keys | .[]')
+  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication | keys | .[]')
   [[ "$reglas" == *"peer-payments"* ]]
+}
+
+@test "el validador se combina con las otras AuthPolicies de la route en vez de pisarlas" {
+  run render eks "$(rule 100)"
+  local validador
+  validador=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-")))')
+  [ "$(echo "$validador" | yq '.spec.defaults.strategy')" = "merge" ]
+  [ "$(echo "$validador" | yq '.spec.rules // "ausente"')" = "ausente" ]
+  [ "$(echo "$validador" | yq '.spec.defaults.rules.authentication | keys | .[0]')" = "local-payments" ]
+  [ "$(echo "$validador" | yq '.spec.defaults.rules.authorization."claims-payments".when[0].predicate')" = \
+    'auth.identity.iss == "https://egress.gal-poc.bancogalicia.com.ar"' ]
 }
 
 @test "el property del ExternalSecret de la clave escapa el punto de key.pem" {
