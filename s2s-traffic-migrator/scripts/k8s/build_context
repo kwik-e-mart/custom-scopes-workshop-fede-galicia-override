@@ -107,10 +107,10 @@ if [ -z "$SITE" ]; then
   exit 1
 fi
 case "$SITE" in
-  aws-*) PLATFORM=eks ;;
-  openshift-*) PLATFORM=openshift ;;
+  aws*) PLATFORM=eks ;;
+  openshift*) PLATFORM=openshift ;;
   *)
-    log error "egress-interceptor: site '$SITE' no reconocido. Se esperan los prefijos 'aws-' (EKS) u 'openshift-'."
+    log error "egress-interceptor: site '$SITE' no reconocido. Se esperan los prefijos 'aws' (EKS) u 'openshift'."
     exit 1 ;;
 esac
 export SITE PLATFORM
