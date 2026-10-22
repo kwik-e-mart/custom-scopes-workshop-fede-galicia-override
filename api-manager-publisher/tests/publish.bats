@@ -196,13 +196,6 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "sin parentRefs configurados falla sin llamar a APIM" {
-  export APIM_PUBLISH_PARENT_REFS='[]'
-  run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISH_PARENT_REFS* ]]
-}
-
 @test "sin nombre de cluster falla sin llamar a APIM" {
   set_context https://github.com/zosc-zosconnect/test-kuadrant ""
   run_step
@@ -245,18 +238,18 @@ JSON
   [ "$(jq -c '{branch, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"commit":"a1b2c3d","legajo":"l0510541"}' ]
 }
 
-@test "parentRefs como namespace/nombre:listener separados por coma" {
-  export APIM_PUBLISH_PARENT_REFS="gateways/s2s-ingress:https,otro-ns/gw-b"
+@test "el parentRefs es el gateway de ingreso que usa el s2s" {
+  export INGRESS_GATEWAY_NAME=gateway-apim GATEWAY_NAMESPACE=apim-gateways
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -c .metadata.parentRefs "$CURL_BODIES_DIR/0.json")" = '[{"group":"gateway.networking.k8s.io","kind":"Gateway","namespace":"gateways","name":"s2s-ingress","sectionName":"https"},{"group":"gateway.networking.k8s.io","kind":"Gateway","namespace":"otro-ns","name":"gw-b"}]' ]
+  [ "$(jq -c .metadata.parentRefs "$CURL_BODIES_DIR/0.json")" = '[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"gateway-apim","namespace":"apim-gateways"}]' ]
 }
 
-@test "parentRefs con un formato que no es namespace/nombre falla sin llamar a APIM" {
-  export APIM_PUBLISH_PARENT_REFS="s2s-ingress"
+@test "un INGRESS_GATEWAY_NAME que no es un nombre de Kubernetes falla sin llamar a APIM" {
+  export INGRESS_GATEWAY_NAME="Gateway APIM"
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
-  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *INGRESS_GATEWAY_NAME* ]]
 }
 
 @test "un dominio de scope que no es un hostname falla sin llamar a APIM" {
