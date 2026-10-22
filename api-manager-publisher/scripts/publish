@@ -63,10 +63,10 @@ publish() {
     --arg callback "$(callback_url "$service_id" "$action_id")" \
     --arg namespace "$PROVIDER_NAMESPACE" \
     --argjson backend "$GATEWAY_BACKEND" \
-    --arg destination "https://$SCOPE_DOMAIN" \
+    --arg destination "$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
     '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
-      tenant: $tenant, cluster: $cluster, callbackUrl: $callback,
+      tenant: $tenant, origen: "nullplatform", cluster: $cluster, callbackUrl: $callback,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $legajo == "" then {} else {legajo: $legajo} end)
@@ -83,7 +83,7 @@ publish() {
   fi
   results=$(echo "$APIM_BODY" | jq -c '{api_id: .apiId, hostname: .hostname, manifest_path: .manifestPath}')
   case "$status" in
-    pushed|synced)
+    commited|synced)
       attach_scope_auth_policies "$(echo "$results" | jq -r '.api_id // empty')" "$PROVIDER_NAMESPACE" "$SCOPE_ID" "$SCOPE_SLUG"
       report_progress "Publicación $status en APIM ($(echo "$results" | jq -r .api_id)). APIM avisa cuando quede registrada." "$results" \
         || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."

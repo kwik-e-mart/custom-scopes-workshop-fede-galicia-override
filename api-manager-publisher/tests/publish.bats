@@ -24,7 +24,7 @@ set_context() {
 }
 
 pushed() {
-  jq -nc --arg status "${1-pushed}" '{status:$status,message:"pusheada",apiId:"payments-test-kuadrant-b2c-1",hostname:"payments-test-kuadrant-b2c-qas.bancogalicia.com.ar",manifestPath:"clusters/gal-kuadrant-poc/apis/payments/test-kuadrant"}'
+  jq -nc --arg status "${1-commited}" '{status:$status,message:"pusheada",apiId:"payments-test-kuadrant-b2c-1",hostname:"payments-test-kuadrant-b2c-qas.bancogalicia.com.ar",manifestPath:"clusters/gal-kuadrant-poc/apis/payments/test-kuadrant"}'
 }
 
 @test "publica con la firma de APIM y deja la accion abierta con los resultados" {
@@ -34,12 +34,12 @@ pushed() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c",
+{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c","origen":"nullplatform",
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
    "backend":{"kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443,
-              "destinationFqdn":"https://test-kuadrant-main.ms.ws.bancogalicia.com.ar"}}}
+              "destinationFqdn":"test-kuadrant-main.ms.ws.bancogalicia.com.ar"}}}
 JSON
 )" ]
   [ -z "$(np_last_update_flag --status)" ]
@@ -113,7 +113,7 @@ JSON
   set_request '{}' '{"scope":"draft","ref_type":"branch","ref":"main"}' qas
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"https://test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443}' ]
+  [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443}' ]
 }
 
 @test "LOCAL_INGRESS_HOST define el Service y el namespace del ingreso" {
@@ -224,11 +224,19 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "sin token del publisher falla sin llamar a APIM" {
+@test "sin token del publisher publica sin header de autorizacion" {
   unset APIM_PUBLISHER_TOKEN
+  queue_response 200 "$(pushed)"
   run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISHER_TOKEN* ]]
+  [ "$status" -eq 0 ]
+  grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth= ' "$CURL_CALLS_LOG"
+  [ "$(grep -c -- '--config' "$CURL_ARGV_LOG")" = "0" ]
+}
+
+@test "un status pushed no es del contrato y cierra failed" {
+  queue_response 200 "$(pushed pushed)"
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
 @test "republicar toma los atributos guardados y los parametros nuevos" {

@@ -14,14 +14,18 @@
   "paths": {
     "/v1/kuadrant/manifests/publish": {
       "post": {
-        "tags": ["Publicación de manifests"],
+        "tags": [
+          "Publicación de manifests"
+        ],
         "summary": "Publica manifests generados a partir de un repositorio con OpenAPI",
-        "description": "Clona el repositorio fuente (debe tener `openapi.yaml`, `openapi.yml` u `openapi.json` en la raíz), genera `httproute.yaml`, `ratelimitpolicy.yaml`, `authpolicy.yaml` y `apiproduct.yaml`, y los publica en `clusters/{cluster}/apis/{namespace}/{name}` del repo de manifiestos del ambiente.\n\nSe debe indicar al menos uno de `branch`, `tag` o `commit` (precedencia: branch, tag, commit). El `legajo` debe tener el formato `l#######` (por ejemplo `l0510541`).\n\nLuego se monitorea Argo CD de forma asíncrona: si sincroniza se registra la API y se hace el commit `SYNCED`/`REGISTERED`; si falla o vence el timeout se eliminan los manifiestos con un commit `CANCELED`.\n",
+        "description": "Clona el repositorio fuente (debe tener sopenapi.yamls, sopenapi.ymls u sopenapi.jsons en la raíz), genera shttproute.yamls, sratelimitpolicy.yamls, sauthpolicy.yamls y sapiproduct.yamls, y los publica en sclusters/{cluster}/apis/{namespace}/{name}s del repo de manifiestos del ambiente.\n\nSe debe indicar al menos uno de sbranchs, stags o scommits (precedencia: branch, tag, commit). El slegajos debe tener el formato sl#######s (por ejemplo sl0510541s).\n\nSi la API ya se encontraba publicada (su sapiproduct.yamls tiene spublishStatus: \"Published\"s) no se realiza ningún cambio y se responde 400.\n\nLuego se monitorea Argo CD de forma asíncrona: si sincroniza se registra la API y se hace el commit ssynceds/sRegistereds; si falla o vence el timeout se eliminan shttproutes, sratelimitpolicys y sauthpolicys, y sapiproduct.yamls queda con spublishStatus: \"Draft\"s, con un commit sRolledBacks.\n",
         "operationId": "generateAndPublishManifests",
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/PublishManifestRequest" },
+              "schema": {
+                "$ref": "#/components/schemas/PublishManifestRequest"
+              },
               "examples": {
                 "Publicar test-kuadrant en dev": {
                   "description": "Publicar test-kuadrant en dev",
@@ -33,10 +37,14 @@
                     "tenant": "b2c",
                     "cluster": "cluster1",
                     "legajo": "l0510541",
+                    "callbackUrl": "https://null.example.com/null/callback",
+                    "origen": "portal",
                     "metadata": {
                       "name": "test-kuadrant",
                       "namespace": "test-kuadrant",
-                      "labels": { "app": "test-kuadrant" },
+                      "labels": {
+                        "app": "test-kuadrant"
+                      },
                       "parentRefs": [
                         {
                           "group": "gateway.networking.k8s.io",
@@ -45,7 +53,15 @@
                           "namespace": "tenant-01-qas",
                           "sectionName": "api"
                         }
-                      ]
+                      ],
+                      "backend": {
+                        "kind": "Service",
+                        "name": "test-kuadrant",
+                        "namespace": "test-kuadrant",
+                        "port": 8080,
+                        "weight": 1,
+                        "destinationFqdn": "backend.internal.example.com"
+                      }
                     }
                   }
                 }
@@ -56,16 +72,16 @@
         },
         "responses": {
           "200": {
-            "description": "Publicación realizada en Git. El campo `status` indica el estado según Argo CD (`pushed`, `synced` o `canceled`).",
+            "description": "Publicación realizada en Git. El campo sstatuss indica el estado según Argo CD (`commited`, `synced` o `canceled`).",
             "content": {
               "application/json": {
                 "examples": {
                   "Publicado, Argo sincronizando": {
                     "description": "Publicado, Argo sincronizando",
                     "value": {
-                      "status": "pushed",
+                      "status": "commited",
                       "message": "La publicación fue pusheada correctamente a Git y Argo sigue sincronizándose.",
-                      "apiId": "test-kuadrant-test-kuadrant-b2c-1",
+                      "apiId": "test-kuadrant-test-kuadrant-b2c",
                       "hostname": "test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar",
                       "namespace": "test-kuadrant",
                       "apiName": "test-kuadrant",
@@ -73,7 +89,12 @@
                       "environment": "dev",
                       "repository": "zosc-zosconnect/test-kuadrant",
                       "manifestPath": "clusters/cluster1/apis/test-kuadrant/test-kuadrant",
-                      "generatedFiles": ["httproute.yaml", "ratelimitpolicy.yaml", "authpolicy.yaml", "apiproduct.yaml"],
+                      "generatedFiles": [
+                        "httproute.yaml",
+                        "ratelimitpolicy.yaml",
+                        "authpolicy.yaml",
+                        "apiproduct.yaml"
+                      ],
                       "argoStatus": {
                         "application": "apis-paas-arqlab-kuad",
                         "sync": "OutOfSync",
@@ -88,13 +109,16 @@
             }
           },
           "400": {
-            "description": "Error de validación del request o fallo del workflow de publicación (clone, push, etc.).",
+            "description": "Error de validación del request, API ya publicada o fallo del workflow de publicación (clone, push, etc.).",
             "content": {
               "application/json": {
                 "examples": {
-                  "Request inválido": {
-                    "description": "Request inválido",
-                    "value": { "status": "error", "message": "El tenant de publicación es obligatorio." }
+                  "API ya publicada": {
+                    "description": "API ya publicada",
+                    "value": {
+                      "status": "error",
+                      "message": "La API test-kuadrant ya se encontraba publicada (clusters/cluster1/apis/test-kuadrant/test-kuadrant); no se realizó ningún cambio."
+                    }
                   }
                 }
               }
@@ -109,74 +133,218 @@
       "BackendRefDto": {
         "type": "object",
         "properties": {
-          "group": { "type": "string" },
-          "kind": { "type": "string", "example": "Service" },
-          "name": { "type": "string", "example": "test-kuadrant" },
-          "namespace": { "type": "string", "example": "test-kuadrant" },
-          "port": { "type": "integer", "format": "int32", "example": 8080 },
-          "weight": { "type": "integer", "format": "int32", "example": 1 },
-          "destinationFqdn": { "type": "string", "example": "https://test-kuadrant-main.ms.ws.bancogalicia.com.ar", "description": "Dominio del scope de nullplatform. Cada regla de la ruta reescribe el host a este valor (URLRewrite) y manda el pedido al backend, que es el gateway privado." }
+          "group": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "example": "Service"
+          },
+          "name": {
+            "type": "string",
+            "example": "test-kuadrant"
+          },
+          "namespace": {
+            "type": "string",
+            "example": "test-kuadrant"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "example": 8080
+          },
+          "weight": {
+            "type": "integer",
+            "format": "int32",
+            "example": 1
+          },
+          "destinationFqdn": {
+            "type": "string",
+            "description": "Endpoint (FQDN) de destino. Si se informa, se genera en cada regla del HTTPRoute un filtro `URLRewrite` con `hostname` igual a este valor.",
+            "nullable": true,
+            "example": "backend.internal.example.com"
+          }
         },
         "description": "Backend de la ruta. Si se omite, se usa un Service con el nombre de la API, el namespace indicado, puerto 8080 y peso 1."
       },
       "ParentRefDto": {
-        "required": ["name", "namespace"],
+        "required": [
+          "name",
+          "namespace"
+        ],
         "type": "object",
         "properties": {
-          "group": { "type": "string", "example": "gateway.networking.k8s.io" },
-          "kind": { "type": "string", "example": "Gateway" },
-          "name": { "type": "string", "description": "Nombre del Gateway.", "example": "gw-echoserver" },
-          "namespace": { "type": "string", "description": "Namespace del Gateway.", "example": "tenant-01-qas" },
-          "sectionName": { "type": "string", "description": "Listener del Gateway al que se asocia la ruta.", "example": "api" }
+          "group": {
+            "type": "string",
+            "example": "gateway.networking.k8s.io"
+          },
+          "kind": {
+            "type": "string",
+            "example": "Gateway"
+          },
+          "name": {
+            "type": "string",
+            "description": "Nombre del Gateway.",
+            "example": "gw-echoserver"
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace del Gateway.",
+            "example": "tenant-01-qas"
+          },
+          "sectionName": {
+            "type": "string",
+            "description": "Listener del Gateway al que se asocia la ruta.",
+            "example": "api"
+          }
         },
         "description": "Gateways a los que se asocia la ruta (al menos uno)."
       },
       "PublicationMetadata": {
-        "required": ["name", "namespace", "parentRefs"],
+        "required": [
+          "name",
+          "namespace",
+          "parentRefs"
+        ],
         "type": "object",
         "properties": {
-          "name": { "type": "string", "description": "Nombre de la API (y del HTTPRoute).", "example": "test-kuadrant" },
-          "namespace": { "type": "string", "description": "Namespace donde se publican los recursos.", "example": "test-kuadrant" },
+          "name": {
+            "type": "string",
+            "description": "Nombre de la API (y del HTTPRoute).",
+            "example": "test-kuadrant"
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace donde se publican los recursos.",
+            "example": "test-kuadrant"
+          },
           "labels": {
             "type": "object",
-            "additionalProperties": { "type": "string", "description": "Labels del HTTPRoute.", "example": "{\"app\":\"test-kuadrant\"}" },
+            "additionalProperties": {
+              "type": "string",
+              "description": "Labels del HTTPRoute.",
+              "example": "{\"app\":\"test-kuadrant\"}"
+            },
             "description": "Labels del HTTPRoute.",
-            "example": { "app": "test-kuadrant" }
+            "example": {
+              "app": "test-kuadrant"
+            }
           },
           "parentRefs": {
             "type": "array",
             "description": "Gateways a los que se asocia la ruta (al menos uno).",
-            "items": { "$ref": "#/components/schemas/ParentRefDto" }
+            "items": {
+              "$ref": "#/components/schemas/ParentRefDto"
+            }
           },
           "hostnames": {
             "type": "array",
             "description": "Si se omite, se usa `{namespace}-{name}-{tenant}-{environment}.bancogalicia.com.ar`.",
-            "example": ["test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar"],
+            "example": [
+              "test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar"
+            ],
             "items": {
               "type": "string",
               "description": "Si se omite, se usa `{namespace}-{name}-{tenant}-{environment}.bancogalicia.com.ar`.",
               "example": "[\"test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar\"]"
             }
           },
-          "backend": { "$ref": "#/components/schemas/BackendRefDto" }
+          "backend": {
+            "$ref": "#/components/schemas/BackendRefDto"
+          }
         }
       },
       "PublishManifestRequest": {
-        "required": ["cluster", "environment", "metadata", "organization", "repository", "tenant"],
+        "required": [
+          "cluster",
+          "environment",
+          "metadata",
+          "organization",
+          "origen",
+          "repository",
+          "tenant"
+        ],
         "type": "object",
         "properties": {
-          "organization": { "type": "string", "description": "Organización del repositorio fuente en GitHub Enterprise.", "example": "zosc-zosconnect" },
-          "repository": { "type": "string", "description": "Repositorio fuente (debe tener el OpenAPI en la raíz).", "example": "test-kuadrant" },
-          "branch": { "type": "string", "description": "Rama del repo fuente. Se requiere al menos uno de `branch`, `tag` o `commit`.", "example": "master" },
-          "tag": { "type": "string", "description": "Tag del repo fuente.", "nullable": true, "example": "v1.2.3" },
-          "commit": { "type": "string", "description": "Commit del repo fuente.", "nullable": true, "example": "a1b2c3d4e5f678901234567890abcdef12345678" },
-          "window": { "type": "string", "description": "Ventana del rate limit. El rate limit se genera solo si se informan `window` y `hitsPerWindow` (> 0).", "nullable": true, "example": "10s" },
-          "hitsPerWindow": { "type": "integer", "description": "Cantidad de hits permitidos por ventana.", "format": "int32", "nullable": true, "example": 100 },
-          "environment": { "type": "string", "description": "Ambiente destino. Determina el repositorio de manifiestos.", "example": "dev", "enum": ["dev", "int", "qas", "prd"] },
-          "tenant": { "type": "string", "example": "b2c" },
-          "cluster": { "type": "string", "description": "Cluster; los manifiestos se escriben en `clusters/{cluster}/apis/{namespace}/{name}`.", "example": "cluster1" },
-          "legajo": { "type": "string", "description": "Usuario que publica, con el formato `l#######`. Se usa en el ticket del API register.", "example": "l0510541" },
-          "metadata": { "$ref": "#/components/schemas/PublicationMetadata" }
+          "organization": {
+            "type": "string",
+            "description": "Organización del repositorio fuente en GitHub Enterprise.",
+            "example": "zosc-zosconnect"
+          },
+          "repository": {
+            "type": "string",
+            "description": "Repositorio fuente (debe tener el OpenAPI en la raíz).",
+            "example": "test-kuadrant"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Rama del repo fuente. Se requiere al menos uno de `branch`, `tag` o `commit`.",
+            "example": "master"
+          },
+          "tag": {
+            "type": "string",
+            "description": "Tag del repo fuente.",
+            "nullable": true,
+            "example": "v1.2.3"
+          },
+          "commit": {
+            "type": "string",
+            "description": "Commit del repo fuente.",
+            "nullable": true,
+            "example": "a1b2c3d4e5f678901234567890abcdef12345678"
+          },
+          "window": {
+            "type": "string",
+            "description": "Ventana del rate limit. El rate limit se genera solo si se informan `window` y `hitsPerWindow` (> 0).",
+            "nullable": true,
+            "example": "10s"
+          },
+          "hitsPerWindow": {
+            "type": "integer",
+            "description": "Cantidad de hits permitidos por ventana.",
+            "format": "int32",
+            "nullable": true,
+            "example": 100
+          },
+          "environment": {
+            "type": "string",
+            "description": "Ambiente destino. Determina el repositorio de manifiestos.",
+            "example": "dev",
+            "enum": [
+              "dev",
+              "int",
+              "qas",
+              "prd"
+            ]
+          },
+          "tenant": {
+            "type": "string",
+            "example": "b2c"
+          },
+          "cluster": {
+            "type": "string",
+            "description": "Cluster; los manifiestos se escriben en `clusters/{cluster}/apis/{namespace}/{name}`.",
+            "example": "cluster1"
+          },
+          "legajo": {
+            "type": "string",
+            "description": "Usuario que publica, con el formato `l#######`. Se usa en el ticket del API register.",
+            "example": "l0510541"
+          },
+          "callbackUrl": {
+            "type": "string",
+            "description": "URL (http/https) a la que se envía el callback con el resultado final (Synced, Registered o RolledBack). Si se omite, se usa `PLATFORM_URL` + `PLATFORM_CALLBACK_PATH`.",
+            "nullable": true,
+            "example": "https://null.example.com/null/callback"
+          },
+          "origen": {
+            "type": "string",
+            "description": "Origen de la publicación.",
+            "example": "portal"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/PublicationMetadata"
+          }
         }
       }
     }

@@ -8,15 +8,17 @@ implementada. La firma completa está en [`apim-publisher.openapi.json`](./apim-
 `POST /v1/kuadrant/manifests/publish` clona el repo fuente (con el OpenAPI en la raíz), genera
 `httproute.yaml`, `ratelimitpolicy.yaml`, `authpolicy.yaml` y `apiproduct.yaml`, los publica en
 `clusters/{cluster}/apis/{namespace}/{name}` del repo de manifiestos del ambiente y después sigue Argo CD de
-forma asíncrona: si sincroniza registra la API (`SYNCED` / `REGISTERED`); si falla o vence el timeout borra
-los manifiestos (`CANCELED`).
+forma asíncrona: si sincroniza registra la API (`Synced` / `Registered`); si falla o vence el timeout borra
+los manifiestos (`RolledBack`).
 
-Respuestas: `200` con `status` `pushed` / `synced` / `canceled`, o `400` con `{status: "error", message}`
+Respuestas: `200` con `status` `commited` / `synced` / `canceled`, o `400` con `{status: "error", message}`
 para validación o fallas del workflow (clone, push).
 
-**Falta en la firma y lo vamos a pedir igual que en el subscriber:** `callbackUrl`, para que el Publisher
-cierre la acción de nullplatform con el formato del mini doc de avisos
-(`PATCH https://api.nullplatform.com/service/{service_id}/action/{action_id}`).
+La firma no declara autenticación: el service manda `Authorization: Bearer` solo si el agente tiene
+`APIM_PUBLISHER_TOKEN`. El body exige `origen`; el service manda `nullplatform`.
+
+`callbackUrl` está en la firma: APIM manda ahí el resultado final (`Synced`, `Registered` o `RolledBack`),
+con el formato del mini doc de avisos (`PATCH https://api.nullplatform.com/service/{service_id}/action/{action_id}`).
 
 ## De dónde sale cada campo (notas de la reunión)
 
@@ -57,7 +59,7 @@ cierre la acción de nullplatform con el formato del mini doc de avisos
 
 APIM genera su propio HTTPRoute y hace el `URLRewrite`: el publish manda en `metadata.backend` el **gateway
 privado** (`kind: Service`, `name`, `namespace`, `port`) y, en `metadata.backend.destinationFqdn`, el dominio del
-scope (`https://<app>-<scope>.ms.ws.bancogalicia.com.ar`). Cada regla de la ruta de APIM reescribe el host a ese
+scope (`<app>-<scope>.ms.ws.bancogalicia.com.ar`, sin esquema: va directo como `hostname` del `URLRewrite`). Cada regla de la ruta de APIM reescribe el host a ese
 dominio y manda el pedido al gateway, que lo entrega a la ruta del scope: siempre llega al despliegue activo,
 también durante un blue/green, sin republicar.
 
@@ -67,7 +69,7 @@ también durante un blue/green, sin republicar.
   "name": "gateway-private",
   "port": 8080,
   "namespace": "gateways",
-  "destinationFqdn": "https://<app-name>-<scope-name>.ms.ws.bancogalicia.com.ar"
+  "destinationFqdn": "<app-name>-<scope-name>.ms.ws.bancogalicia.com.ar"
 }
 ```
 

@@ -68,17 +68,14 @@ require_agent_config() {
 }
 
 require_publisher_config() {
-  local name
-  for name in APIM_PUBLISHER_URL APIM_PUBLISHER_TOKEN; do
-    if [ -z "${!name-}" ]; then
-      fail "publisher: el agente no tiene configurada la variable $name."
-    fi
-  done
+  if [ -z "${APIM_PUBLISHER_URL-}" ]; then
+    fail "publisher: el agente no tiene configurada la variable APIM_PUBLISHER_URL."
+  fi
   if [[ "$APIM_PUBLISHER_URL" != https://* ]]; then
     fail "publisher: APIM_PUBLISHER_URL tiene que ser https; no se manda el token por un canal sin cifrar."
   fi
   APIM_URL="$APIM_PUBLISHER_URL"
-  APIM_TOKEN="$APIM_PUBLISHER_TOKEN"
+  APIM_TOKEN="${APIM_PUBLISHER_TOKEN-}"
 }
 
 load_notification() {
@@ -135,7 +132,7 @@ apim_request() {
   local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
   local attempt=0 response_file code insecure="${APIM_TLS_INSECURE-false}"
-  local url="${APIM_URL:-${API_SUBSCRIBER_URL-}}" token="${APIM_TOKEN:-${API_SUBSCRIBER_TOKEN-}}"
+  local url="${APIM_URL-${API_SUBSCRIBER_URL-}}" token="${APIM_TOKEN-${API_SUBSCRIBER_TOKEN-}}"
   if [ -z "${NP_OUTPUT_DIR-}" ]; then
     fail "subscriber: NP_OUTPUT_DIR no está definido; los temporales tienen que quedar en el directorio que limpia el workflow."
   fi
@@ -144,7 +141,7 @@ apim_request() {
   fi
   response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
   while :; do
-    local args=(-sS --config - --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
+    local args=(-sS --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
       -o "$response_file" -w '%{http_code}' -X "$method" "$url$path" -H "Accept: application/json")
     if [ "$insecure" = "true" ]; then
       args+=(-k)
@@ -156,7 +153,11 @@ apim_request() {
       args+=(-H "Content-Type: application/json" --data-binary "$body")
     fi
     : >"$response_file"
-    code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl "${args[@]}") || code="000"
+    if [ -n "$token" ]; then
+      code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - "${args[@]}") || code="000"
+    else
+      code=$(curl "${args[@]}") || code="000"
+    fi
     APIM_HTTP_CODE="$code"
     APIM_BODY=$(cat "$response_file")
     if [ "$code" != "503" ] && [ "$code" != "000" ]; then
