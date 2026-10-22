@@ -94,6 +94,15 @@ setup() {
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
+@test "require_agent_config sin token llama al API Subscriber sin header de autorizacion" {
+  unset API_SUBSCRIBER_TOKEN
+  require_agent_config
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  grep -q '^GET https://apisub.test/v1/plans idem= auth= ' "$CURL_CALLS_LOG"
+  [ "$(grep -c -- '--config' "$CURL_ARGV_LOG")" = "0" ]
+}
+
 @test "require_agent_config rechaza una URL que no es https" {
   API_SUBSCRIBER_URL="http://apisub.test"
   run require_agent_config
