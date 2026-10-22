@@ -183,24 +183,6 @@ setup() {
   [ "$(jq -c '.[0:3]' "$NP_CALLS_LOG" | tail -n1)" = '["link","action","update"]' ]
 }
 
-@test "con APIM_CA_CERT curl valida contra esa CA, guardada dentro de NP_OUTPUT_DIR" {
-  export APIM_CA_CERT="-----BEGIN CERTIFICATE-----
-MIIBfake
------END CERTIFICATE-----"
-  queue_response 200 '{}'
-  apim_request GET /v1/plans "" ""
-  ca_file=$(grep -o -- "--cacert [^ ]*" "$CURL_ARGV_LOG" | cut -d' ' -f2)
-  [[ "$ca_file" == "$NP_OUTPUT_DIR"/* ]] || false
-  [ "$(cat "$CURL_BODIES_DIR/ca.pem")" = "$APIM_CA_CERT" ]
-  [ ! -e "$ca_file" ]
-}
-
-@test "sin APIM_CA_CERT curl usa las CAs del sistema" {
-  unset APIM_CA_CERT
-  queue_response 200 '{}'
-  apim_request GET /v1/plans "" ""
-  [ "$(grep -c -- '--cacert' "$CURL_ARGV_LOG")" = "0" ]
-}
 
 @test "require_publisher_config apunta las llamadas al API Publisher" {
   export APIM_PUBLISHER_URL="https://publisher.test" APIM_PUBLISHER_TOKEN="pub-tok"
@@ -225,13 +207,33 @@ MIIBfake
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *https* ]]
 }
 
-@test "APIM_CA_CERT en base64 se decodifica a PEM" {
-  pem="-----BEGIN CERTIFICATE-----
-MIIBfake
------END CERTIFICATE-----"
-  export APIM_CA_CERT
-  APIM_CA_CERT=$(printf '%s\n' "$pem" | base64 | tr -d '\n')
+@test "por default curl valida el certificado de APIM" {
+  unset APIM_TLS_INSECURE
   queue_response 200 '{}'
   apim_request GET /v1/plans "" ""
-  [ "$(cat "$CURL_BODIES_DIR/ca.pem")" = "$pem" ]
+  [ "$(grep -cE -- '(^| )-k( |$)' "$CURL_ARGV_LOG")" = "0" ]
+}
+
+@test "APIM_TLS_INSECURE=true agrega -k a curl" {
+  export APIM_TLS_INSECURE=true
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  [ "$(grep -cE -- '(^| )-k( |$)' "$CURL_ARGV_LOG")" = "1" ]
+}
+
+@test "APIM_TLS_INSECURE=false deja la validacion prendida" {
+  export APIM_TLS_INSECURE=false
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  [ "$(grep -cE -- '(^| )-k( |$)' "$CURL_ARGV_LOG")" = "0" ]
+}
+
+@test "un APIM_TLS_INSECURE que no es true ni false falla sin llamar a APIM" {
+  for value in "" yes 1; do
+    export APIM_TLS_INSECURE="$value"
+    run apim_request GET /v1/plans "" ""
+    [ "$status" -ne 0 ]
+    [ ! -s "$CURL_CALLS_LOG" ]
+    [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_TLS_INSECURE* ]] || false
+  done
 }

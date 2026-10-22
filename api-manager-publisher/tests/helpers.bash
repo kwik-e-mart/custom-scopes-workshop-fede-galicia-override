@@ -19,7 +19,7 @@ setup_common() {
   export APIM_RETRY_DELAY=0
   export NP_OUTPUT_DIR="$BATS_TEST_TMPDIR/np-output"
   mkdir -p "$NP_OUTPUT_DIR"
-  unset APIM_RETRIES NP_MOCK_UPDATE_FAIL ACTION_SETTLED SUBSCRIBER_SETTLED_MARKER APIM_CA_CERT ACTION_ENTITY APIM_PUBLISHER_URL APIM_PUBLISHER_TOKEN
+  unset APIM_RETRIES NP_MOCK_UPDATE_FAIL ACTION_SETTLED SUBSCRIBER_SETTLED_MARKER APIM_TLS_INSECURE ACTION_ENTITY APIM_PUBLISHER_URL APIM_PUBLISHER_TOKEN
 
   export CURL_CALLS_LOG="$BATS_TEST_TMPDIR/curl-calls.log"
   export CURL_ARGV_LOG="$BATS_TEST_TMPDIR/curl-argv.log"
@@ -42,9 +42,6 @@ for arg in "$@"; do
     -X) method="$arg" ;;
     -w) writeout="$arg" ;;
     --config) config="$arg" ;;
-    --cacert)
-      if [ -f "$arg" ]; then cp "$arg" "$CURL_BODIES_DIR/ca.pem"; else echo "curl: (77) error setting certificate file: $arg" >&2; exit 77; fi
-      ;;
     --max-time) timeouts="${timeouts}max" ;;
     --connect-timeout) timeouts="${timeouts}connect" ;;
     --data-binary) data="$arg" ;;

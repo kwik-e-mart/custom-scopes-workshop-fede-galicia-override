@@ -167,26 +167,20 @@ if ! type -t apim_request >/dev/null 2>&1; then
 apim_request() {
   local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
-  local attempt=0 response_file code ca_file=""
+  local attempt=0 response_file code insecure="${APIM_TLS_INSECURE-false}"
   local url="${APIM_URL:-${API_SUBSCRIBER_URL-}}" token="${APIM_TOKEN:-${API_SUBSCRIBER_TOKEN-}}"
   if [ -z "${NP_OUTPUT_DIR-}" ]; then
     fail "subscriber: NP_OUTPUT_DIR no está definido; los temporales tienen que quedar en el directorio que limpia el workflow."
   fi
-  response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
-  if [ -n "${APIM_CA_CERT-}" ]; then
-    ca_file=$(mktemp "$NP_OUTPUT_DIR/apim-ca.XXXXXX")
-    if [[ "$APIM_CA_CERT" == *"BEGIN CERTIFICATE"* ]]; then
-      printf '%s\n' "$APIM_CA_CERT" >"$ca_file"
-    else
-      printf '%s' "$APIM_CA_CERT" | base64 -d >"$ca_file" 2>/dev/null \
-        || fail "subscriber: APIM_CA_CERT no es un PEM ni un PEM en base64."
-    fi
+  if [ "$insecure" != "true" ] && [ "$insecure" != "false" ]; then
+    fail "subscriber: APIM_TLS_INSECURE inválido: '$insecure'. Valores: true | false."
   fi
+  response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
   while :; do
     local args=(-sS --config - --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
       -o "$response_file" -w '%{http_code}' -X "$method" "$url$path" -H "Accept: application/json")
-    if [ -n "$ca_file" ]; then
-      args+=(--cacert "$ca_file")
+    if [ "$insecure" = "true" ]; then
+      args+=(-k)
     fi
     if [ -n "$idempotency_key" ]; then
       args+=(-H "Idempotency-Key: $idempotency_key")
@@ -208,7 +202,7 @@ apim_request() {
     log warn "subscriber: APIM no responde (HTTP $code); reintento $attempt de $retries."
     sleep "$delay"
   done
-  rm -f "$response_file" "$ca_file"
+  rm -f "$response_file"
 }
 fi
 
