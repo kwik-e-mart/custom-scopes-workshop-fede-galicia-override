@@ -8,7 +8,6 @@ REF_PATTERN='^[A-Za-z0-9._/-]+$'
 LEGAJO_PATTERN='^l[0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
 
-if ! type -t require_publish_environment >/dev/null 2>&1; then
 require_publish_environment() {
   local dimension
   dimension=$(printf %s "$1" | tr '[:upper:]' '[:lower:]')
@@ -20,9 +19,7 @@ require_publish_environment() {
     *) fail "publisher: la dimensión environment '$1' no corresponde a int, qas ni prd." ;;
   esac
 }
-fi
 
-if ! type -t resolve_publish_environment >/dev/null 2>&1; then
 resolve_publish_environment() {
   if [ -z "${APIM_PUBLISH_ENVIRONMENT-}" ]; then
     require_publish_environment "$1"
@@ -33,9 +30,7 @@ resolve_publish_environment() {
     *) fail "publisher: APIM_PUBLISH_ENVIRONMENT tiene que ser int, qas o prd (llegó '$APIM_PUBLISH_ENVIRONMENT')." ;;
   esac
 }
-fi
 
-if ! type -t require_source_repository >/dev/null 2>&1; then
 require_source_repository() {
   local url="$1" path
   path=$(printf %s "$url" | sed -E 's#^https?://[^/]+/##; s#\.git$##; s#/+$##')
@@ -45,9 +40,7 @@ require_source_repository() {
   SOURCE_ORGANIZATION="${path%%/*}"
   SOURCE_REPOSITORY="${path##*/}"
 }
-fi
 
-if ! type -t require_cluster_name >/dev/null 2>&1; then
 require_cluster_name() {
   CLUSTER_NAME=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.name // empty' 2>/dev/null) || CLUSTER_NAME=""
   if [ -n "${APIM_CLUSTER_NAME-}" ]; then
@@ -57,9 +50,7 @@ require_cluster_name() {
     fail "publisher: el provider no trae el nombre del cluster; configurá APIM_CLUSTER_NAME en el agente."
   fi
 }
-fi
 
-if ! type -t require_parent_refs >/dev/null 2>&1; then
 require_parent_refs() {
   local raw="${APIM_PUBLISH_PARENT_REFS-}"
   if [[ "$raw" != \[* ]]; then
@@ -71,9 +62,7 @@ require_parent_refs() {
     fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser namespace/nombre[:listener] separados por coma, o una lista JSON de Gateways con name y namespace."
   fi
 }
-fi
 
-if ! type -t require_scope_destination >/dev/null 2>&1; then
 require_scope_destination() {
   local scope="$1" application_id="$2" scopes scope_id
   if [ -z "$scope" ]; then
@@ -100,9 +89,7 @@ require_scope_destination() {
     fail "publisher: el dominio del scope '$scope' no es un hostname válido: '$SCOPE_DOMAIN'."
   fi
 }
-fi
 
-if ! type -t require_gateway_backend >/dev/null 2>&1; then
 require_gateway_backend() {
   local host="${LOCAL_INGRESS_HOST-s2s-ingress-istio.gateways.svc.cluster.local}" port="${APIM_GATEWAY_PORT:-443}" name namespace
   local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
@@ -117,17 +104,13 @@ require_gateway_backend() {
   GATEWAY_BACKEND=$(jq -nc --arg name "$name" --arg namespace "$namespace" --argjson port "$port" \
     '{kind: "Service", name: $name, namespace: $namespace, port: $port}')
 }
-fi
 
-if ! type -t require_api_id_format >/dev/null 2>&1; then
 require_api_id_format() {
   if [[ ! "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
     fail "publisher: APIM devolvió un apiId que no sirve como nombre de Kubernetes: '$1'."
   fi
 }
-fi
 
-if ! type -t scope_auth_policy >/dev/null 2>&1; then
 scope_auth_policy() {
   local api_id="$1" namespace="$2" scope_id="$3" route="$4"
   jq -nc --arg api "$api_id" --arg ns "$namespace" --arg scope "$scope_id" --arg route "$route" \
@@ -145,9 +128,7 @@ scope_auth_policy() {
           when: [{predicate: "has(request.headers.app_key)"}],
           patternMatching: {patterns: [{predicate: $app_id_check}]}}}}}}}'
 }
-fi
 
-if ! type -t attach_scope_auth_policies >/dev/null 2>&1; then
 attach_scope_auth_policies() {
   local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" routes route
   require_api_id_format "$api_id"
@@ -163,13 +144,10 @@ attach_scope_auth_policies() {
     log info "publisher: la route $route acepta las credenciales de $api_id."
   done <<<"$routes"
 }
-fi
 
-if ! type -t detach_scope_auth_policies >/dev/null 2>&1; then
 detach_scope_auth_policies() {
   local api_id="$1" namespace="$2"
   require_api_id_format "$api_id"
   kubectl -n "$namespace" delete authpolicy -l "app.kubernetes.io/managed-by=api-manager-publisher,api-id=$api_id" --ignore-not-found >/dev/null \
     || fail "publisher: no se pudieron borrar las AuthPolicies de $api_id en el namespace $namespace; reintentá el borrado."
 }
-fi

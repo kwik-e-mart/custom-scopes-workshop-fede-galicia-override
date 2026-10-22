@@ -8,16 +8,13 @@ APIM_DETAIL_MAX_CHARS=300
 APIM_CONNECT_TIMEOUT=10
 APIM_MAX_TIME=60
 
-if ! type -t mark_settled >/dev/null 2>&1; then
 mark_settled() {
   ACTION_SETTLED=1
   if [ -n "${SUBSCRIBER_SETTLED_MARKER-}" ]; then
     printf 1 >"$SUBSCRIBER_SETTLED_MARKER"
   fi
 }
-fi
 
-if ! type -t update_action >/dev/null 2>&1; then
 update_action() {
   local level="$1" message="$2" results="$3"
   shift 3
@@ -29,9 +26,7 @@ update_action() {
   fi
   np "${args[@]}"
 }
-fi
 
-if ! type -t close_action >/dev/null 2>&1; then
 close_action() {
   local status="$1" level="info"
   if [ "$status" = "failed" ]; then
@@ -40,32 +35,24 @@ close_action() {
   update_action "$level" "$2" "${3-}" --status "$status" || return 1
   mark_settled
 }
-fi
 
-if ! type -t report_progress >/dev/null 2>&1; then
 report_progress() {
   mark_settled
   update_action info "$1" "${2-}"
 }
-fi
 
-if ! type -t fail >/dev/null 2>&1; then
 fail() {
   log error "$1"
   close_action failed "$1" || log error "subscriber: tampoco se pudo cerrar la acción como fallida."
   exit 1
 }
-fi
 
-if ! type -t close_on_unexpected_exit >/dev/null 2>&1; then
 close_on_unexpected_exit() {
   if [ "${ACTION_SETTLED:-0}" != "1" ]; then
     close_action failed "subscriber: la acción terminó por un error inesperado; revisá el log del agente." || true
   fi
 }
-fi
 
-if ! type -t require_agent_config >/dev/null 2>&1; then
 require_agent_config() {
   local name
   for name in API_SUBSCRIBER_URL API_SUBSCRIBER_TOKEN; do
@@ -79,9 +66,7 @@ require_agent_config() {
   APIM_URL="$API_SUBSCRIBER_URL"
   APIM_TOKEN="$API_SUBSCRIBER_TOKEN"
 }
-fi
 
-if ! type -t require_publisher_config >/dev/null 2>&1; then
 require_publisher_config() {
   local name
   for name in APIM_PUBLISHER_URL APIM_PUBLISHER_TOKEN; do
@@ -95,55 +80,41 @@ require_publisher_config() {
   APIM_URL="$APIM_PUBLISHER_URL"
   APIM_TOKEN="$APIM_PUBLISHER_TOKEN"
 }
-fi
 
-if ! type -t load_notification >/dev/null 2>&1; then
 load_notification() {
   NOTIFICATION=$(printf %s "${NP_ACTION_CONTEXT-}" | jq -c '.notification // empty' 2>/dev/null) || NOTIFICATION=""
   if [ -z "$NOTIFICATION" ]; then
     fail "subscriber: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
   fi
 }
-fi
 
-if ! type -t notification_field >/dev/null 2>&1; then
 notification_field() {
   printf %s "$NOTIFICATION" | jq -r "$1 // empty"
 }
-fi
 
-if ! type -t require_action_ids >/dev/null 2>&1; then
 require_action_ids() {
   if [ -z "$1" ] || [ -z "$2" ]; then
     fail "subscriber: la notificación no trae service.id o el id de la acción."
   fi
 }
-fi
 
-if ! type -t require_provider_namespace >/dev/null 2>&1; then
 require_provider_namespace() {
   PROVIDER_NAMESPACE=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null) || PROVIDER_NAMESPACE=""
   if [ -z "$PROVIDER_NAMESPACE" ]; then
     fail "subscriber: el provider container-orchestration no trae cluster.namespace; no se adivina el namespace a suscribir."
   fi
 }
-fi
 
-if ! type -t require_plan_id_format >/dev/null 2>&1; then
 require_plan_id_format() {
   if [[ ! "$1" =~ $PLAN_ID_PATTERN ]]; then
     fail "subscriber: plan_id inválido: '$1'."
   fi
 }
-fi
 
-if ! type -t callback_url >/dev/null 2>&1; then
 callback_url() {
   printf '%s/%s/%s/action/%s' "$NP_API_BASE_URL" "${ACTION_ENTITY-service}" "$1" "$2"
 }
-fi
 
-if ! type -t apim_problem_detail >/dev/null 2>&1; then
 apim_problem_detail() {
   local body="$1" detail
   detail=$(printf %s "$body" | jq -r '.detail // .title // empty' 2>/dev/null) || detail=""
@@ -153,17 +124,13 @@ apim_problem_detail() {
   detail=$(printf %s "$detail" | tr -d '\000-\011\013-\037\177')
   printf '%s' "${detail:0:$APIM_DETAIL_MAX_CHARS}"
 }
-fi
 
-if ! type -t require_subscription_id_format >/dev/null 2>&1; then
 require_subscription_id_format() {
   if [[ ! "$1" =~ ^${SUBSCRIPTION_ID_PATTERN}$ ]]; then
     fail "subscriber: subscription_id con formato inválido: '$1'."
   fi
 }
-fi
 
-if ! type -t apim_request >/dev/null 2>&1; then
 apim_request() {
   local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
@@ -204,9 +171,7 @@ apim_request() {
   done
   rm -f "$response_file"
 }
-fi
 
-if ! type -t lookup_subscription_owner >/dev/null 2>&1; then
 lookup_subscription_owner() {
   apim_request GET "/v1/subscriptions/$1" "" ""
   case "$APIM_HTTP_CODE" in
@@ -224,17 +189,13 @@ lookup_subscription_owner() {
       ;;
   esac
 }
-fi
 
-if ! type -t require_owned_by_namespace >/dev/null 2>&1; then
 require_owned_by_namespace() {
   if [ "$SUBSCRIPTION_OWNER" != "$2" ]; then
     fail "subscriber: la suscripción $1 es del namespace '$SUBSCRIPTION_OWNER', no de '$2'; no se toca."
   fi
 }
-fi
 
-if ! type -t request_subscription >/dev/null 2>&1; then
 request_subscription() {
   local approval_ref="$1" plan_id="$2" namespace="$3" callback="$4" key="$5"
   if [ -z "$approval_ref" ] || [ -z "$plan_id" ]; then
@@ -279,9 +240,7 @@ request_subscription() {
       ;;
   esac
 }
-fi
 
-if ! type -t request_unsubscription >/dev/null 2>&1; then
 request_unsubscription() {
   local subscription_id="$1" owns="$2" key="$3"
   if [ "$owns" != "true" ] || [ -z "$subscription_id" ]; then
@@ -315,4 +274,3 @@ request_unsubscription() {
       ;;
   esac
 }
-fi
