@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+
+if ! type -t resolve_sigla >/dev/null 2>&1; then
+resolve_sigla() {
+  local slug sigla
+
+  slug=$(jq -r '[.namespace.slug?, .tags.namespace?] | map(select(type == "string" and . != "")) | first // empty' <<< "$1")
+
+  if [ -z "$slug" ]; then
+    echo "⚠️ Cannot resolve the sigla label: the context has neither namespace.slug nor tags.namespace — objects go without it" >&2
+    return 0
+  fi
+
+  sigla=$(printf '%s' "${slug%%-*}" | tr '[:lower:]' '[:upper:]')
+
+  if [[ ! "$sigla" =~ ^[A-Z0-9]([A-Z0-9_.]{0,61}[A-Z0-9])?$ ]]; then
+    echo "⚠️ Cannot use '$sigla' (from '$slug') as the sigla label: it is not a valid Kubernetes label value — objects go without it" >&2
+    return 0
+  fi
+
+  printf '%s' "$sigla"
+}
+fi
