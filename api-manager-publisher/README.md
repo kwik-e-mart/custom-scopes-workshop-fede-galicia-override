@@ -54,7 +54,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
-| `APIM_CA_CERT` | opcional: CA con la que validar a APIM si usa una privada, en PEM o en base64 |
+| `APIM_TLS_INSECURE` | opcional, `false` por default: en `true` las llamadas a APIM no validan el certificado (`curl -k`). Solo para ambientes de prueba con CA privada |
 
 ## Override del scope: la credencial en el deployment
 
