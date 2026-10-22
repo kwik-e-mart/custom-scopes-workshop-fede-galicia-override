@@ -13,9 +13,8 @@ setup() {
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   export NP_MOCK_LINKS='[]'
   export KUBECTL_SECRETS="payments/secret-apim-b2c"
-  export APIM_PUBLISHER_PROVIDER APIM_CREDENTIAL_ENV
+  export APIM_PUBLISHER_PROVIDER
   APIM_PUBLISHER_PROVIDER=$(yq -r '.configuration.APIM_PUBLISHER_PROVIDER' "$OVERRIDE/values.yaml")
-  APIM_CREDENTIAL_ENV=$(yq -o=json -I=0 '.configuration.APIM_CREDENTIAL_ENV' "$OVERRIDE/values.yaml")
   export CONTEXT
   CONTEXT=$(jq -nc '{application:{nrn:"organization=1:account=2:namespace=3:application=4"},
     scope:{nrn:"organization=1:account=2:namespace=3:application=4:scope=5", dimensions:{environment:"qas", site:"main"}}}')

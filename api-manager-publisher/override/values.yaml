@@ -1,11 +1,2 @@
 configuration:
   APIM_PUBLISHER_PROVIDER: "API Manager"
-  APIM_CREDENTIAL_ENV:
-    - name: APIM_APP_ID
-      type: secret
-      value: secret-apim-b2c
-      key: app_id
-    - name: APIM_APP_KEY
-      type: secret
-      value: secret-apim-b2c
-      key: app_key
