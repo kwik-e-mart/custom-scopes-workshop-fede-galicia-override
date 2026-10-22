@@ -32,12 +32,12 @@ require_source_repository() {
 }
 
 require_cluster_name() {
-  CLUSTER_NAME=$(echo "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.name // empty' 2>/dev/null) || CLUSTER_NAME=""
+  CLUSTER_NAME=$(echo "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.id // empty' 2>/dev/null) || CLUSTER_NAME=""
   if [ -n "${APIM_CLUSTER_NAME-}" ]; then
     CLUSTER_NAME="$APIM_CLUSTER_NAME"
   fi
   if [ -z "$CLUSTER_NAME" ]; then
-    fail "publisher: el provider no trae el nombre del cluster; configurá APIM_CLUSTER_NAME en el agente."
+    fail "publisher: el provider no trae cluster.id; configurá APIM_CLUSTER_NAME en el agente."
   fi
 }
 
