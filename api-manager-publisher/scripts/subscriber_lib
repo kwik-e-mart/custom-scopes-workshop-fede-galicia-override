@@ -82,14 +82,14 @@ require_publisher_config() {
 }
 
 load_notification() {
-  NOTIFICATION=$(printf %s "${NP_ACTION_CONTEXT-}" | jq -c '.notification // empty' 2>/dev/null) || NOTIFICATION=""
+  NOTIFICATION=$(echo "${NP_ACTION_CONTEXT-}" | jq -c '.notification // empty' 2>/dev/null) || NOTIFICATION=""
   if [ -z "$NOTIFICATION" ]; then
     fail "subscriber: NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
   fi
 }
 
 notification_field() {
-  printf %s "$NOTIFICATION" | jq -r "$1 // empty"
+  echo "$NOTIFICATION" | jq -r "$1 // empty"
 }
 
 require_action_ids() {
@@ -99,7 +99,7 @@ require_action_ids() {
 }
 
 require_provider_namespace() {
-  PROVIDER_NAMESPACE=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null) || PROVIDER_NAMESPACE=""
+  PROVIDER_NAMESPACE=$(echo "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null) || PROVIDER_NAMESPACE=""
   if [ -z "$PROVIDER_NAMESPACE" ]; then
     fail "subscriber: el provider container-orchestration no trae cluster.namespace; no se adivina el namespace a suscribir."
   fi
@@ -112,16 +112,16 @@ require_plan_id_format() {
 }
 
 callback_url() {
-  printf '%s/%s/%s/action/%s' "$NP_API_BASE_URL" "${ACTION_ENTITY-service}" "$1" "$2"
+  echo "$NP_API_BASE_URL/${ACTION_ENTITY-service}/$1/action/$2"
 }
 
 apim_problem_detail() {
   local body="$1" detail
-  detail=$(printf %s "$body" | jq -r '.detail // .title // empty' 2>/dev/null) || detail=""
+  detail=$(echo "$body" | jq -r '.detail // .title // empty' 2>/dev/null) || detail=""
   if [ -z "$detail" ]; then
     detail="$body"
   fi
-  detail=$(printf %s "$detail" | tr -d '\000-\011\013-\037\177')
+  detail=$(echo "$detail" | tr -d '\000-\011\013-\037\177')
   printf '%s' "${detail:0:$APIM_DETAIL_MAX_CHARS}"
 }
 
@@ -176,7 +176,7 @@ lookup_subscription_owner() {
   apim_request GET "/v1/subscriptions/$1" "" ""
   case "$APIM_HTTP_CODE" in
     200)
-      SUBSCRIPTION_OWNER=$(printf %s "$APIM_BODY" | jq -r '.consumerNamespace // empty' 2>/dev/null) || SUBSCRIPTION_OWNER=""
+      SUBSCRIPTION_OWNER=$(echo "$APIM_BODY" | jq -r '.consumerNamespace // empty' 2>/dev/null) || SUBSCRIPTION_OWNER=""
       if [ -z "$SUBSCRIPTION_OWNER" ]; then
         fail "subscriber: APIM no informó el namespace de $1; no se toca una suscripción sin saber de quién es."
       fi
@@ -216,8 +216,8 @@ request_subscription() {
   local results subscription_id operation_id
   case "$APIM_HTTP_CODE" in
     202)
-      subscription_id=$(printf %s "$APIM_BODY" | jq -r '.target // empty')
-      operation_id=$(printf %s "$APIM_BODY" | jq -r '.id // empty')
+      subscription_id=$(echo "$APIM_BODY" | jq -r '.target // empty')
+      operation_id=$(echo "$APIM_BODY" | jq -r '.id // empty')
       if [[ "$subscription_id" =~ ^${SUBSCRIPTION_ID_PATTERN}$ ]]; then
         results=$(jq -nc --arg sub "$subscription_id" --arg op "$operation_id" --arg ns "$namespace" \
           '{subscription_id: $sub, operation_id: $op, consumer_namespace: $ns, owns_subscription: true}')

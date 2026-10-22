@@ -10,7 +10,7 @@ WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
 
 require_publish_environment() {
   local dimension
-  dimension=$(printf %s "$1" | tr '[:upper:]' '[:lower:]')
+  dimension=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   case "$dimension" in
     int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
     qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
@@ -33,7 +33,7 @@ resolve_publish_environment() {
 
 require_source_repository() {
   local url="$1" path
-  path=$(printf %s "$url" | sed -E 's#^https?://[^/]+/##; s#\.git$##; s#/+$##')
+  path=$(echo "$url" | sed -E 's#^https?://[^/]+/##; s#\.git$##; s#/+$##')
   if [[ ! "$path" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
     fail "publisher: el repository_url de la aplicación ('$url') no es https://<host>/<org>/<repo>."
   fi
@@ -42,7 +42,7 @@ require_source_repository() {
 }
 
 require_cluster_name() {
-  CLUSTER_NAME=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.name // empty' 2>/dev/null) || CLUSTER_NAME=""
+  CLUSTER_NAME=$(echo "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.name // empty' 2>/dev/null) || CLUSTER_NAME=""
   if [ -n "${APIM_CLUSTER_NAME-}" ]; then
     CLUSTER_NAME="$APIM_CLUSTER_NAME"
   fi
@@ -54,10 +54,10 @@ require_cluster_name() {
 require_parent_refs() {
   local raw="${APIM_PUBLISH_PARENT_REFS-}"
   if [[ "$raw" != \[* ]]; then
-    raw=$(printf %s "$raw" | jq -Rc 'split(",") | map(select(length > 0) | capture("^(?<namespace>[a-z0-9-]+)/(?<name>[a-z0-9-]+)(:(?<sectionName>[a-z0-9-]+))?$")
+    raw=$(echo "$raw" | jq -Rc 'split(",") | map(select(length > 0) | capture("^(?<namespace>[a-z0-9-]+)/(?<name>[a-z0-9-]+)(:(?<sectionName>[a-z0-9-]+))?$")
       | {group: "gateway.networking.k8s.io", kind: "Gateway", namespace, name} + (if .sectionName then {sectionName} else {} end))' 2>/dev/null) || raw=""
   fi
-  PARENT_REFS=$(printf %s "$raw" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
+  PARENT_REFS=$(echo "$raw" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
   if [ -z "$PARENT_REFS" ]; then
     fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser namespace/nombre[:listener] separados por coma, o una lista JSON de Gateways con name y namespace."
   fi
@@ -74,14 +74,14 @@ require_scope_destination() {
   scopes=$(np scope list --application-id "$application_id" --status active --format json \
     --query '[ (.results? // .) | .[]? | {slug, id, domain, dimensions} ]') \
     || fail "publisher: falló el listado de scopes de la aplicación $application_id."
-  scope_id=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .id] | first // empty')
+  scope_id=$(echo "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .id] | first // empty')
   if [[ ! "$scope_id" =~ ^[0-9]+$ ]]; then
     fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
   fi
   SCOPE_ID="$scope_id"
   SCOPE_SLUG="$scope"
-  SCOPE_ENVIRONMENT=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
-  SCOPE_DOMAIN=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain // empty] | first // empty')
+  SCOPE_ENVIRONMENT=$(echo "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
+  SCOPE_DOMAIN=$(echo "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain // empty] | first // empty')
   if [ -z "$SCOPE_DOMAIN" ]; then
     fail "publisher: el scope '$scope' no tiene dominio; no hay a dónde mandar el tráfico de la API."
   fi
@@ -134,7 +134,7 @@ attach_scope_auth_policies() {
   require_api_id_format "$api_id"
   routes=$(kubectl -n "$namespace" get httproute -l "nullplatform=true,scope_id=$scope_id" -o json) \
     || fail "publisher: no se pudieron leer las routes del scope '$scope_slug' en el namespace $namespace."
-  routes=$(printf %s "$routes" | jq -r '.items[]?.metadata.name')
+  routes=$(echo "$routes" | jq -r '.items[]?.metadata.name')
   if [ -z "$routes" ]; then
     fail "publisher: el scope '$scope_slug' no tiene routes en el cluster; desplegalo y volvé a publicar."
   fi

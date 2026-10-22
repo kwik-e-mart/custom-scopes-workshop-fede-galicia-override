@@ -13,7 +13,7 @@ link_subscribe() {
   load_notification
 
   local params link_id action_id
-  params=$(printf %s "$NOTIFICATION" | jq -c '(.link.attributes // {}) * (.parameters // {})')
+  params=$(echo "$NOTIFICATION" | jq -c '(.link.attributes // {}) * (.parameters // {})')
   link_id=$(notification_field '.link.id')
   action_id=$(notification_field '.id')
   require_action_ids "$link_id" "$action_id"
@@ -24,8 +24,8 @@ link_subscribe() {
   SUBSCRIPTION_CREDENTIAL_HINT="Tus deployments reciben la credencial como $credential_env a partir del próximo deploy: mandalas en los headers app_id y app_key."
 
   request_subscription \
-    "$(printf %s "$params" | jq -r '.approval_ref // empty')" \
-    "$(printf %s "$params" | jq -r '.plan_id // empty')" \
+    "$(echo "$params" | jq -r '.approval_ref // empty')" \
+    "$(echo "$params" | jq -r '.plan_id // empty')" \
     "$PROVIDER_NAMESPACE" \
     "$(callback_url "$link_id" "$action_id")" \
     "$action_id"
