@@ -103,10 +103,10 @@ kinds() {
   [ "$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "NP_API_KEY") | .name' <<<"$output" | wc -l | tr -d ' ')" = "0" ]
 }
 
-@test "falla sin el token del mock" {
-  run helm template mock "$CHART" --set image.repository=x --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n" --set "httpRoute.hostnames[0]=h"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *mock.token* ]]
+@test "sin token el mock acepta pedidos sin autorizacion" {
+  run helm template mock "$CHART" --set image.repository=x --set "httpRoute.parentRefs[0].name=g" --set "httpRoute.parentRefs[0].namespace=n" --set "httpRoute.hostnames[0]=h" --set "credentialSecrets.namespaces={a}"
+  [ "$status" -eq 0 ]
+  [ "$(yq -N 'select(.kind == "Secret") | .stringData.MOCK_TOKEN' <<<"$output")" = "" ]
 }
 
 @test "el token del mock viaja en un secret y no en texto plano" {
