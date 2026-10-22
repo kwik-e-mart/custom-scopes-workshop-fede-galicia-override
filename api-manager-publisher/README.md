@@ -35,7 +35,7 @@ Qué se manda a APIM y de dónde sale:
 | `cluster` | nombre del cluster del provider, o `APIM_CLUSTER_NAME` |
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
-| `metadata.parentRefs` | `APIM_PUBLISH_PARENT_REFS` (hasta que exista la API de scheduler) |
+| `metadata.parentRefs` | el Gateway de ingreso que usa el s2s: `INGRESS_GATEWAY_NAME` (`s2s-ingress`) en `GATEWAY_NAMESPACE` (`gateways`) |
 | `metadata.backend` | Service del ingreso del cluster: `name` y `namespace` de `LOCAL_INGRESS_HOST` (igual que `s2s-traffic-migrator`), `port` `APIM_GATEWAY_PORT` (`443`) |
 | `metadata.backend.destinationFqdn` | `https://` + dominio del scope elegido; APIM reescribe el host a ese valor |
 | `callbackUrl` | la acción de nullplatform |
@@ -48,7 +48,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | Variable | Uso |
 |---|---|
 | `APIM_PUBLISHER_URL`, `APIM_PUBLISHER_TOKEN` | API Publisher (https) |
-| `APIM_PUBLISH_PARENT_REFS` | Gateways: `namespace/nombre[:listener]` separados por coma (por ejemplo `gateways/s2s-ingress`) o una lista JSON |
+| `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
 | `APIM_PUBLISH_ENVIRONMENT` | **solo para pruebas**: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope en todo lo que publique ese agente. Nunca en un agente productivo: un scope de dev quedaría publicado como `prd` |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |

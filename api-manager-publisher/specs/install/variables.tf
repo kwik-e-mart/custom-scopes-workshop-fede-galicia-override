@@ -11,7 +11,7 @@ variable "nrn" {
 
 variable "tags_selectors" {
   type        = map(string)
-  description = "Selector de tags del agente que atiende este service; ese agente tiene que tener APIM_PUBLISHER_URL, APIM_PUBLISHER_TOKEN, APIM_PUBLISH_PARENT_REFS, API_SUBSCRIBER_URL y API_SUBSCRIBER_TOKEN."
+  description = "Selector de tags del agente que atiende este service; ese agente tiene que tener APIM_PUBLISHER_URL, APIM_PUBLISHER_TOKEN, API_SUBSCRIBER_URL y API_SUBSCRIBER_TOKEN."
 }
 
 variable "repository_service_spec_repo" {

@@ -52,15 +52,16 @@ require_cluster_name() {
 }
 
 require_parent_refs() {
-  local raw="${APIM_PUBLISH_PARENT_REFS-}"
-  if [[ "$raw" != \[* ]]; then
-    raw=$(echo "$raw" | jq -Rc 'split(",") | map(select(length > 0) | capture("^(?<namespace>[a-z0-9-]+)/(?<name>[a-z0-9-]+)(:(?<sectionName>[a-z0-9-]+))?$")
-      | {group: "gateway.networking.k8s.io", kind: "Gateway", namespace, name} + (if .sectionName then {sectionName} else {} end))' 2>/dev/null) || raw=""
+  local gateway="${INGRESS_GATEWAY_NAME:-s2s-ingress}" namespace="${GATEWAY_NAMESPACE:-gateways}"
+  local label='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+  if [[ ! "$gateway" =~ $label ]]; then
+    fail "publisher: INGRESS_GATEWAY_NAME inválido: '$gateway'."
   fi
-  PARENT_REFS=$(echo "$raw" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
-  if [ -z "$PARENT_REFS" ]; then
-    fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser namespace/nombre[:listener] separados por coma, o una lista JSON de Gateways con name y namespace."
+  if [[ ! "$namespace" =~ $label ]]; then
+    fail "publisher: GATEWAY_NAMESPACE inválido: '$namespace'."
   fi
+  PARENT_REFS=$(jq -nc --arg name "$gateway" --arg namespace "$namespace" \
+    '[{group: "gateway.networking.k8s.io", kind: "Gateway", name: $name, namespace: $namespace}]')
 }
 
 require_scope_destination() {
