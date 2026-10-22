@@ -12,10 +12,11 @@ setup() {
 }
 
 set_request() {
-  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" \
-    '{notification:{id:"act-1",type:"create",service:{id:"svc-1",attributes:$a},parameters:$p}}')
+  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" --arg env "$3" \
+    '{notification:{id:"act-1",type:"create",
+      service:({id:"svc-1",attributes:$a} + (if $env == "" then {} else {dimensions:{environment:$env}} end)),parameters:$p}}')
   export NP_MOCK_SCOPES
-  NP_MOCK_SCOPES=$(jq -nc --arg env "$3" '[{slug:"main",id:1049050904,domain:"test-kuadrant-main.ms.ws.bancogalicia.com.ar",dimensions:{environment:$env}},{slug:"draft",id:555,domain:"test-kuadrant-draft.ms.ws.bancogalicia.com.ar",dimensions:{environment:$env}}]')
+  NP_MOCK_SCOPES='[{"slug":"main","id":1049050904,"domain":"test-kuadrant-main.ms.ws.bancogalicia.com.ar","dimensions":{"environment":"qas"}},{"slug":"draft","id":555,"domain":"test-kuadrant-draft.ms.ws.bancogalicia.com.ar","dimensions":{"environment":"qas"}}]'
 }
 
 set_context() {
@@ -160,11 +161,12 @@ JSON
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"dominio"* ]]
 }
 
-@test "el ambiente sale de la dimension del scope elegido: dev no se publica" {
+@test "el ambiente sale de la dimension del service: development se publica como dev" {
   set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' development
+  queue_response 200 "$(pushed)"
   run_step
-  [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *dev* ]]
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "dev" ]
 }
 
 @test "production se publica como prd" {
@@ -174,19 +176,11 @@ JSON
   [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "prd" ]
 }
 
-@test "APIM_PUBLISH_ENVIRONMENT fuerza el ambiente aunque el scope sea de dev" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' development
-  export APIM_PUBLISH_ENVIRONMENT=qas
-  queue_response 200 "$(pushed)"
-  run_step
-  [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "qas" ]
-}
-
-@test "APIM_PUBLISH_ENVIRONMENT invalido falla sin llamar a APIM" {
-  export APIM_PUBLISH_ENVIRONMENT=dev
+@test "un service sin dimension environment falla sin llamar a APIM" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' ""
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISH_ENVIRONMENT* ]]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *environment* ]]
 }
 
 @test "un ambiente desconocido falla sin llamar a APIM" {
@@ -333,4 +327,12 @@ applied() {
   run_step
   [ "$(np_last_update_flag --status)" = "failed" ]
   [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
+}
+
+@test "si APIM no responde, la accion cierra failed con el error de conexion" {
+  export APIM_RETRIES=0
+  queue_response 000 ''
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 000"*"Failed to connect"* ]]
 }
