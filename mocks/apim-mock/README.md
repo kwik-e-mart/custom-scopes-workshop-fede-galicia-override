@@ -43,7 +43,7 @@ además la credencial que lee Authorino en `credentialSecrets.gatewayNamespace` 
 
 | Endpoint | Comportamiento |
 |---|---|
-| `POST /v1/kuadrant/manifests/publish` | Valida la firma (`400 {status: error, message}`); `200 pushed` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
+| `POST /v1/kuadrant/manifests/publish` | Valida la firma (`400 {status: error, message}`); `200 commited` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
 | `DELETE /v1/kuadrant/manifests/{apiId}` | **Provisorio** hasta que APIM pase el endpoint real: `200` o `404`. |
 
 El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin callback de service,
@@ -53,7 +53,7 @@ El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin c
 Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadata.name`:
 - un `HTTPRoute` colgado de `metadata.parentRefs`, con el `hostname` publicado, los paths de `mock.routePaths` (`/whoami` por default, para simular lo que expone el swagger; vacío = `PathPrefix /`) y el backend de
   `metadata.backend` (o el Service `metadata.name:8080`); si viene `metadata.backend.destinationFqdn`
-  (`https://<host>`), la regla reescribe el host a ese valor (`URLRewrite`) y el backend es el gateway;
+  (un hostname), la regla reescribe el host a ese valor (`URLRewrite`) y el backend es el gateway;
 - una `AuthPolicy` que pide `app_key` (credenciales con `api-id` de la API) y `app_id` igual al de la credencial;
 - una `RateLimitPolicy` con `hitsPerWindow` por `window`, solo si vienen los dos.
 
