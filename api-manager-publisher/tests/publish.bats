@@ -328,3 +328,11 @@ applied() {
   [ "$(np_last_update_flag --status)" = "failed" ]
   [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
 }
+
+@test "si APIM no responde, la accion cierra failed con el error de conexion" {
+  export APIM_RETRIES=0
+  queue_response 000 ''
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 000"*"Failed to connect"* ]]
+}

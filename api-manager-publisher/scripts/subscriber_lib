@@ -5,6 +5,7 @@ SUBSCRIPTION_ID_PATTERN='sub-[a-z0-9]([a-z0-9.-]*[a-z0-9])?--[a-z0-9]([a-z0-9.-]
 APPROVAL_REF_PATTERN='^RITM[0-9]+$'
 PLAN_ID_PATTERN='^[A-Za-z0-9._-]+$'
 APIM_DETAIL_MAX_CHARS=300
+APIM_LOG_BODY_MAX_CHARS=2000
 APIM_CONNECT_TIMEOUT=10
 APIM_MAX_TIME=60
 
@@ -128,7 +129,7 @@ require_subscription_id_format() {
 apim_request() {
   local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
-  local attempt=0 response_file code insecure="${APIM_TLS_INSECURE-false}"
+  local attempt=0 response_file curl_error_file code insecure="${APIM_TLS_INSECURE-false}"
   local url="${APIM_URL-${API_SUBSCRIBER_URL-}}" token="${APIM_TOKEN-${API_SUBSCRIBER_TOKEN-}}"
   if [ -z "${NP_OUTPUT_DIR-}" ]; then
     fail "subscriber: NP_OUTPUT_DIR no está definido; los temporales tienen que quedar en el directorio que limpia el workflow."
@@ -137,6 +138,8 @@ apim_request() {
     fail "subscriber: APIM_TLS_INSECURE inválido: '$insecure'. Valores: true | false."
   fi
   response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
+  curl_error_file=$(mktemp "$NP_OUTPUT_DIR/apim-curl-error.XXXXXX")
+  log info "apim: $method $url$path${body:+ body=$body}"
   while :; do
     local args=(-sS --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
       -o "$response_file" -w '%{http_code}' -X "$method" "$url$path" -H "Accept: application/json")
@@ -151,9 +154,9 @@ apim_request() {
     fi
     : >"$response_file"
     if [ -n "$token" ]; then
-      code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - "${args[@]}") || code="000"
+      code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --config - "${args[@]}" 2>"$curl_error_file") || code="000"
     else
-      code=$(curl "${args[@]}") || code="000"
+      code=$(curl "${args[@]}" 2>"$curl_error_file") || code="000"
     fi
     APIM_HTTP_CODE="$code"
     APIM_BODY=$(cat "$response_file")
@@ -167,7 +170,13 @@ apim_request() {
     log warn "subscriber: APIM no responde (HTTP $code); reintento $attempt de $retries."
     sleep "$delay"
   done
-  rm -f "$response_file"
+  if [ "$code" = "000" ]; then
+    APIM_BODY=$(tr -d '\000-\011\013-\037\177' <"$curl_error_file" | tail -n 1)
+    log error "apim: $method $url$path sin respuesta (HTTP 000): $APIM_BODY"
+  elif [[ ! "$code" =~ ^2 ]]; then
+    log warn "apim: $method $url$path respondió HTTP $code: $(echo "$APIM_BODY" | tr -d '\000-\011\013-\037\177' | head -c "$APIM_LOG_BODY_MAX_CHARS")"
+  fi
+  rm -f "$response_file" "$curl_error_file"
 }
 
 lookup_subscription_owner() {

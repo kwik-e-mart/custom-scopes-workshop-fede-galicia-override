@@ -256,3 +256,23 @@ setup() {
     [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_TLS_INSECURE* ]] || false
   done
 }
+
+@test "apim_request loguea el metodo, la URL y el body del pedido, sin el token" {
+  queue_response 202 '{"id":"op-1"}'
+  run apim_request POST /v1/subscriptions '{"approvalRef":"RITM1"}' act-1
+  [[ "$output" == *'POST https://apisub.test/v1/subscriptions'*'{"approvalRef":"RITM1"}'* ]] || false
+  [[ "$output" != *tok-123* ]]
+}
+
+@test "un error HTTP de APIM queda logueado con el codigo y la respuesta" {
+  queue_response 422 '{"detail":"plan inexistente"}'
+  run apim_request POST /v1/subscriptions '{}' act-1
+  [[ "$output" == *"HTTP 422"*"plan inexistente"* ]]
+}
+
+@test "sin respuesta de APIM se loguea el error de curl" {
+  export APIM_RETRIES=0
+  queue_response 000 ''
+  run apim_request POST /v1/subscriptions '{}' act-1
+  [[ "$output" == *"HTTP 000"*"Failed to connect"* ]]
+}
