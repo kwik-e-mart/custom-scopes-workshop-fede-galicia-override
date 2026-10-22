@@ -93,7 +93,7 @@ case "$*" in
   *"get secret wristband-key-"*)
     [ -z "${FALTA_CLAVE:-}" ] || exit 1 ;;
   *"get deploy jwks-egress"*|*"get svc jwks-egress"*|*"get externalsecret jwks-egress"*)
-    [ -n "${JWKS_PRESENTE:-}" ] || exit 1 ;;
+    [ -z "${JWKS_AUSENTE:-}" ] || exit 1 ;;
   *"get svc -l"*)        : ;;
   *"get svc reports"*)   : ;;                              # existe
   *"get httproute"*"-o json"*)
@@ -469,13 +469,13 @@ correr_delete() {
 }
 
 @test "la primera vez el endpoint de JWKS SI se aplica" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
+  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys JWKS_AUSENTE=1 run correr
   run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
 }
 
 @test "si el endpoint de JWKS ya existe, no se vuelve a aplicar" {
-  SIGNING_STRATEGY=cluster-keys JWKS_PRESENTE=1 run correr
+  SIGNING_STRATEGY=cluster-keys run correr
   run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
@@ -496,34 +496,34 @@ correr_delete() {
   [ "$output" -ge 1 ]
 }
 
-@test "con el flag en false y sin la clave de firma, ABORTA nombrando al chart" {
-  SIGNING_STRATEGY=cluster-keys FALTA_CLAVE=1 run correr
+@test "con el flag en false, si no esta el endpoint de JWKS el apply ABORTA" {
+  SIGNING_STRATEGY=cluster-keys JWKS_AUSENTE=1 run correr
   [ "$status" -ne 0 ]
-  [[ "$output" == *"chart"* ]] || false
-  [[ "$output" == *"NAMESPACE_SETUP_ENABLED=true"* ]]
+  [[ "$output" == *"no existe el endpoint de JWKS"* ]] || false
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }
 
-@test "con el flag en true no se exige la clave: el Job la crea en esta misma corrida" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys FALTA_CLAVE=1 run correr
-  [ "$status" -eq 0 ]
+@test "el service no ejecuta nada dentro de los pods ni les lee los logs" {
+  # Con un ClusterRoleBinding, pods/exec es correr comandos en cualquier pod del cluster. Revisar
+  # el contenido de lo que sirve el chart no justifica ese permiso.
+  local rec="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile"
+  ! grep -qE 'kubectl[^|]*exec' "$rec" || false
+  ! grep -qE 'kubectl[^|]*logs' "$rec"
 }
 
-@test "si el JWKS no publica la clave con la que se firma, ABORTA nombrando los dos kids" {
-  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="otro-kid" run correr
+@test "el Gateway no se borra con el alta delegada al chart" {
+  # Es del namespace entero: borrarlo por un delete de instancia deja sin egreso a todas las demas.
+  SIGNING_STRATEGY=cluster-keys ARGS=delete run correr
+  run grep -c 'delete.*gateway.gateway.networking.k8s.io' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "un error de API al leer el Service corta el apply en vez de seguir con un valor vacio" {
+  # Un Forbidden devolvia vacio igual que un Service inexistente: el service acusaba que un destino
+  # sano no tenia endpoints, y podia pisar la annotation que guarda el selector original.
+  SIGNING_STRATEGY=cluster-keys FALLA_GET_SVC=1 run correr
   [ "$status" -ne 0 ]
-  [[ "$output" == *"wristband-key-payments-g0"* ]] || false
-  [[ "$output" == *"otro-kid"* ]] || false
-  [[ "$output" == *"401"* ]]
-}
-
-@test "con el kid correcto en el JWKS el apply sigue" {
-  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="wristband-key-payments-g0" run correr
-  [ "$status" -eq 0 ]
-}
-
-@test "si la URL del JWKS no publica nada, ABORTA mostrando los paths que si existen" {
-  SIGNING_STRATEGY=cluster-keys JWKS_KIDS="" run correr
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"no publica ninguna clave"* ]] || false
-  [[ "$output" == *"Paths que sí sirve"* ]]
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }
