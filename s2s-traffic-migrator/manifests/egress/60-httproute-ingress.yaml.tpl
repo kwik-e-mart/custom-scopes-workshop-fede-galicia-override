@@ -24,7 +24,7 @@ metadata:
     nullplatform: "true"
 spec:
   parentRefs:
-    - name: s2s-ingress
+    - name: {{ $.ingress_gateway_name | quote }}
       namespace: {{ $.gateway_namespace | quote }}
   rules:
     - matches:
