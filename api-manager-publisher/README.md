@@ -59,9 +59,8 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 
 ## Override del scope: la credencial en el deployment
 
-El override base del scope (`override/` en la raíz del repo, paso `inject_apim_credentials`) agrega a cada deploy de
-un scope linkeado a este servicio la credencial de APIM del namespace como variables de entorno del container
-`application`:
+`override/` agrega a cada deploy de un scope linkeado a este servicio la credencial de APIM del namespace como
+variables de entorno del container `application`:
 
 | Variable | Sale de |
 |---|---|
@@ -70,7 +69,8 @@ un scope linkeado a este servicio la credencial de APIM del namespace como varia
 
 El link se busca por `selectors.provider` (`APIM_PUBLISHER_PROVIDER`, `API Manager`), a nivel scope o a nivel
 aplicación con dimensiones que coinciden con las del scope, igual que en `pom-services/override/`. Sin link, el paso
-no toca el deployment; con link y sin el Secret en el namespace, el deploy falla.
+no toca el deployment; con link y sin el Secret en el namespace, el deploy falla. Para usarlo, el channel del scope
+tiene que pasar `--overrides-path=<repo>/api-manager-publisher/override`.
 
 ## Instalación
 

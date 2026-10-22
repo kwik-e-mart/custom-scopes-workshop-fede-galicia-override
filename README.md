@@ -101,7 +101,7 @@ var), **con un nombre de variable distinto** para que no se pisen entre sí.
 |----------|----------|-----------|
 | `override/` (base) | `CABANCO_MOUNTS` | 4 secrets de certificados cabanco en `/opt/cabanco/*` |
 | `pom-services/override/` | `POM_SERVICES_MOUNTS` | `jwt-secret` en `/opt/jwt`, **solo si** el scope tiene el link de Servicios POM |
-| `override/` (base) | `APIM_PUBLISHER_PROVIDER` | env vars `APIM_APP_ID` y `APIM_APP_KEY` desde `secret-apim-b2c`, **solo si** el scope tiene el link del API Manager |
+| `api-manager-publisher/override/` | `APIM_PUBLISHER_PROVIDER` | env vars `APIM_APP_ID` y `APIM_APP_KEY` desde `secret-apim-b2c`, **solo si** el scope tiene el link del API Manager |
 
 El override de `pom-services` primero consulta la API (`np link list`) para decidir si el
 scope tiene un link del servicio asociado — sea **a nivel scope** (`entity_nrn` == scope)
