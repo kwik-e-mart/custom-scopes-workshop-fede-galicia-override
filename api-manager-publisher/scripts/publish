@@ -83,17 +83,10 @@ publish() {
   fi
   results=$(echo "$APIM_BODY" | jq -c '{api_id: .apiId, hostname: .hostname, manifest_path: .manifestPath}')
   case "$status" in
-    pushed|synced|registered)
-      attach_scope_auth_policies "$(echo "$results" | jq -r '.api_id // empty')" "$PROVIDER_NAMESPACE" "$SCOPE_ID" "$SCOPE_SLUG"
-      ;;
-  esac
-  case "$status" in
     pushed|synced)
+      attach_scope_auth_policies "$(echo "$results" | jq -r '.api_id // empty')" "$PROVIDER_NAMESPACE" "$SCOPE_ID" "$SCOPE_SLUG"
       report_progress "Publicación $status en APIM ($(echo "$results" | jq -r .api_id)). APIM avisa cuando quede registrada." "$results" \
         || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
-      ;;
-    registered)
-      close_action success "API publicada y registrada en $(echo "$results" | jq -r .hostname)." "$results"
       ;;
     *)
       fail "publisher: APIM no pudo publicar (estado '$status'): $(apim_problem_detail "${message:-$APIM_BODY}")"
