@@ -654,6 +654,13 @@ exportado() {  # <variable>
   [ "$v" = "kuadrant-system" ]
 }
 
+@test "la sigla sale del namespace del CONTEXT y se exporta para el reconcile" {
+  CONTEXT="$(ctx | jq -c '.namespace.slug = "ayrm-menuatenciondig"')" NP_ACTION_CONTEXT="$(notif)" \
+    run bash -c 'source "$1" >/dev/null; bash -c "echo SIGLA=\$SIGLA"' _ "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SIGLA=AYRM"* ]]
+}
+
 @test "entre dos routes con el mismo hostname gana la del Gateway de ingreso configurado" {
   # Caso real: la route de un scope `internet-facing` queda colgada de un Gateway que no existe y
   # comparte hostname con la que sí atiende. Elegir por hostname solo deja el validador en

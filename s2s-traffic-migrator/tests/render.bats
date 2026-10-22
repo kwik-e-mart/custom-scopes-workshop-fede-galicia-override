@@ -40,6 +40,7 @@ render() {
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
     egress_authpolicy:"sign", issuer_domain:"bancogalicia.com.ar", namespace_setup_enabled:"false",
     authpolicy_api_version:"kuadrant.io/v1",
+    sigla:(env.SIGLA_CTX // ""),
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
   # Como en producción: se rendea el directorio entero y se concatena. Las aserciones siguen
@@ -883,6 +884,51 @@ rule() {  # <percent> [service]
   campo=$(grep -oE 'fqdn: \.[a-z_]+' "$script" | sed 's/fqdn: \.//')
   [ -n "$campo" ]
   INTERCEPTIONS_JSON=$(rule 100) jq -e --arg c "$campo" '.[0] | has($c)' <<<"$(rule 100)" >/dev/null
+}
+
+sin_sigla() {
+  yq -o=json -I=0 '.' | jq -cs 'walk(if type == "object" then
+      (if (.labels | type) == "object" then .labels |= del(.sigla) else . end)
+      | with_entries(select(.value != {} or (.key != "labels" and .key != "metadata")))
+    else . end)'
+}
+
+@test "con sigla, cada objeto y cada pod template llevan el label" {
+  export SIGLA_CTX=AYRM
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | yq -N 'select(.metadata and (.metadata.name | test("^s2s-validator") | not)) | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.metadata.labels.sigla' | sort -u)" = "AYRM" ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "CronJob") | (.spec.jobTemplate.metadata.labels.sigla, .spec.jobTemplate.spec.template.metadata.labels.sigla)' | sort -u)" = "AYRM" ]
+}
+
+@test "el label sigla no cambia nada más del render" {
+  local sin con
+  sin=$(render openshift "$(rule 100)" | sin_sigla)
+  con=$(SIGLA_CTX=AYRM render openshift "$(rule 100)" | sin_sigla)
+  [ "$sin" = "$con" ]
+}
+
+@test "sin sigla en el contexto no se agrega el label" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | yq -N '.. | select(has("sigla")?)')" ]
+}
+
+@test "la AuthPolicy validadora no lleva sigla: es una por cluster y la comparten todos los namespaces" {
+  export SIGLA_CTX=AYRM
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator"))) | .metadata.name' | grep -c .)" -ge 1 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator"))) | .metadata.labels.sigla' | sort -u)" = "null" ]
+}
+
+@test "la sigla llega del build_context al contexto de render en create y en delete" {
+  local dir="${BATS_TEST_DIRNAME}/.."
+  grep -q -- '--arg sigla "${SIGLA:-}"' "$dir/scripts/k8s/reconcile"
+  grep -q '^export .*\bSIGLA\b' "$dir/scripts/k8s/build_context"
+  grep -q '{ name: SIGLA, type: environment }' "$dir/workflows/openshift/create.yaml"
+  grep -q '{ name: SIGLA, type: environment }' "$dir/workflows/openshift/delete.yaml"
 }
 
 @test "con el alta delegada al chart el RBAC no pide escribir nada que no emitamos" {
