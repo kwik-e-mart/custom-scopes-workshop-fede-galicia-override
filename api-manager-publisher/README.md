@@ -30,7 +30,7 @@ Qué se manda a APIM y de dónde sale:
 |---|---|
 | `organization`, `repository` | `repository_url` de la aplicación |
 | `branch` / `tag` / `commit` | formulario |
-| `environment` | dimensión `environment` del scope elegido (`int`, `qas`, `prd`; `dev` no se publica), o `APIM_PUBLISH_ENVIRONMENT` |
+| `environment` | dimensión `environment` del service (`dev`, `int`, `qas` o `prd`) |
 | `tenant` | `b2c` fijo por ahora |
 | `cluster` | nombre del cluster del provider, o `APIM_CLUSTER_NAME` |
 | `metadata.name`, `labels.app` | nombre del repo |
@@ -50,7 +50,6 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `APIM_PUBLISHER_URL` | API Publisher (https) |
 | `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
-| `APIM_PUBLISH_ENVIRONMENT` | **solo para pruebas**: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope en todo lo que publique ese agente. Nunca en un agente productivo: un scope de dev quedaría publicado como `prd` |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |
