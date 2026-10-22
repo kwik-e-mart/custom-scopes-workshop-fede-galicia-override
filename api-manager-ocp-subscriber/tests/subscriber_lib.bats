@@ -170,3 +170,68 @@ setup() {
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"NP_OUTPUT_DIR"* ]]
 }
+
+@test "callback_url de un link apunta a la accion del link" {
+  ACTION_ENTITY=link
+  run callback_url l-1 act-1
+  [ "$output" = "https://api.nullplatform.com/link/l-1/action/act-1" ]
+}
+
+@test "close_action de un link actualiza la accion del link" {
+  ACTION_ENTITY=link
+  close_action success listo
+  [ "$(jq -c '.[0:3]' "$NP_CALLS_LOG" | tail -n1)" = '["link","action","update"]' ]
+}
+
+@test "con APIM_CA_CERT curl valida contra esa CA, guardada dentro de NP_OUTPUT_DIR" {
+  export APIM_CA_CERT="-----BEGIN CERTIFICATE-----
+MIIBfake
+-----END CERTIFICATE-----"
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  ca_file=$(grep -o -- "--cacert [^ ]*" "$CURL_ARGV_LOG" | cut -d' ' -f2)
+  [[ "$ca_file" == "$NP_OUTPUT_DIR"/* ]] || false
+  [ "$(cat "$CURL_BODIES_DIR/ca.pem")" = "$APIM_CA_CERT" ]
+  [ ! -e "$ca_file" ]
+}
+
+@test "sin APIM_CA_CERT curl usa las CAs del sistema" {
+  unset APIM_CA_CERT
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  [ "$(grep -c -- '--cacert' "$CURL_ARGV_LOG")" = "0" ]
+}
+
+@test "require_publisher_config apunta las llamadas al API Publisher" {
+  export APIM_PUBLISHER_URL="https://publisher.test" APIM_PUBLISHER_TOKEN="pub-tok"
+  require_publisher_config
+  queue_response 200 '{}'
+  apim_request POST /v1/kuadrant/manifests/publish '{}' ""
+  grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
+}
+
+@test "require_publisher_config falla nombrando la variable que falta" {
+  export APIM_PUBLISHER_URL="https://publisher.test"
+  unset APIM_PUBLISHER_TOKEN
+  run require_publisher_config
+  [ "$status" -ne 0 ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISHER_TOKEN* ]]
+}
+
+@test "require_publisher_config rechaza una URL que no es https" {
+  export APIM_PUBLISHER_URL="http://publisher.test" APIM_PUBLISHER_TOKEN="t"
+  run require_publisher_config
+  [ "$status" -ne 0 ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *https* ]]
+}
+
+@test "APIM_CA_CERT en base64 se decodifica a PEM" {
+  pem="-----BEGIN CERTIFICATE-----
+MIIBfake
+-----END CERTIFICATE-----"
+  export APIM_CA_CERT
+  APIM_CA_CERT=$(printf '%s\n' "$pem" | base64 | tr -d '\n')
+  queue_response 200 '{}'
+  apim_request GET /v1/plans "" ""
+  [ "$(cat "$CURL_BODIES_DIR/ca.pem")" = "$pem" ]
+}

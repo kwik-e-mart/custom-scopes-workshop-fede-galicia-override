@@ -23,7 +23,7 @@ update_action() {
   shift 3
   local messages
   messages=$(jq -nc --arg l "$level" --arg m "$message" '[{level: $l, message: $m}]')
-  local args=(service action update "$@" --messages "$messages")
+  local args=("${ACTION_ENTITY-service}" action update "$@" --messages "$messages")
   if [ -n "$results" ]; then
     args+=(--results "$results")
   fi
@@ -76,6 +76,24 @@ require_agent_config() {
   if [[ "$API_SUBSCRIBER_URL" != https://* ]]; then
     fail "subscriber: API_SUBSCRIBER_URL tiene que ser https; no se manda el token por un canal sin cifrar."
   fi
+  APIM_URL="$API_SUBSCRIBER_URL"
+  APIM_TOKEN="$API_SUBSCRIBER_TOKEN"
+}
+fi
+
+if ! type -t require_publisher_config >/dev/null 2>&1; then
+require_publisher_config() {
+  local name
+  for name in APIM_PUBLISHER_URL APIM_PUBLISHER_TOKEN; do
+    if [ -z "${!name-}" ]; then
+      fail "publisher: el agente no tiene configurada la variable $name."
+    fi
+  done
+  if [[ "$APIM_PUBLISHER_URL" != https://* ]]; then
+    fail "publisher: APIM_PUBLISHER_URL tiene que ser https; no se manda el token por un canal sin cifrar."
+  fi
+  APIM_URL="$APIM_PUBLISHER_URL"
+  APIM_TOKEN="$APIM_PUBLISHER_TOKEN"
 }
 fi
 
@@ -121,7 +139,7 @@ fi
 
 if ! type -t callback_url >/dev/null 2>&1; then
 callback_url() {
-  printf '%s/service/%s/action/%s' "$NP_API_BASE_URL" "$1" "$2"
+  printf '%s/%s/%s/action/%s' "$NP_API_BASE_URL" "${ACTION_ENTITY-service}" "$1" "$2"
 }
 fi
 
@@ -149,14 +167,27 @@ if ! type -t apim_request >/dev/null 2>&1; then
 apim_request() {
   local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
-  local attempt=0 response_file code
+  local attempt=0 response_file code ca_file=""
+  local url="${APIM_URL:-${API_SUBSCRIBER_URL-}}" token="${APIM_TOKEN:-${API_SUBSCRIBER_TOKEN-}}"
   if [ -z "${NP_OUTPUT_DIR-}" ]; then
     fail "subscriber: NP_OUTPUT_DIR no está definido; los temporales tienen que quedar en el directorio que limpia el workflow."
   fi
   response_file=$(mktemp "$NP_OUTPUT_DIR/apim-response.XXXXXX")
+  if [ -n "${APIM_CA_CERT-}" ]; then
+    ca_file=$(mktemp "$NP_OUTPUT_DIR/apim-ca.XXXXXX")
+    if [[ "$APIM_CA_CERT" == *"BEGIN CERTIFICATE"* ]]; then
+      printf '%s\n' "$APIM_CA_CERT" >"$ca_file"
+    else
+      printf '%s' "$APIM_CA_CERT" | base64 -d >"$ca_file" 2>/dev/null \
+        || fail "subscriber: APIM_CA_CERT no es un PEM ni un PEM en base64."
+    fi
+  fi
   while :; do
     local args=(-sS --config - --connect-timeout "$APIM_CONNECT_TIMEOUT" --max-time "$APIM_MAX_TIME"
-      -o "$response_file" -w '%{http_code}' -X "$method" "$API_SUBSCRIBER_URL$path" -H "Accept: application/json")
+      -o "$response_file" -w '%{http_code}' -X "$method" "$url$path" -H "Accept: application/json")
+    if [ -n "$ca_file" ]; then
+      args+=(--cacert "$ca_file")
+    fi
     if [ -n "$idempotency_key" ]; then
       args+=(-H "Idempotency-Key: $idempotency_key")
     fi
@@ -164,7 +195,7 @@ apim_request() {
       args+=(-H "Content-Type: application/json" --data-binary "$body")
     fi
     : >"$response_file"
-    code=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" | curl "${args[@]}") || code="000"
+    code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl "${args[@]}") || code="000"
     APIM_HTTP_CODE="$code"
     APIM_BODY=$(cat "$response_file")
     if [ "$code" != "503" ] && [ "$code" != "000" ]; then
@@ -177,7 +208,7 @@ apim_request() {
     log warn "subscriber: APIM no responde (HTTP $code); reintento $attempt de $retries."
     sleep "$delay"
   done
-  rm -f "$response_file"
+  rm -f "$response_file" "$ca_file"
 }
 fi
 
@@ -206,5 +237,88 @@ require_owned_by_namespace() {
   if [ "$SUBSCRIPTION_OWNER" != "$2" ]; then
     fail "subscriber: la suscripción $1 es del namespace '$SUBSCRIPTION_OWNER', no de '$2'; no se toca."
   fi
+}
+fi
+
+if ! type -t request_subscription >/dev/null 2>&1; then
+request_subscription() {
+  local approval_ref="$1" plan_id="$2" namespace="$3" callback="$4" key="$5"
+  if [ -z "$approval_ref" ] || [ -z "$plan_id" ]; then
+    fail "subscriber: faltan approval_ref o plan_id en el pedido."
+  fi
+  if [[ ! "$approval_ref" =~ $APPROVAL_REF_PATTERN ]]; then
+    fail "subscriber: approval_ref inválido: '$approval_ref'. Tiene que ser un número de RITM."
+  fi
+  require_plan_id_format "$plan_id"
+
+  local body
+  body=$(jq -nc --arg approval_ref "$approval_ref" --arg namespace "$namespace" --arg plan_id "$plan_id" --arg callback "$callback" \
+    '{approvalRef: $approval_ref, consumerNamespace: $namespace, planId: $plan_id, callbackUrl: $callback}')
+
+  log info "subscriber: pidiendo la suscripción de $namespace con $approval_ref y plan $plan_id."
+  apim_request POST /v1/subscriptions "$body" "$key"
+
+  local results subscription_id operation_id
+  case "$APIM_HTTP_CODE" in
+    202)
+      subscription_id=$(printf %s "$APIM_BODY" | jq -r '.target // empty')
+      operation_id=$(printf %s "$APIM_BODY" | jq -r '.id // empty')
+      if [[ "$subscription_id" =~ ^${SUBSCRIPTION_ID_PATTERN}$ ]]; then
+        results=$(jq -nc --arg sub "$subscription_id" --arg op "$operation_id" --arg ns "$namespace" \
+          '{subscription_id: $sub, operation_id: $op, consumer_namespace: $ns, owns_subscription: true}')
+      else
+        log error "subscriber: APIM aceptó el pedido sin un target válido ('$subscription_id'); no se va a poder cambiar el plan ni dar de baja."
+        results=$(jq -nc --arg op "$operation_id" --arg ns "$namespace" \
+          '{operation_id: $op, consumer_namespace: $ns, owns_subscription: false}')
+      fi
+      report_progress "Suscripción en curso (operación $operation_id). APIM avisa cuando quede activa.${SUBSCRIPTION_CREDENTIAL_HINT:+ $SUBSCRIPTION_CREDENTIAL_HINT}" "$results" \
+        || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    409)
+      subscription_id=$(apim_problem_detail "$APIM_BODY" | grep -oE "$SUBSCRIPTION_ID_PATTERN" | head -n1 || true)
+      results=$(jq -nc --arg ns "$namespace" --arg sub "$subscription_id" \
+        '{consumer_namespace: $ns, owns_subscription: false} + (if $sub == "" then {} else {subscription_id: $sub} end)')
+      close_action success "Tu namespace ya tiene acceso a esta API.${SUBSCRIPTION_CREDENTIAL_HINT:+ $SUBSCRIPTION_CREDENTIAL_HINT}" "$results"
+      ;;
+    *)
+      fail "subscriber: APIM rechazó la suscripción (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
+      ;;
+  esac
+}
+fi
+
+if ! type -t request_unsubscription >/dev/null 2>&1; then
+request_unsubscription() {
+  local subscription_id="$1" owns="$2" key="$3"
+  if [ "$owns" != "true" ] || [ -z "$subscription_id" ]; then
+    close_action success "No se dio de baja en APIM: la suscripción no la creó esta instancia o nunca se dio de alta."
+    return
+  fi
+
+  require_agent_config
+  require_subscription_id_format "$subscription_id"
+  if [ -z "$key" ]; then
+    fail "subscriber: la notificación no trae el id de la acción."
+  fi
+  require_provider_namespace
+
+  lookup_subscription_owner "$subscription_id"
+  if [ -z "$SUBSCRIPTION_OWNER" ]; then
+    close_action success "La suscripción $subscription_id ya no existe en APIM."
+    return
+  fi
+  require_owned_by_namespace "$subscription_id" "$PROVIDER_NAMESPACE"
+
+  log info "subscriber: dando de baja $subscription_id."
+  apim_request DELETE "/v1/subscriptions/$subscription_id" "" "$key"
+
+  case "$APIM_HTTP_CODE" in
+    202|404)
+      close_action success "Suscripción $subscription_id dada de baja en APIM."
+      ;;
+    *)
+      fail "subscriber: APIM rechazó la baja (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
+      ;;
+  esac
 }
 fi
