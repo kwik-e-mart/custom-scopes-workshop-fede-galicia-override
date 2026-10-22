@@ -47,13 +47,14 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 
 | Variable | Uso |
 |---|---|
-| `APIM_PUBLISHER_URL`, `APIM_PUBLISHER_TOKEN` | API Publisher (https) |
+| `APIM_PUBLISHER_URL` | API Publisher (https) |
 | `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
 | `APIM_PUBLISH_ENVIRONMENT` | **solo para pruebas**: `int`, `qas` o `prd`; reemplaza el ambiente que sale del scope en todo lo que publique ese agente. Nunca en un agente productivo: un scope de dev quedaría publicado como `prd` |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
-| `API_SUBSCRIBER_URL`, `API_SUBSCRIBER_TOKEN` | API Subscriber, para los links |
+| `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |
+| `APIM_PUBLISHER_TOKEN`, `API_SUBSCRIBER_TOKEN` | opcionales: si están, van como `Authorization: Bearer` a cada API (dev no lleva token) |
 | `APIM_TLS_INSECURE` | opcional, `false` por default: en `true` las llamadas a APIM no validan el certificado (`curl -k`). Solo para ambientes de prueba con CA privada |
 
 ## Override del scope: la credencial en el deployment

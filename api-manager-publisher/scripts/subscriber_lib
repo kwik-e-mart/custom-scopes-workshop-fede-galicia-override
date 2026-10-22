@@ -54,17 +54,14 @@ close_on_unexpected_exit() {
 }
 
 require_agent_config() {
-  local name
-  for name in API_SUBSCRIBER_URL API_SUBSCRIBER_TOKEN; do
-    if [ -z "${!name-}" ]; then
-      fail "subscriber: el agente no tiene configurada la variable $name."
-    fi
-  done
+  if [ -z "${API_SUBSCRIBER_URL-}" ]; then
+    fail "subscriber: el agente no tiene configurada la variable API_SUBSCRIBER_URL."
+  fi
   if [[ "$API_SUBSCRIBER_URL" != https://* ]]; then
     fail "subscriber: API_SUBSCRIBER_URL tiene que ser https; no se manda el token por un canal sin cifrar."
   fi
   APIM_URL="$API_SUBSCRIBER_URL"
-  APIM_TOKEN="$API_SUBSCRIBER_TOKEN"
+  APIM_TOKEN="${API_SUBSCRIBER_TOKEN-}"
 }
 
 require_publisher_config() {
