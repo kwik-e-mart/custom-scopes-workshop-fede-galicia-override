@@ -193,11 +193,21 @@ setup() {
 }
 
 @test "require_publisher_config falla nombrando la variable que falta" {
-  export APIM_PUBLISHER_URL="https://publisher.test"
-  unset APIM_PUBLISHER_TOKEN
+  unset APIM_PUBLISHER_URL
+  export APIM_PUBLISHER_TOKEN="pub-tok"
   run require_publisher_config
   [ "$status" -ne 0 ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISHER_TOKEN* ]]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISHER_URL* ]]
+}
+
+@test "require_publisher_config sin token llama a APIM sin header de autorizacion" {
+  export APIM_PUBLISHER_URL="https://publisher.test"
+  unset APIM_PUBLISHER_TOKEN
+  require_publisher_config
+  queue_response 200 '{}'
+  apim_request POST /v1/kuadrant/manifests/publish '{}' ""
+  grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth= ' "$CURL_CALLS_LOG"
+  [ "$(grep -c -- '--config' "$CURL_ARGV_LOG")" = "0" ]
 }
 
 @test "require_publisher_config rechaza una URL que no es https" {
