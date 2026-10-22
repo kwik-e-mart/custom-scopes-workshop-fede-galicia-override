@@ -32,7 +32,7 @@ Qué se manda a APIM y de dónde sale:
 | `branch` / `tag` / `commit` | formulario |
 | `environment` | dimensión `environment` del service (`dev`, `int`, `qas` o `prd`) |
 | `tenant` | `b2c` fijo por ahora |
-| `cluster` | nombre del cluster del provider, o `APIM_CLUSTER_NAME` |
+| `cluster` | `cluster.id` del provider de `container-orchestration` (el mismo que usa el s2s), o `APIM_CLUSTER_NAME` |
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
 | `metadata.parentRefs` | el Gateway de ingreso que usa el s2s: `INGRESS_GATEWAY_NAME` (`s2s-ingress`) en `GATEWAY_NAMESPACE` (`gateways`) |
@@ -49,7 +49,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 |---|---|
 | `APIM_PUBLISHER_URL` | API Publisher (https) |
 | `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
-| `APIM_CLUSTER_NAME` | opcional: reemplaza el nombre del cluster del provider |
+| `APIM_CLUSTER_NAME` | opcional: reemplaza el `cluster.id` del provider |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |

@@ -21,7 +21,7 @@ set_request() {
 
 set_context() {
   CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" \
-    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":{cluster:({namespace:"payments"} + (if $cluster == "" then {} else {name:$cluster} end))}}}')
+    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":{cluster:({namespace:"payments"} + (if $cluster == "" then {} else {id:$cluster} end))}}}')
 }
 
 pushed() {
