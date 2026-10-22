@@ -727,13 +727,18 @@ class HttpTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def test_no_arranca_sin_mock_token(self):
+    def test_sin_mock_token_arranca_y_avisa_que_no_pide_autenticacion(self):
         env = {key: value for key, value in os.environ.items() if key != "MOCK_TOKEN"}
         env.update({"STATE_BACKEND": "memory", "PORT": "0"})
-        result = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "app", "server.py")],
-                                env=env, capture_output=True, text=True, timeout=10)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("MOCK_TOKEN", result.stderr)
+        process = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), "..", "app", "server.py")],
+                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=2)
+        finally:
+            process.kill()
+            _, stderr = process.communicate()
+        self.assertIn("sin MOCK_TOKEN el mock no pide autenticación", stderr)
 
 
 ROUTE = "/apis/gateway.networking.k8s.io/v1/namespaces/test-kuadrant/httproutes/test-kuadrant"
