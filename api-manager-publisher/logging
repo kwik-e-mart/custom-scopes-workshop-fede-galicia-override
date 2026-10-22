@@ -1,0 +1,43 @@
+#!/bin/bash
+# Copiado tal cual de scopes/k8s/logging para no divergir del resto de la plataforma. Si allá
+# cambia, se re-copia; no se edita acá.
+#
+# Logging utility — log4j-style level filtering
+# Usage:    log "level" "message"
+# Levels:   debug < info < warn < error
+# Control:  LOG_LEVEL env var (default: info)
+#
+# Example:
+#   LOG_LEVEL=info
+#   log debug "verbose details"  # suppressed
+#   log info  "deployment done"  # shown
+log() {
+  local level="${1:-info}"
+  local message="${2:-}"
+
+  local -i msg_num threshold
+
+  case "${level,,}" in
+    debug) msg_num=0 ;;
+    info)  msg_num=1 ;;
+    warn)  msg_num=2 ;;
+    error) msg_num=3 ;;
+    *)     msg_num=1 ;;
+  esac
+
+  case "${LOG_LEVEL:-info}" in
+    debug) threshold=0 ;;
+    info)  threshold=1 ;;
+    warn)  threshold=2 ;;
+    error) threshold=3 ;;
+    *)     threshold=1 ;;
+  esac
+
+  if [ "$msg_num" -ge "$threshold" ]; then
+    if [ "$msg_num" -ge 3 ]; then
+      echo "$message" >&2
+    else
+      echo "$message"
+    fi
+  fi
+}

@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ -z "${NP_ACTION_CONTEXT:-}" ]; then
+  echo "NP_ACTION_CONTEXT is not set. Exiting." >&2
+  exit 1
+fi
+
+if [ -n "${NP_API_KEY:-}" ] && [ -z "${NULLPLATFORM_API_KEY:-}" ]; then
+  export NULLPLATFORM_API_KEY="$NP_API_KEY"
+fi
+
+NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | sed "s/^'//;s/'$//")
+export NP_ACTION_CONTEXT
+
+CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq '.notification') || { echo "NP_ACTION_CONTEXT no es JSON válido" >&2; exit 1; }
+export CONTEXT
+
+SERVICE_ACTION=$(echo "$CONTEXT" | jq -r '.slug')
+SERVICE_ACTION_TYPE=$(echo "$CONTEXT" | jq -r '.type')
+export SERVICE_ACTION SERVICE_ACTION_TYPE
+
+WORKING_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_PATH="$(dirname "$WORKING_DIRECTORY")"
+export WORKING_DIRECTORY SERVICE_PATH
+
+HANDLER=$(echo "$CONTEXT" | jq -r '
+  if (.link? != null and (.link | type) == "object") then "link"
+  elif (.service? != null and (.service | type) == "object") then "service"
+  else "unknown" end')
+
+if [ "$HANDLER" = "unknown" ]; then
+  echo "No se pudo determinar si la notificación es de link o de service. Claves: $(echo "$CONTEXT" | jq -r 'keys | join(", ")')" >&2
+  exit 1
+fi
+
+np service-action exec --live-output --live-report --disable-auto-action-update --script="$WORKING_DIRECTORY/$HANDLER"

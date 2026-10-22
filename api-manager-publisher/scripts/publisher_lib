@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+
+PUBLISHER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PUBLISHER_LIB_DIR/subscriber_lib"
+
+PUBLISH_TENANT="b2c"
+REF_PATTERN='^[A-Za-z0-9._/-]+$'
+LEGAJO_PATTERN='^l[0-9]{7}$'
+WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
+
+if ! type -t require_publish_environment >/dev/null 2>&1; then
+require_publish_environment() {
+  local dimension
+  dimension=$(printf %s "$1" | tr '[:upper:]' '[:lower:]')
+  case "$dimension" in
+    int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
+    qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
+    prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
+    dev|development|desarrollo) fail "publisher: hoy no se publica en dev (dimensión environment '$1' del scope; APIM_PUBLISH_ENVIRONMENT lo fuerza)." ;;
+    *) fail "publisher: la dimensión environment '$1' no corresponde a int, qas ni prd." ;;
+  esac
+}
+fi
+
+if ! type -t resolve_publish_environment >/dev/null 2>&1; then
+resolve_publish_environment() {
+  if [ -z "${APIM_PUBLISH_ENVIRONMENT-}" ]; then
+    require_publish_environment "$1"
+    return
+  fi
+  case "$APIM_PUBLISH_ENVIRONMENT" in
+    int|qas|prd) PUBLISH_ENVIRONMENT="$APIM_PUBLISH_ENVIRONMENT" ;;
+    *) fail "publisher: APIM_PUBLISH_ENVIRONMENT tiene que ser int, qas o prd (llegó '$APIM_PUBLISH_ENVIRONMENT')." ;;
+  esac
+}
+fi
+
+if ! type -t require_source_repository >/dev/null 2>&1; then
+require_source_repository() {
+  local url="$1" path
+  path=$(printf %s "$url" | sed -E 's#^https?://[^/]+/##; s#\.git$##; s#/+$##')
+  if [[ ! "$path" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    fail "publisher: el repository_url de la aplicación ('$url') no es https://<host>/<org>/<repo>."
+  fi
+  SOURCE_ORGANIZATION="${path%%/*}"
+  SOURCE_REPOSITORY="${path##*/}"
+}
+fi
+
+if ! type -t require_cluster_name >/dev/null 2>&1; then
+require_cluster_name() {
+  CLUSTER_NAME=$(printf %s "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.name // empty' 2>/dev/null) || CLUSTER_NAME=""
+  if [ -n "${APIM_CLUSTER_NAME-}" ]; then
+    CLUSTER_NAME="$APIM_CLUSTER_NAME"
+  fi
+  if [ -z "$CLUSTER_NAME" ]; then
+    fail "publisher: el provider no trae el nombre del cluster; configurá APIM_CLUSTER_NAME en el agente."
+  fi
+}
+fi
+
+if ! type -t require_parent_refs >/dev/null 2>&1; then
+require_parent_refs() {
+  local raw="${APIM_PUBLISH_PARENT_REFS-}"
+  if [[ "$raw" != \[* ]]; then
+    raw=$(printf %s "$raw" | jq -Rc 'split(",") | map(select(length > 0) | capture("^(?<namespace>[a-z0-9-]+)/(?<name>[a-z0-9-]+)(:(?<sectionName>[a-z0-9-]+))?$")
+      | {group: "gateway.networking.k8s.io", kind: "Gateway", namespace, name} + (if .sectionName then {sectionName} else {} end))' 2>/dev/null) || raw=""
+  fi
+  PARENT_REFS=$(printf %s "$raw" | jq -ce 'select(type == "array" and length > 0 and all(.[]; (.name | type) == "string" and (.namespace | type) == "string"))' 2>/dev/null) || PARENT_REFS=""
+  if [ -z "$PARENT_REFS" ]; then
+    fail "publisher: APIM_PUBLISH_PARENT_REFS tiene que ser namespace/nombre[:listener] separados por coma, o una lista JSON de Gateways con name y namespace."
+  fi
+}
+fi
+
+if ! type -t require_scope_destination >/dev/null 2>&1; then
+require_scope_destination() {
+  local scope="$1" application_id="$2" scopes scope_id
+  if [ -z "$scope" ]; then
+    fail "publisher: falta el scope que atiende la API."
+  fi
+  if [ -z "$application_id" ]; then
+    fail "publisher: el contexto no trae application.id; no se puede resolver el scope."
+  fi
+  scopes=$(np scope list --application-id "$application_id" --status active --format json \
+    --query '[ (.results? // .) | .[]? | {slug, id, domain, dimensions} ]') \
+    || fail "publisher: falló el listado de scopes de la aplicación $application_id."
+  scope_id=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .id] | first // empty')
+  if [[ ! "$scope_id" =~ ^[0-9]+$ ]]; then
+    fail "publisher: el scope '$scope' no está entre los scopes activos de la aplicación."
+  fi
+  SCOPE_ID="$scope_id"
+  SCOPE_SLUG="$scope"
+  SCOPE_ENVIRONMENT=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
+  SCOPE_DOMAIN=$(printf %s "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain // empty] | first // empty')
+  if [ -z "$SCOPE_DOMAIN" ]; then
+    fail "publisher: el scope '$scope' no tiene dominio; no hay a dónde mandar el tráfico de la API."
+  fi
+  if [[ ! "$SCOPE_DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]; then
+    fail "publisher: el dominio del scope '$scope' no es un hostname válido: '$SCOPE_DOMAIN'."
+  fi
+}
+fi
+
+if ! type -t require_gateway_backend >/dev/null 2>&1; then
+require_gateway_backend() {
+  local host="${LOCAL_INGRESS_HOST-s2s-ingress-istio.gateways.svc.cluster.local}" port="${APIM_GATEWAY_PORT:-443}" name namespace
+  local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+  if [[ ! "$host" =~ ^($label)\.($label)(\..*)?$ ]]; then
+    fail "publisher: LOCAL_INGRESS_HOST inválido: '$host'. Tiene que ser <service>.<namespace>[.svc.cluster.local] del ingreso del cluster."
+  fi
+  name="${BASH_REMATCH[1]}"
+  namespace="${BASH_REMATCH[3]}"
+  if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]]; then
+    fail "publisher: APIM_GATEWAY_PORT inválido: '$port'."
+  fi
+  GATEWAY_BACKEND=$(jq -nc --arg name "$name" --arg namespace "$namespace" --argjson port "$port" \
+    '{kind: "Service", name: $name, namespace: $namespace, port: $port}')
+}
+fi
+
+if ! type -t require_api_id_format >/dev/null 2>&1; then
+require_api_id_format() {
+  if [[ ! "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    fail "publisher: APIM devolvió un apiId que no sirve como nombre de Kubernetes: '$1'."
+  fi
+}
+fi
+
+if ! type -t scope_auth_policy >/dev/null 2>&1; then
+scope_auth_policy() {
+  local api_id="$1" namespace="$2" scope_id="$3" route="$4"
+  jq -nc --arg api "$api_id" --arg ns "$namespace" --arg scope "$scope_id" --arg route "$route" \
+    --arg app_id_check "auth.identity.metadata.labels['app-id'] == request.headers.app_id" '{
+    apiVersion: "kuadrant.io/v1", kind: "AuthPolicy",
+    metadata: {name: "\($api)-\($route)", namespace: $ns,
+               labels: {"app.kubernetes.io/managed-by": "api-manager-publisher", "api-id": $api, scope_id: $scope}},
+    spec: {
+      targetRef: {group: "gateway.networking.k8s.io", kind: "HTTPRoute", name: $route},
+      defaults: {strategy: "merge", rules: {
+        authentication: {($api): {
+          apiKey: {selector: {matchLabels: {"api-id": $api}}, allNamespaces: true},
+          credentials: {customHeader: {name: "app_key"}}}},
+        authorization: {"\($api)-app-id": {
+          when: [{predicate: "has(request.headers.app_key)"}],
+          patternMatching: {patterns: [{predicate: $app_id_check}]}}}}}}}'
+}
+fi
+
+if ! type -t attach_scope_auth_policies >/dev/null 2>&1; then
+attach_scope_auth_policies() {
+  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" routes route
+  require_api_id_format "$api_id"
+  routes=$(kubectl -n "$namespace" get httproute -l "nullplatform=true,scope_id=$scope_id" -o json) \
+    || fail "publisher: no se pudieron leer las routes del scope '$scope_slug' en el namespace $namespace."
+  routes=$(printf %s "$routes" | jq -r '.items[]?.metadata.name')
+  if [ -z "$routes" ]; then
+    fail "publisher: el scope '$scope_slug' no tiene routes en el cluster; desplegalo y volvé a publicar."
+  fi
+  while IFS= read -r route; do
+    scope_auth_policy "$api_id" "$namespace" "$scope_id" "$route" | kubectl apply -f - >/dev/null \
+      || fail "publisher: no se pudo colgar la AuthPolicy de $api_id en la route $route."
+    log info "publisher: la route $route acepta las credenciales de $api_id."
+  done <<<"$routes"
+}
+fi
+
+if ! type -t detach_scope_auth_policies >/dev/null 2>&1; then
+detach_scope_auth_policies() {
+  local api_id="$1" namespace="$2"
+  require_api_id_format "$api_id"
+  kubectl -n "$namespace" delete authpolicy -l "app.kubernetes.io/managed-by=api-manager-publisher,api-id=$api_id" --ignore-not-found >/dev/null \
+    || fail "publisher: no se pudieron borrar las AuthPolicies de $api_id en el namespace $namespace; reintentá el borrado."
+}
+fi
