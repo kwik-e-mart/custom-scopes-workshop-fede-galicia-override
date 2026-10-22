@@ -1,60 +1,74 @@
 {{- $ns := .namespace -}}
+{{- $raiz := . -}}
 {{- /*
-Trae SOLO las reglas de este namespace. El objeto es uno por cluster —Kuadrant admite una sola
-AuthPolicy por Gateway— pero su contenido es por namespace de origen, porque cada uno firma con
-su propia clave y por lo tanto tiene su propio JWKS. El reconcile no lo pisa: si ya existe,
-mergea estas tres claves y deja las de los demás namespaces intactas.
+Una AuthPolicy por HTTPRoute de destino, no una por Gateway.
+
+A nivel Gateway, una policy con `rules` y sin bloque `defaults` la heredan TODAS las routes
+colgadas de ese Gateway, incluidas las de negocio de otros namespaces: empiezan a exigir el
+wristband y devuelven 401. El Gateway de ingreso lo comparten otras aplicaciones y no es nuestro.
+
+Kuadrant compila igual una policy de Gateway a un actionSet por route, así que en el data plane
+las dos formas pesan lo mismo; lo que cambia es cuántas routes quedan alcanzadas.
 
 La regla del peer se omite si no hay JWKS del otro sustrato configurado. Authorino falla CERRADO
 para el request entero cuando no puede bajar el JWKS de UNA de sus reglas, así que un peer apagado
-—o que todavía no existe— dejaría al namespace sin poder recibir tráfico local.
+—o que todavía no existe— dejaría al destino sin poder recibir tráfico local.
 
-El `when` no es decorativo: Authorino evalúa TODAS las reglas de authorization en AND, así que
-sin él el token de este namespace tendría que cumplir también el `src_namespace` de los otros y
-nunca pasaría. Con el `when` sobre el `iss`, cada token evalúa únicamente su propia regla.
+El `when` sobre el `iss` no es decorativo: Authorino evalúa TODAS las reglas de authorization en
+AND, así que sin él un token tendría que cumplir también el `src_namespace` de los otros orígenes
+y nunca pasaría.
 */ -}}
-apiVersion: {{ .authpolicy_api_version | quote }}
+{{- range .interceptions }}
+{{- $ruta := index . "ingress_route" | default "" }}
+{{- if $ruta }}
+---
+apiVersion: {{ $raiz.authpolicy_api_version | quote }}
 kind: AuthPolicy
 metadata:
-  name: {{ .ingress_authpolicy | quote }}
-  namespace: {{ .gateway_namespace | quote }}
+  name: {{ printf "%s-%s" $raiz.ingress_authpolicy $ruta | quote }}
+  namespace: {{ if eq $raiz.platform "eks" }}{{ $ns | quote }}{{ else }}{{ $raiz.gateway_namespace | quote }}{{ end }}
   labels:
+    {{ $raiz.managed_label }}: "true"
     nullplatform: "true"
 spec:
   targetRef:
     group: gateway.networking.k8s.io
-    kind: Gateway
-    name: {{ .ingress_gateway_name | quote }}
-  rules:
-    authentication:
-      "local-{{ $ns }}":
-        jwt:
-          jwksUrl: {{ .local_jwks_url | quote }}
-          ttl: {{ .token_duration | conv.ToInt }}
-        credentials:
-          customHeader:
-            name: x-egress-token
-{{- if .peer_jwks_url }}
-      "peer-{{ $ns }}":
-        jwt:
-          jwksUrl: {{ .peer_jwks_url | quote }}
-          ttl: {{ .token_duration | conv.ToInt }}
-        credentials:
-          customHeader:
-            name: x-egress-token
+    kind: HTTPRoute
+    name: {{ $ruta | quote }}
+  defaults:
+    strategy: merge
+    rules:
+      authentication:
+        "local-{{ $ns }}":
+          jwt:
+            jwksUrl: {{ $raiz.local_jwks_url | quote }}
+            ttl: {{ $raiz.token_duration | conv.ToInt }}
+          credentials:
+            customHeader:
+              name: x-egress-token
+{{- if $raiz.peer_jwks_url }}
+        "peer-{{ $ns }}":
+          jwt:
+            jwksUrl: {{ $raiz.peer_jwks_url | quote }}
+            ttl: {{ $raiz.token_duration | conv.ToInt }}
+          credentials:
+            customHeader:
+              name: x-egress-token
 {{- end }}
-    authorization:
-      "claims-{{ $ns }}":
-        when:
-          - predicate: auth.identity.iss == {{ .egress_issuer | quote }}
-        patternMatching:
-          patterns:
-            - predicate: auth.identity.src_namespace == {{ $ns | quote }}
-    response:
-      unauthenticated:
-        message:
-          value: "falta el token de egreso en x-egress-token, o no lo firmó ninguna clave conocida"
-      unauthorized:
-        message:
-          value: "el token no corresponde a un namespace habilitado en este ingreso"
-      success: {}
+      authorization:
+        "claims-{{ $ns }}":
+          when:
+            - predicate: auth.identity.iss == {{ $raiz.egress_issuer | quote }}
+          patternMatching:
+            patterns:
+              - predicate: auth.identity.src_namespace == {{ $ns | quote }}
+      response:
+        unauthenticated:
+          message:
+            value: "falta el token de egreso en x-egress-token, o no lo firmó ninguna clave conocida"
+        unauthorized:
+          message:
+            value: "el token no corresponde a un namespace habilitado en este ingreso"
+        success: {}
+{{- end }}
+{{- end }}

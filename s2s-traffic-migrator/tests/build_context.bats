@@ -291,6 +291,16 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   [[ "$output" == *"platform=eks"* ]]
 }
 
+@test "el prefijo del site no exige guion: la dimension puede valer el sustrato" {
+  run_bc_site '{"site":"openshift"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"platform=openshift"* ]] || false
+
+  run_bc_site '{"site":"aws"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"platform=eks"* ]]
+}
+
 @test "sin la dimension site ABORTA en vez de asumir una plataforma" {
   run_bc_site ""
   [ "$status" -ne 0 ]
@@ -649,4 +659,50 @@ exportado() {  # <variable>
     run bash -c 'source "$1" >/dev/null; bash -c "echo SIGLA=\$SIGLA"' _ "$BC"
   [ "$status" -eq 0 ]
   [[ "$output" == *"SIGLA=AYRM"* ]]
+}
+
+@test "entre dos routes con el mismo hostname gana la del Gateway de ingreso configurado" {
+  # Caso real: la route de un scope `internet-facing` queda colgada de un Gateway que no existe y
+  # comparte hostname con la que sí atiende. Elegir por hostname solo deja el validador en
+  # TargetNotFound, adjunto a una route que ningún Gateway sirve.
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+case "$*" in
+  *"get httproute -o json"*)
+    echo '{"items":[
+      {"metadata":{"name":"k-8-s-huerfana-internet-facing"},"spec":{"hostnames":["f.example"],"parentRefs":[{"name":"gateway-public","namespace":"gateways"}]}},
+      {"metadata":{"name":"k-8-s-la-buena-internal"},"spec":{"hostnames":["f.example"],"parentRefs":[{"name":"s2s-ingress","namespace":"gateways"}]}}]}' ;;
+  *signingKeyRefs*) printf 'wristband-key-payments-g0' ;;
+  *customClaims.src_cluster*) printf 'gal-poc' ;;
+  *wristband.issuer*) printf 'https://egress.gal-poc.bancogalicia.com.ar' ;;
+esac
+exit 0
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
+  local elegida
+  elegida=$(CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" INGRESS_GATEWAY_NAME=s2s-ingress GATEWAY_NAMESPACE=gateways \
+    bash -c "source '$BC' >/dev/null 2>&1; route_del_scope f.example")
+  [ "$elegida" = "k-8-s-la-buena-internal" ]
+}
+
+@test "si no se pueden listar las HTTPRoute, ABORTA en vez de dejar el destino sin validador" {
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+case "$*" in
+  *"get httproute"*)
+    echo 'Error from server (Forbidden): httproutes.gateway.networking.k8s.io is forbidden' >&2
+    exit 1 ;;
+  *signingKeyRefs*) printf 'wristband-key-payments-g0' ;;
+  *customClaims.src_cluster*) printf 'gal-poc' ;;
+  *wristband.issuer*) printf 'https://egress.gal-poc.bancogalicia.com.ar' ;;
+esac
+exit 0
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
+  run_bc_site '{"site":"aws-us-east-1"}'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no se pudieron listar las HTTPRoute"* ]] || false
+  [[ "$output" == *"sin que nadie valide el token"* ]]
 }

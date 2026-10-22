@@ -110,10 +110,10 @@ if [ -z "$SITE" ]; then
   exit 1
 fi
 case "$SITE" in
-  aws-*) PLATFORM=eks ;;
-  openshift-*) PLATFORM=openshift ;;
+  aws*) PLATFORM=eks ;;
+  openshift*) PLATFORM=openshift ;;
   *)
-    log error "egress-interceptor: site '$SITE' no reconocido. Se esperan los prefijos 'aws-' (EKS) u 'openshift-'."
+    log error "egress-interceptor: site '$SITE' no reconocido. Se esperan los prefijos 'aws' (EKS) u 'openshift'."
     exit 1 ;;
 esac
 export SITE PLATFORM
@@ -378,6 +378,32 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
     exit 1
   fi
 
+# La HTTPRoute que atiende el FQDN de un scope. El validador se adjunta a ELLA y no al Gateway:
+# una AuthPolicy de Gateway la heredan todas las routes colgadas de ahí —incluidas las de negocio
+# de otros namespaces— y el síntoma es un 401 en tráfico que nada tiene que ver con S2S.
+# Devuelve vacío si todavía no existe: el scope puede no estar desplegado.
+if ! type -t route_del_scope >/dev/null 2>&1; then
+route_del_scope() {  # <fqdn>
+  # El hostname no alcanza para elegir: un mismo FQDN puede estar servido por varias routes, y en
+  # la práctica sobreviven las que cuelgan de un Gateway que ya no existe. La que vale es la que
+  # cuelga del Gateway de ingreso configurado, que es por donde entra el tráfico que validamos.
+  local rutas
+  if ! rutas=$(kubectl -n "$NAMESPACE" get httproute -o json 2>&1); then
+    log error "egress-interceptor: no se pudieron listar las HTTPRoute de '$NAMESPACE'." >&2
+    log error "  $rutas" >&2
+    log error "  Sin ese listado no se sabe a qué route colgar el validador, y el tráfico se desviaría sin que nadie valide el token." >&2
+    exit 1
+  fi
+  printf '%s' "$rutas" \
+    | jq -r --arg f "$1" --arg gw "$INGRESS_GATEWAY_NAME" --arg gwns "$GATEWAY_NAMESPACE" '
+        [ .items[]
+          | select((.spec.hostnames // []) | index($f))
+          | select([ .spec.parentRefs[]?
+                     | select(.name == $gw and ((.namespace // $gwns) == $gwns)) ] | length > 0)
+          | .metadata.name ] | first // empty'
+}
+fi
+
   # np sale con exit 1 ante un 403 pero escribe el error en STDOUT, así que sin propagar el status
   # esto seguiría con un objeto {error} que jq parsea contento y ningún scope resolvería.
   ACTIVE_SCOPES=$(np scope list --application-id "$APPLICATION_ID" --status active --format json \
@@ -402,6 +428,22 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
     fi
     require_match "$RULE_FQDN" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "el FQDN del scope '$RULE_SCOPE'"
   done < <(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | [.scope, .scope_fqdn] | @tsv')
+
+  # El nombre de la route del scope no se puede derivar: lo genera nullplatform con el id del scope.
+  # Se descubre por el FQDN, que es el dato que sí tenemos.
+  if [ "$PLATFORM" = "eks" ]; then
+    RUTAS="{}"
+    while IFS= read -r RULE_FQDN; do
+      [ -n "$RULE_FQDN" ] || continue
+      RUTA=$(route_del_scope "$RULE_FQDN")
+      RUTAS=$(printf %s "$RUTAS" | jq -c --arg f "$RULE_FQDN" --arg r "$RUTA" '. + {($f): $r}')
+    done < <(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[].scope_fqdn')
+    INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" | jq -c --argjson rutas "$RUTAS" \
+      'map(. + {ingress_route: ($rutas[.scope_fqdn] // "")})')
+  else
+    INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" | jq -c \
+      'map(. + {ingress_route: ("s2s-ingress-" + .service_name)})')
+  fi
 fi
 
 if [ "$PLATFORM" = "eks" ]; then
