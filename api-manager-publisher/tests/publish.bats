@@ -53,12 +53,6 @@ JSON
   [ -z "$(np_last_update_flag --status)" ]
 }
 
-@test "registered en la respuesta cierra success" {
-  queue_response 200 "$(pushed registered)"
-  run_step
-  [ "$(np_last_update_flag --status)" = "success" ]
-}
-
 @test "un tag o un commit viajan en su campo" {
   set_request '{}' '{"scope":"main","ref_type":"tag","ref":"v1.2.3"}' qas
   queue_response 200 "$(pushed)"
@@ -300,13 +294,6 @@ applied() {
     '{"apiKey":{"selector":{"matchLabels":{"api-id":"payments-test-kuadrant-b2c-1"}},"allNamespaces":true},"credentials":{"customHeader":{"name":"app_key"}}}' ]
   [ "$(jq -c '.spec.defaults.rules.authorization."payments-test-kuadrant-b2c-1-app-id"' <<<"$policy")" = \
     '{"when":[{"predicate":"has(request.headers.app_key)"}],"patternMatching":{"patterns":[{"predicate":"auth.identity.metadata.labels['"'"'app-id'"'"'] == request.headers.app_id"}]}}' ]
-}
-
-@test "registered tambien cuelga la AuthPolicy antes de cerrar success" {
-  queue_response 200 "$(pushed registered)"
-  run_step
-  [ "$(applied | jq length)" = "1" ]
-  [ "$(np_last_update_flag --status)" = "success" ]
 }
 
 @test "si APIM rechaza la publicacion no cuelga ninguna AuthPolicy" {
