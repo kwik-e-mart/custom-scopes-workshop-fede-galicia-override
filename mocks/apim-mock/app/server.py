@@ -861,8 +861,7 @@ def make_handler(app):
 def main():
     token = os.environ.get("MOCK_TOKEN", "")
     if not token:
-        log("apim-mock: MOCK_TOKEN es obligatorio; sin token cualquiera podría crear Secrets con la ServiceAccount del mock.")
-        sys.exit(1)
+        log("apim-mock: sin MOCK_TOKEN el mock no pide autenticación; cualquiera que lo alcance puede crear Secrets y routes con su ServiceAccount.")
     namespace = os.environ.get("POD_NAMESPACE", "default")
     k8s = K8sClient(os.environ.get("K8S_API_URL", "https://kubernetes.default.svc"),
                     "/var/run/secrets/kubernetes.io/serviceaccount/token",
