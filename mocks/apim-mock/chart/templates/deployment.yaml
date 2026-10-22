@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "apim-mock.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "apim-mock.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "apim-mock.selector" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "apim-mock.fullname" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: apim-mock
+          image: "{{ required "image.repository es obligatorio" .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: STATE_BACKEND
+              value: configmap
+            - name: STATE_CONFIGMAP
+              value: {{ include "apim-mock.fullname" . }}-state
+            - name: MOCK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "apim-mock.fullname" . }}
+                  key: MOCK_TOKEN
+            - name: MOCK_TENANT
+              value: {{ .Values.mock.tenant | quote }}
+            - name: CALLBACK_DELAY_SECONDS
+              value: {{ .Values.mock.callbackDelaySeconds | quote }}
+            - name: PUBLISH_DOMAIN
+              value: {{ .Values.mock.publishDomain | quote }}
+            - name: NP_API_URL
+              value: {{ .Values.mock.npApiUrl | quote }}
+            - name: CREATE_CREDENTIAL_SECRET
+              value: {{ .Values.credentialSecrets.create | quote }}
+            - name: ALLOWED_NAMESPACES
+              value: {{ join "," (.Values.credentialSecrets.namespaces | default list) | quote }}
+            - name: ALLOW_ALL_NAMESPACES
+              value: {{ .Values.credentialSecrets.allowAllNamespaces | quote }}
+            - name: ROUTE_PATHS
+              value: {{ join "," (.Values.mock.routePaths | default list) | quote }}
+            - name: CREDENTIALS_NAMESPACE
+              value: {{ .Values.credentialSecrets.gatewayNamespace | quote }}
+            {{- if or .Values.npApiKey.existingSecret .Values.npApiKey.value }}
+            - name: NP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "apim-mock.npSecretName" . }}
+                  key: {{ .Values.npApiKey.key }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

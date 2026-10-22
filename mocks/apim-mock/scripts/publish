@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MOCK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+IMAGE_REPO="${IMAGE_REPO-docker.io/federicomalehnullplatform/apim-mock}"
+if [ -z "$IMAGE_REPO" ]; then
+  echo "IMAGE_REPO está vacío; dejalo sin definir para usar docker.io/federicomalehnullplatform/apim-mock" >&2
+  exit 1
+fi
+
+TAG="${TAG:-$(yq -r '.appVersion' "$MOCK_DIR/chart/Chart.yaml")}"
+
+if [[ "$IMAGE_REPO" == public.ecr.aws/* ]]; then
+  aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+fi
+
+docker buildx build --platform linux/amd64 -t "$IMAGE_REPO:$TAG" --push "$MOCK_DIR"
+echo "publicada $IMAGE_REPO:$TAG"

@@ -1,0 +1,139 @@
+{{- if and (not .Values.credentialSecrets.namespaces) (not .Values.credentialSecrets.allowAllNamespaces) }}
+{{- fail "credentialSecrets.namespaces es obligatorio: los namespaces donde el mock puede crear la credencial (o credentialSecrets.allowAllNamespaces=true, solo en clusters de prueba)" }}
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "apim-mock.fullname" . }}-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "apim-mock.fullname" . }}-state"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "apim-mock.fullname" . }}-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "apim-mock.fullname" . }}-state
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "apim-mock.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.credentialSecrets.namespaces }}
+{{- range .Values.credentialSecrets.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "apim-mock.fullname" $ }}-credentials
+  namespace: {{ . }}
+  labels:
+    {{- include "apim-mock.labels" $ | nindent 4 }}
+rules:
+  {{- if $.Values.credentialSecrets.create }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  {{- end }}
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["create", "patch", "delete"]
+  - apiGroups: ["kuadrant.io"]
+    resources: ["authpolicies", "ratelimitpolicies"]
+    verbs: ["create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "apim-mock.fullname" $ }}-credentials
+  namespace: {{ . }}
+  labels:
+    {{- include "apim-mock.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "apim-mock.fullname" $ }}-credentials
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "apim-mock.fullname" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- else }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "apim-mock.fullname" . }}-credentials
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+rules:
+  {{- if .Values.credentialSecrets.create }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  {{- end }}
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["create", "patch", "delete"]
+  - apiGroups: ["kuadrant.io"]
+    resources: ["authpolicies", "ratelimitpolicies"]
+    verbs: ["create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "apim-mock.fullname" . }}-credentials
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "apim-mock.fullname" . }}-credentials
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "apim-mock.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.credentialSecrets.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "apim-mock.fullname" . }}-gateway-credentials
+  namespace: {{ .Values.credentialSecrets.gatewayNamespace }}
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "apim-mock.fullname" . }}-gateway-credentials
+  namespace: {{ .Values.credentialSecrets.gatewayNamespace }}
+  labels:
+    {{- include "apim-mock.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "apim-mock.fullname" . }}-gateway-credentials
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "apim-mock.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
