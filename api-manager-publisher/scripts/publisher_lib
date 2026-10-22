@@ -12,22 +12,12 @@ require_publish_environment() {
   local dimension
   dimension=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   case "$dimension" in
+    dev|development|desarrollo) PUBLISH_ENVIRONMENT=dev ;;
     int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
     qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
     prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
-    dev|development|desarrollo) fail "publisher: hoy no se publica en dev (dimensión environment '$1' del scope; APIM_PUBLISH_ENVIRONMENT lo fuerza)." ;;
-    *) fail "publisher: la dimensión environment '$1' no corresponde a int, qas ni prd." ;;
-  esac
-}
-
-resolve_publish_environment() {
-  if [ -z "${APIM_PUBLISH_ENVIRONMENT-}" ]; then
-    require_publish_environment "$1"
-    return
-  fi
-  case "$APIM_PUBLISH_ENVIRONMENT" in
-    int|qas|prd) PUBLISH_ENVIRONMENT="$APIM_PUBLISH_ENVIRONMENT" ;;
-    *) fail "publisher: APIM_PUBLISH_ENVIRONMENT tiene que ser int, qas o prd (llegó '$APIM_PUBLISH_ENVIRONMENT')." ;;
+    "") fail "publisher: el service no tiene la dimensión environment." ;;
+    *) fail "publisher: la dimensión environment '$1' del service no corresponde a dev, int, qas ni prd." ;;
   esac
 }
 
@@ -81,7 +71,6 @@ require_scope_destination() {
   fi
   SCOPE_ID="$scope_id"
   SCOPE_SLUG="$scope"
-  SCOPE_ENVIRONMENT=$(echo "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .dimensions.environment // empty] | first // empty')
   SCOPE_DOMAIN=$(echo "$scopes" | jq -r --arg s "$scope" '[.[] | select(.slug == $s) | .domain // empty] | first // empty')
   if [ -z "$SCOPE_DOMAIN" ]; then
     fail "publisher: el scope '$scope' no tiene dominio; no hay a dónde mandar el tráfico de la API."

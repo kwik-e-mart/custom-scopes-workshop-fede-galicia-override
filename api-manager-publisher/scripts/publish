@@ -46,7 +46,7 @@ publish() {
   require_parent_refs
   require_scope_destination "$(echo "$params" | jq -r '.scope // empty')" "$(echo "${CONTEXT-}" | jq -r '.application.id // empty')"
   require_gateway_backend
-  resolve_publish_environment "$SCOPE_ENVIRONMENT"
+  require_publish_environment "$(notification_field '.service.dimensions.environment')"
 
   local body
   body=$(jq -nc \
