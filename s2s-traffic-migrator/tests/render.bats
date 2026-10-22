@@ -951,3 +951,17 @@ sin_sigla() {
   [[ "$recursos" != *"pods/exec"* ]] || false
   [[ "$recursos" != *"pods/log"* ]]
 }
+
+@test "ningun workflow declara las variables de override: si las declara, el agente deja de poder pisarlas" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" declaradas
+  declaradas=$(grep -nE "^  [A-Z_]+_OVERRIDE:" "$dir/create.yaml" "$dir/delete.yaml" || true)
+  [ -z "$declaradas" ] || { echo "$declaradas" >&2; false; }
+}
+
+@test "build_context resuelve un override para cada valor del ingreso que cambia entre sustratos" {
+  local bc="${BATS_TEST_DIRNAME}/../scripts/k8s/build_context" v
+  for v in GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME LOCAL_INGRESS_HOST; do
+    grep -q "^if \[ -n \"\${${v}_OVERRIDE:-}\" \]; then$" "$bc" \
+      || { echo "falta el override de $v en build_context" >&2; false; }
+  done
+}
