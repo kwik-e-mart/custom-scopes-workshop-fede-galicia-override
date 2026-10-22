@@ -10,7 +10,8 @@ GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
-MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io,gateway.gateway.networking.k8s.io"
+MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io"
+[ "${NAMESPACE_SETUP_ENABLED:-false}" = "true" ] && MANAGED_KINDS="${MANAGED_KINDS},gateway.gateway.networking.k8s.io"
 GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
 
 # `set -euo pipefail` está arriba pero NO alcanza: el runner de workflows del CLI ejecuta cada step
@@ -29,10 +30,23 @@ set_selector() {  # <svc> <json del selector>
     -p "[{\"op\":\"replace\",\"path\":\"/spec/selector\",\"value\":$2}]"
 }
 
-current_selector() { kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath='{.spec.selector}' 2>/dev/null || true; }
+current_selector() {
+  local salida
+  salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath='{.spec.selector}' 2>&1) && { printf '%s' "$salida"; return 0; }
+  case "$salida" in *NotFound*|*not\ found*) return 0 ;; esac
+  log error "egress-interceptor: no se pudo leer el selector de '$1' en '$NAMESPACE'." >&2
+  log error "  $salida" >&2
+  exit 1
+}
 
 original_selector() {
-  kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}" 2>/dev/null || true
+  local salida
+  salida=$(kubectl -n "$NAMESPACE" get svc "$1" -o jsonpath="{.metadata.annotations['${ORIGINAL_SELECTOR_ANNOTATION}']}" 2>&1) \
+    && { printf '%s' "$salida"; return 0; }
+  case "$salida" in *NotFound*|*not\ found*) return 0 ;; esac
+  log error "egress-interceptor: no se pudo leer la annotation de '$1' en '$NAMESPACE'." >&2
+  log error "  $salida" >&2
+  exit 1
 }
 
 # El orden importa y la verificación también: la annotation es el ÚNICO lugar donde vive el
@@ -120,9 +134,18 @@ original_specs() {
 # segundos después que Istio, el resultado además dependía de cuándo se mirara.
 # El criterio correcto: alguien la reporta True y NADIE la reporta distinto de True.
 wait_route_condition() {  # <ns> <route> <condicion> <timeout-segundos>
-  local ns="$1" route="$2" cond="$3" deadline=$(( SECONDS + $4 )) buenas malas
+  local ns="$1" route="$2" cond="$3" deadline=$(( SECONDS + $4 )) buenas malas json
   while [ "$SECONDS" -lt "$deadline" ]; do
-    read -r buenas malas < <(kubectl -n "$ns" get "httproute/$route" -o json 2>/dev/null \
+    if ! json=$(kubectl -n "$ns" get "httproute/$route" -o json 2>&1); then
+      case "$json" in
+        *NotFound*|*not\ found*) json="" ;;
+        *)
+          log error "egress-interceptor: no se pudo leer la HTTPRoute '$route' de '$ns'."
+          log error "  $json"
+          exit 1 ;;
+      esac
+    fi
+    read -r buenas malas < <(printf '%s' "$json" \
       | jq -r --arg c "$cond" '[.status.parents[]?.conditions[]? | select(.type == $c)] as $cs
           | "\([$cs[] | select(.status == "True")] | length) \([$cs[] | select(.status != "True")] | length)"' \
       2>/dev/null || echo "0 0")
@@ -242,8 +265,22 @@ if [ "$PLATFORM" != "eks" ]; then
   for svc in $DECLARED_SERVICES; do
     PERCENT=$(echo "$INTERCEPTIONS_JSON" | jq -r --arg s "$svc" '.[] | select(.service_name==$s) | .percent')
     [ "$PERCENT" -lt 100 ] || continue
-    LOCAL_ENDPOINTS=$(kubectl -n "$NAMESPACE" get endpoints "${svc}-local" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
-    [ -z "$LOCAL_ENDPOINTS" ] && LOCAL_ENDPOINTS=$(kubectl -n "$NAMESPACE" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+    LOCAL_ENDPOINTS=""
+    for candidato in "${svc}-local" "$svc"; do
+      if salida=$(kubectl -n "$NAMESPACE" get endpoints "$candidato" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>&1); then
+        LOCAL_ENDPOINTS="$salida"
+        [ -n "$LOCAL_ENDPOINTS" ] && break
+      else
+        case "$salida" in
+          *NotFound*|*not\ found*) ;;
+          *)
+            log error "egress-interceptor: no se pudo leer los endpoints de '$candidato' en '$NAMESPACE'."
+            log error "  $salida"
+            log error "  Sin ese dato no se puede saber si el destino local tiene backend. No se aplicó nada."
+            exit 1 ;;
+        esac
+      fi
+    done
     if [ -z "$LOCAL_ENDPOINTS" ]; then
       log error "egress-interceptor: '$svc' tiene percent=$PERCENT (<100) pero su destino local no tiene endpoints."
       log error "  Con ese peso, $((100 - PERCENT))% del tráfico iría a un backend vacío."
@@ -461,11 +498,8 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Programmed "gateway/$GATEWAY_N
   log error "el Gateway $GATEWAY_NAME no llegó a Programmed=True. El tráfico NO se desvió."
   log error "$(kubectl -n "$NAMESPACE" get "gateway/$GATEWAY_NAME" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}' 2>/dev/null || true)"
-  log error "  Estado de los pods del data plane:"
-  log error "$(kubectl -n "$NAMESPACE" get pods -l "gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME" \
-    -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,FASE:.status.phase --no-headers 2>/dev/null || true)"
-  log error "  En CRC, un pod trabado en ContainerCreating suele ser el token de multus vencido (Gotcha #23):"
-  log error "    kubectl delete pod -n openshift-multus -l app=multus"
+  log error "  Mirá los pods del data plane: kubectl -n $NAMESPACE get pods -l gateway.networking.k8s.io/gateway-name=$GATEWAY_NAME"
+  log error "  En CRC, un pod trabado en ContainerCreating suele ser el token de multus vencido (Gotcha #23)."
   exit 1
 fi
 if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
@@ -473,47 +507,20 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
   die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
 fi
 
-# Lo que la AuthPolicy necesita es el Secret de la clave, no el Job. Con el alta de namespace
-# delegada al chart el Job no es nuestro ni vive acá, así que se espera el Secret; sólo cuando lo
-# emitimos nosotros se espera al Job, que da un error mucho mejor.
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
   if [ "$NAMESPACE_SETUP_ENABLED" = "true" ]; then
     if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/rotar-$NAMESPACE-init" --timeout=180s; then
       log error "el Job rotar-$NAMESPACE-init no terminó: sin él no hay clave de firma y la AuthPolicy nunca va a enforcear."
-      log error "$(kubectl -n "$NAMESPACE" logs "job/rotar-$NAMESPACE-init" --tail=20 2>&1)"
       exit 1
     fi
-  elif ! kubectl -n "$KEYS_NAMESPACE" get secret "$WRISTBAND_SECRET" >/dev/null 2>&1; then
-    log error "no existe el Secret de firma '$WRISTBAND_SECRET' en '$KEYS_NAMESPACE': la AuthPolicy nunca va a enforcear."
-    log error "  Ese objeto lo crea el chart del namespace. Verificá que haya corrido para '$NAMESPACE'."
-    log error "  Para crearlo desde acá, corré el service con NAMESPACE_SETUP_ENABLED=true."
-    exit 1
   fi
 fi
 
-# El `kid` del wristband ES el nombre del Secret de firma: Authorino lo deriva de ahí. Si el JWKS
-# publicado no trae una clave con ese kid, el token se firma bien y el destino igual responde 401
-# con "no lo firmó ninguna clave conocida", que no dice dónde mirar. Se chequea acá, que es donde
-# los dos nombres están a la vista.
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ -n "$LOCAL_JWKS_URL" ]; then
-  RESPUESTA=$(kubectl -n "$NAMESPACE" exec "deploy/$JWKS_SERVICE_NAME" -- \
-    curl -sf --max-time 10 "$LOCAL_JWKS_URL" 2>/dev/null) || RESPUESTA=""
-  KIDS=$(printf '%s' "$RESPUESTA" | jq -r '.keys[]?.kid' 2>/dev/null) || KIDS=""
-  if [ -z "$KIDS" ]; then
-    log error "el endpoint de JWKS no publica ninguna clave en la URL que va a consultar el validador."
-    log error "  URL: $LOCAL_JWKS_URL"
-    log error "  Paths que sí sirve:"
-    log error "$(kubectl -n "$NAMESPACE" exec "deploy/$JWKS_SERVICE_NAME" -- find /var/www/html -name jwks.json 2>&1 | sed 's/^/    /')"
-    log error "  Authorino va a recibir un 404 y el destino responde 401 'no lo firmó ninguna clave conocida'."
-    log error "  El chart publica un path por cada origen de validator.sources: falta el de este namespace."
-    exit 1
-  fi
-  if ! printf '%s\n' "$KIDS" | grep -qx "$WRISTBAND_SECRET"; then
-    log error "el JWKS que sirve $JWKS_SERVICE_NAME no publica la clave con la que se firma."
-    log error "  firma con kid: $WRISTBAND_SECRET"
-    log error "  el JWKS trae:  $(printf '%s' "$KIDS" | tr '\n' ' ')"
-    log error "  El destino va a responder 401 'no lo firmó ninguna clave conocida'."
-    log error "  Revisá que el JWKS de Vault ($VAULT_KV_CLUSTER/$NAMESPACE/jwks) corresponda a esa clave."
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
+  if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
+    log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
+    log error "  Sin él el validador no puede bajar las claves y el destino responde 401."
+    log error "  Ese objeto lo crea el chart del namespace, con validator.enabled."
     exit 1
   fi
 fi
@@ -598,7 +605,7 @@ for svc in $DECLARED_SERVICES; do
   CURRENT_SELECTOR=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath='{.spec.selector}')
   [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && continue
   # El selector original se captura una sola vez: es el dato con el que se revierte.
-  ALREADY_ANNOTATED=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath="{.metadata.annotations.$ORIGINAL_SELECTOR_ANNOTATION}" 2>/dev/null || true)
+  ALREADY_ANNOTATED=$(original_selector "$svc")
   if [ -z "$ALREADY_ANNOTATED" ]; then
     # Guardar el selector del propio Gateway como "original" haría que el revert no revierta nada.
     [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }

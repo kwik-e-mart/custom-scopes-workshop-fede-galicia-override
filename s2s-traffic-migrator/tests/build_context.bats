@@ -685,3 +685,24 @@ MOCK
   [ "$status" -eq 0 ]
   [[ "$output" == *"SIGLA=AYRM"* ]]
 }
+
+@test "si no se pueden listar las HTTPRoute, ABORTA en vez de dejar el destino sin validador" {
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+case "$*" in
+  *"get httproute"*)
+    echo 'Error from server (Forbidden): httproutes.gateway.networking.k8s.io is forbidden' >&2
+    exit 1 ;;
+  *signingKeyRefs*) printf 'wristband-key-payments-g0' ;;
+  *customClaims.src_cluster*) printf 'gal-poc' ;;
+  *wristband.issuer*) printf 'https://egress.gal-poc.bancogalicia.com.ar' ;;
+esac
+exit 0
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
+  run_bc_site '{"site":"aws-us-east-1"}'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no se pudieron listar las HTTPRoute"* ]] || false
+  [[ "$output" == *"sin que nadie valide el token"* ]]
+}

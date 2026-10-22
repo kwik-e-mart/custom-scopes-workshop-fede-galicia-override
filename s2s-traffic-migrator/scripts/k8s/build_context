@@ -387,7 +387,14 @@ route_del_scope() {  # <fqdn>
   # El hostname no alcanza para elegir: un mismo FQDN puede estar servido por varias routes, y en
   # la práctica sobreviven las que cuelgan de un Gateway que ya no existe. La que vale es la que
   # cuelga del Gateway de ingreso configurado, que es por donde entra el tráfico que validamos.
-  kubectl -n "$NAMESPACE" get httproute -o json 2>/dev/null \
+  local rutas
+  if ! rutas=$(kubectl -n "$NAMESPACE" get httproute -o json 2>&1); then
+    log error "egress-interceptor: no se pudieron listar las HTTPRoute de '$NAMESPACE'." >&2
+    log error "  $rutas" >&2
+    log error "  Sin ese listado no se sabe a qué route colgar el validador, y el tráfico se desviaría sin que nadie valide el token." >&2
+    exit 1
+  fi
+  printf '%s' "$rutas" \
     | jq -r --arg f "$1" --arg gw "$INGRESS_GATEWAY_NAME" --arg gwns "$GATEWAY_NAMESPACE" '
         [ .items[]
           | select((.spec.hostnames // []) | index($f))

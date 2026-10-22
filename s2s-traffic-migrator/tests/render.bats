@@ -734,7 +734,9 @@ rule() {  # <percent> [service]
   run render openshift "$(rule 100)"
   local rotador agente
   rotador=$(echo "$output" | yq -N 'select(.kind == "Role" and .metadata.namespace == "kuadrant-system") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
-  agente=$(KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools TARGET_NAMESPACES=payments \
+  # El Role del rotador sólo lo crea el service con NAMESPACE_SETUP_ENABLED=true, así que el RBAC
+  # se rinde con ese mismo flag: con el alta delegada al chart, estos permisos no se piden.
+  agente=$(NAMESPACE_SETUP_ENABLED=true KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools TARGET_NAMESPACES=payments \
     gomplate -f "${BATS_TEST_DIRNAME}/../../rbac/np-agent-rbac.yaml.tpl" \
     | yq -N 'select(.kind == "Role" and .metadata.name == "np-agent-keys") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
   [ -n "$rotador" ]
@@ -916,4 +918,25 @@ sin_sigla() {
   grep -q '^export .*\bSIGLA\b' "$dir/scripts/k8s/build_context"
   grep -q '{ name: SIGLA, type: environment }' "$dir/workflows/openshift/create.yaml"
   grep -q '{ name: SIGLA, type: environment }' "$dir/workflows/openshift/delete.yaml"
+}
+
+@test "con el alta delegada al chart el RBAC no pide escribir nada que no emitamos" {
+  local rbac="${BATS_TEST_DIRNAME}/../../rbac/np-agent-rbac.yaml.tpl"
+  local escribe
+  escribe=$(KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools \
+    gomplate -f "$rbac" \
+    | yq -N 'select(.kind == "ClusterRole") | .rules[] | select(.verbs[] == "create") | .resources[]' | sort -u)
+  [ -n "$escribe" ]
+  for r in secrets serviceaccounts configmaps roles rolebindings jobs cronjobs externalsecrets gateways; do
+    [[ "$escribe" != *"$r"* ]] || { echo "el RBAC base pide create sobre $r" >&2; false; }
+  done
+}
+
+@test "el RBAC base no pide exec ni logs sobre los pods" {
+  local rbac="${BATS_TEST_DIRNAME}/../../rbac/np-agent-rbac.yaml.tpl"
+  local recursos
+  recursos=$(NAMESPACE_SETUP_ENABLED=true KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools \
+    gomplate -f "$rbac" | yq -N 'select(.kind == "ClusterRole") | .rules[].resources[]' | sort -u)
+  [[ "$recursos" != *"pods/exec"* ]] || false
+  [[ "$recursos" != *"pods/log"* ]]
 }
