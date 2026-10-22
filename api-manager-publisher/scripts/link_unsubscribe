@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LINK_UNSUBSCRIBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$LINK_UNSUBSCRIBE_DIR/publisher_lib"
+
+ACTION_ENTITY=link
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+link_unsubscribe() {
+  load_notification
+  request_unsubscription \
+    "$(notification_field '.link.attributes.subscription_id')" \
+    "$(echo "$NOTIFICATION" | jq -r '.link.attributes.owns_subscription // false')" \
+    "$(notification_field '.id')"
+}
+
+link_unsubscribe

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PUBLISH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PUBLISH_DIR/publisher_lib"
+
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+publish() {
+  require_publisher_config
+  load_notification
+
+  local params service_id action_id
+  params=$(echo "$NOTIFICATION" | jq -c '(.service.attributes // {}) * (.parameters // {})')
+  service_id=$(notification_field '.service.id')
+  action_id=$(notification_field '.id')
+  require_action_ids "$service_id" "$action_id"
+
+  local ref_type ref legajo window hits
+  ref_type=$(echo "$params" | jq -r '.ref_type // "branch"')
+  ref=$(echo "$params" | jq -r '.ref // empty')
+  legajo=$(echo "$params" | jq -r '.legajo // empty')
+  window=$(echo "$params" | jq -r '.window // empty')
+  hits=$(echo "$params" | jq -r '.hits_per_window // empty')
+
+  case "$ref_type" in
+    branch|tag|commit) ;;
+    *) fail "publisher: ref_type tiene que ser branch, tag o commit (llegó '$ref_type')." ;;
+  esac
+  if [[ ! "$ref" =~ $REF_PATTERN ]]; then
+    fail "publisher: la referencia '$ref' no es un branch, tag o commit válido."
+  fi
+  if [ -n "$legajo" ] && [[ ! "$legajo" =~ $LEGAJO_PATTERN ]]; then
+    fail "publisher: el legajo tiene que tener el formato l#######."
+  fi
+  if [ -n "$window$hits" ]; then
+    if [[ ! "$window" =~ $WINDOW_PATTERN ]] || [[ ! "$hits" =~ ^[1-9][0-9]*$ ]]; then
+      fail "publisher: el rate limit necesita window (por ejemplo 10s) y hits_per_window mayor a 0, los dos juntos."
+    fi
+  fi
+
+  require_source_repository "$(echo "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
+  require_provider_namespace
+  require_cluster_name
+  require_parent_refs
+  require_scope_destination "$(echo "$params" | jq -r '.scope // empty')" "$(echo "${CONTEXT-}" | jq -r '.application.id // empty')"
+  require_gateway_backend
+  resolve_publish_environment "$SCOPE_ENVIRONMENT"
+
+  local body
+  body=$(jq -nc \
+    --arg organization "$SOURCE_ORGANIZATION" \
+    --arg repository "$SOURCE_REPOSITORY" \
+    --arg ref_type "$ref_type" \
+    --arg ref "$ref" \
+    --arg environment "$PUBLISH_ENVIRONMENT" \
+    --arg tenant "$PUBLISH_TENANT" \
+    --arg cluster "$CLUSTER_NAME" \
+    --arg legajo "$legajo" \
+    --arg window "$window" \
+    --arg hits "$hits" \
+    --arg callback "$(callback_url "$service_id" "$action_id")" \
+    --arg namespace "$PROVIDER_NAMESPACE" \
+    --argjson backend "$GATEWAY_BACKEND" \
+    --arg destination "$SCOPE_DOMAIN" \
+    --argjson parent_refs "$PARENT_REFS" \
+    '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
+      tenant: $tenant, origen: "nullplatform", cluster: $cluster, callbackUrl: $callback,
+      metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
+                 backend: ($backend + {destinationFqdn: $destination})}}
+     + (if $legajo == "" then {} else {legajo: $legajo} end)
+     + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
+
+  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
+  apim_request POST /v1/kuadrant/manifests/publish "$body" ""
+
+  local status message results
+  status=$(echo "$APIM_BODY" | jq -r '.status // empty' 2>/dev/null) || status=""
+  message=$(echo "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
+  if [ "$APIM_HTTP_CODE" != "200" ]; then
+    fail "publisher: APIM rechazó la publicación (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
+  fi
+  results=$(echo "$APIM_BODY" | jq -c '{api_id: .apiId, hostname: .hostname, manifest_path: .manifestPath}')
+  case "$status" in
+    commited|synced)
+      attach_scope_auth_policies "$(echo "$results" | jq -r '.api_id // empty')" "$PROVIDER_NAMESPACE" "$SCOPE_ID" "$SCOPE_SLUG"
+      report_progress "Publicación $status en APIM ($(echo "$results" | jq -r .api_id)). APIM avisa cuando quede registrada." "$results" \
+        || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    *)
+      fail "publisher: APIM no pudo publicar (estado '$status'): $(apim_problem_detail "${message:-$APIM_BODY}")"
+      ;;
+  esac
+}
+
+publish

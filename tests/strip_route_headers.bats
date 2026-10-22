@@ -151,3 +151,11 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"nothing to strip"* ]]
 }
+
+@test "con la lista del override base la app no recibe la credencial de APIM" {
+  route_without_filters
+  strip_route_headers "s2s headers" "$(yq '.configuration.S2S_STRIP_HEADERS' "${BATS_TEST_DIRNAME}/../override/values.yaml")"
+  for h in app_key app_id x-egress-token; do
+    [ "$(removed 0 | jq --arg h "$h" 'index($h) != null')" = "true" ]
+  done
+}

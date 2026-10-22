@@ -35,38 +35,40 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: {{ $ruta | quote }}
-  rules:
-    authentication:
-      "local-{{ $ns }}":
-        jwt:
-          jwksUrl: {{ $raiz.local_jwks_url | quote }}
-          ttl: {{ $raiz.token_duration | conv.ToInt }}
-        credentials:
-          customHeader:
-            name: x-egress-token
+  defaults:
+    strategy: merge
+    rules:
+      authentication:
+        "local-{{ $ns }}":
+          jwt:
+            jwksUrl: {{ $raiz.local_jwks_url | quote }}
+            ttl: {{ $raiz.token_duration | conv.ToInt }}
+          credentials:
+            customHeader:
+              name: x-egress-token
 {{- if $raiz.peer_jwks_url }}
-      "peer-{{ $ns }}":
-        jwt:
-          jwksUrl: {{ $raiz.peer_jwks_url | quote }}
-          ttl: {{ $raiz.token_duration | conv.ToInt }}
-        credentials:
-          customHeader:
-            name: x-egress-token
+        "peer-{{ $ns }}":
+          jwt:
+            jwksUrl: {{ $raiz.peer_jwks_url | quote }}
+            ttl: {{ $raiz.token_duration | conv.ToInt }}
+          credentials:
+            customHeader:
+              name: x-egress-token
 {{- end }}
-    authorization:
-      "claims-{{ $ns }}":
-        when:
-          - predicate: auth.identity.iss == {{ $raiz.egress_issuer | quote }}
-        patternMatching:
-          patterns:
-            - predicate: auth.identity.src_namespace == {{ $ns | quote }}
-    response:
-      unauthenticated:
-        message:
-          value: "falta el token de egreso en x-egress-token, o no lo firmó ninguna clave conocida"
-      unauthorized:
-        message:
-          value: "el token no corresponde a un namespace habilitado en este ingreso"
-      success: {}
+      authorization:
+        "claims-{{ $ns }}":
+          when:
+            - predicate: auth.identity.iss == {{ $raiz.egress_issuer | quote }}
+          patternMatching:
+            patterns:
+              - predicate: auth.identity.src_namespace == {{ $ns | quote }}
+      response:
+        unauthenticated:
+          message:
+            value: "falta el token de egreso en x-egress-token, o no lo firmó ninguna clave conocida"
+        unauthorized:
+          message:
+            value: "el token no corresponde a un namespace habilitado en este ingreso"
+        success: {}
 {{- end }}
 {{- end }}

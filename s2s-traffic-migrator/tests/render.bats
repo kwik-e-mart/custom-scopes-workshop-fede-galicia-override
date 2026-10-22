@@ -749,7 +749,7 @@ rule() {  # <percent> [service]
 @test "el jwksUrl del validador apunta EXACTAMENTE al endpoint que emitimos" {
   run render eks "$(rule 0)"
   local url svc port ruta
-  url=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.rules.authentication."local-payments".jwt.jwksUrl')
+  url=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication."local-payments".jwt.jwksUrl')
   svc=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .metadata.name + "." + .metadata.namespace')
   port=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .spec.ports[0].port')
   ruta=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.template.spec.volumes[0].projected.sources[0].secret.items[0].path')
@@ -815,7 +815,7 @@ rule() {  # <percent> [service]
   # dejaria al namespace sin poder recibir ni siquiera el trafico local.
   PEER_JWKS="" run render eks "$(rule 100)"
   local reglas
-  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.rules.authentication | keys | .[]')
+  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication | keys | .[]')
   [[ "$reglas" == *"local-payments"* ]]
   [[ "$reglas" != *"peer-payments"* ]]
 }
@@ -823,8 +823,19 @@ rule() {  # <percent> [service]
 @test "con PEER_JWKS_URL el validador si emite la regla del peer" {
   run render eks "$(rule 100)"
   local reglas
-  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.rules.authentication | keys | .[]')
+  reglas=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication | keys | .[]')
   [[ "$reglas" == *"peer-payments"* ]]
+}
+
+@test "el validador se combina con las otras AuthPolicies de la route en vez de pisarlas" {
+  run render eks "$(rule 100)"
+  local validador
+  validador=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-")))')
+  [ "$(echo "$validador" | yq '.spec.defaults.strategy')" = "merge" ]
+  [ "$(echo "$validador" | yq '.spec.rules // "ausente"')" = "ausente" ]
+  [ "$(echo "$validador" | yq '.spec.defaults.rules.authentication | keys | .[0]')" = "local-payments" ]
+  [ "$(echo "$validador" | yq '.spec.defaults.rules.authorization."claims-payments".when[0].predicate')" = \
+    'auth.identity.iss == "https://egress.gal-poc.bancogalicia.com.ar"' ]
 }
 
 @test "el property del ExternalSecret de la clave escapa el punto de key.pem" {

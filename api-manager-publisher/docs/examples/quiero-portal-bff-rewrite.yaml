@@ -1,0 +1,627 @@
+apiVersion: "gateway.networking.k8s.io/v1"
+kind: "HTTPRoute"
+metadata:
+  name: "quiero-portal-bff.b2c"
+  namespace: "gros-corequiero-qas"
+  labels:
+    "3scale.bancogalicia.com.ar/migrated-from": "3scale"
+    "3scale.bancogalicia.com.ar/api-id": "gros-corequiero_quiero-portal-bff"
+    "3scale.bancogalicia.com.ar/tenant": "b2c"
+    "3scale.bancogalicia.com.ar/product-id": "10782"
+    "3scale.bancogalicia.com.ar/sigla": "gros"
+spec:
+  parentRefs:
+  - group: "gateway.networking.k8s.io"
+    kind: "Gateway"
+    name: "gw-apps5"
+    namespace: "gros-corequiero-qas"
+  hostnames:
+  - "gros-corequiero-b2c-homo.apps.paas-qas.bancogalicia.com.ar"
+  rules:
+  - matches:
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/fisicos"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/millas/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/adhesiones$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/solidarios/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/comodines/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros-paas/contratos/[^/]+/preferencias$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/viajes"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/ahorros/[^/]+$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/recargas/celulares"
+      method: "POST"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/solidarios"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/preferencias$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/fisicos/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/posdatados/[^/]+$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/cupones"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/viajes/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/ahorros/[^/]+$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/partners/galicia/miembros/[^/]+$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/millas/smiles"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/telefonos-contacto$"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/telefonos-contacto$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/millas/[^/]+$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/vouchers"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/domicilios$"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/puntos/contratos/[^/]+/extractos-puntos/acumulaciones/vencimientos$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/solidarios/[^/]+$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/contratos/datos-miembro"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/millas/iberia"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/reservas/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/programas/[^/]+/partners/[^/]+/inscripciones$"
+      method: "POST"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/millas/aerolineas-argentinas"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/recargas/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes-paas/contratos/[^/]+/puntos/creditos$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/comodines/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes-paas/contratos/[^/]+/puntos/debitos$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/ahorros"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/proveedores/[^/]+/vouchers/viajes$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/posdatados/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/favoritos$"
+      method: "PUT"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/posdatados"
+      method: "POST"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/recargas/tarjetas"
+      method: "POST"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/recargas/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros-paas/contratos/[^/]+/favoritos$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/comodines"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/cupones/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/medios-de-pago$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/fisicos/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros-paas/contratos/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/cupones/[^/]+$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/domicilios$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/partners/[^/]+/adhesiones/[^/]+/contrato$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/catalogo/beneficios/[^/]+/meta-datos$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/consumos/[^/]+$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/puntos/contratos/[^/]+/resumen-puntos$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/tiendas/aper/[^/]+$"
+      method: "DELETE"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/vouchers/tiendas/aper/[^/]+$"
+      method: "PUT"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/canjes/contratos/[^/]+/consumos$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/canjes/tiendas/aper"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/fecha-inactividad$"
+      method: "PUT"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/canjes/voucher/estados"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/reglas"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/promociones/[^/]+/activacion$"
+      method: "PUT"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/productos/tipos"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/productos"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/promociones/[^/]+/productos/[^/]+$"
+      method: "DELETE"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/acciones/[^/]+$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/condiciones/[^/]+$"
+      method: "DELETE"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/promociones/[^/]+/reglas$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/promociones"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros-paas/partners/[^/]+/adhesiones/[^/]+/contrato$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/promociones/[^/]+/productos$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/acciones/[^/]+$"
+      method: "DELETE"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/operadores"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/entidades"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/condiciones/[^/]+$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/promociones/[^/]+/productos$"
+      method: "POST"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/acciones/tipos"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/columnas"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/condiciones$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/comparadores"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/condiciones$"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/acciones$"
+      method: "POST"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/promociones"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/promociones/[^/]+$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/entidades/[^/]+/atributos$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+/acciones$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/reglas/[^/]+$"
+      method: "DELETE"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/estados"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/telefonos-recarga$"
+      method: "GET"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/copias/promociones/[^/]+$"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/programas/[^/]+/costos/reales$"
+      method: "PUT"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/telefonos-recarga$"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/acumulaciones/simulaciones/acumulaciones/pilotos/[^/]+$"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/monedas/tipos"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/partners"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/usuarios/aprobadores/[^/]+$"
+      method: "PUT"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/acumulaciones/pilotos"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/acumulaciones/pilotos/estados/aprobacion"
+      method: "PUT"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/acumulaciones/acumulaciones/pilotos/estados/anulacion"
+      method: "PUT"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/programas/costos/reales"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/usuarios/aprobadores"
+      method: "POST"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/segmentos"
+      method: "GET"
+    - path:
+        type: "Exact"
+        value: "/api/quiero-portal/miembros/usuarios"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+  - matches:
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/tarjetas-transporte$"
+      method: "POST"
+    - path:
+        type: "RegularExpression"
+        value: "/api/quiero-portal/miembros/contratos/[^/]+/tarjetas-transporte$"
+      method: "GET"
+    filters:
+    - type: "URLRewrite"
+      urlRewrite:
+        hostname: "bff-quiero-portal.galiciabanco.com.ar"
+    backendRefs:
+    - group: ""
+      kind: "Service"
+      name: "s2s-ingress-istio"
+      namespace: "gateways"
+      port: 443
+      weight: 1
+---
+apiVersion: "gateway.networking.k8s.io/v1beta1"
+kind: "ReferenceGrant"
+metadata:
+  name: "apim-gros-corequiero-qas"
+  namespace: "gateways"
+spec:
+  from:
+  - group: "gateway.networking.k8s.io"
+    kind: "HTTPRoute"
+    namespace: "gros-corequiero-qas"
+  to:
+  - group: ""
+    kind: "Service"
+    name: "s2s-ingress-istio"

@@ -1,0 +1,125 @@
+# Contrato con el API Publisher de APIM
+
+Estado: firma recibida de APIM (octubre 2026); la parte de publicación del service todavía no está
+implementada. La firma completa está en [`apim-publisher.openapi.json`](./apim-publisher.openapi.json).
+
+## Endpoint
+
+`POST /v1/kuadrant/manifests/publish` clona el repo fuente (con el OpenAPI en la raíz), genera
+`httproute.yaml`, `ratelimitpolicy.yaml`, `authpolicy.yaml` y `apiproduct.yaml`, los publica en
+`clusters/{cluster}/apis/{namespace}/{name}` del repo de manifiestos del ambiente y después sigue Argo CD de
+forma asíncrona: si sincroniza registra la API (`Synced` / `Registered`); si falla o vence el timeout borra
+los manifiestos (`RolledBack`).
+
+Respuestas: `200` con `status` `commited` / `synced` / `canceled`, o `400` con `{status: "error", message}`
+para validación o fallas del workflow (clone, push).
+
+La firma no declara autenticación: el service manda `Authorization: Bearer` solo si el agente tiene
+`APIM_PUBLISHER_TOKEN`. El body exige `origen`; el service manda `nullplatform`.
+
+`callbackUrl` está en la firma: APIM manda ahí el resultado final (`Synced`, `Registered` o `RolledBack`),
+con el formato del mini doc de avisos (`PATCH https://api.nullplatform.com/service/{service_id}/action/{action_id}`).
+
+## De dónde sale cada campo (notas de la reunión)
+
+| Campo | De dónde sale |
+|---|---|
+| `organization`, `repository` | Org y repo de la API que se publica. |
+| `branch` / `tag` / `commit` | La versión que se publica; uno de los tres (precedencia branch, tag, commit). |
+| `environment` | Hoy no se publica en `dev`. |
+| `tenant` | `b2b` o `b2c`. **A investigar de dónde sale**; por ahora todo `b2c`. |
+| `cluster` | Nombre del cluster donde vive la API publicada. |
+| `legajo` | El del usuario que publica (`l#######`). |
+| `metadata.name` | Nombre de la API = nombre del repo. |
+| `metadata.namespace` | Namespace donde está la app en el cluster. |
+| `metadata.labels.app` | Nombre del repo. |
+| `metadata.parentRefs` | Sale de una API de scheduler que todavía no existe (la están armando; van a pasar un mock). |
+
+## Respuesta que usamos
+
+- `hostname`: para mostrarlo en la UI.
+- `apiId` (nombre de la API + namespace + tenant): hay que guardarlo para republicar y para dar de baja.
+- Van a agregar los métodos que se publican (salen del swagger del repo).
+
+## Pendiente de APIM
+
+- **Republicar**: cuando cambia el swagger del repo hay que volver a publicar desde nullplatform. No está
+  implementado; Fer pidió que una actualización de commit sobre la misma API la republique (va a ser un
+  endpoint nuevo, con el `apiId`).
+- **Delete**: un endpoint de baja que reciba solo el `apiId`.
+
+## Pedidos a APIM que salen de la implementación
+
+- `callbackUrl` en el publish, con el formato del mini doc de avisos (el usuario ya lo pidió).
+- Endpoint de baja por `apiId`.
+- En el API Subscriber: aceptar el `apiId` en el pedido de suscripción y rechazar el RITM si es de otra API.
+  Sin eso, un link a la API X con un RITM aprobado para la API Y suscribe a Y.
+
+## Decisión vigente (2026-10-20)
+
+APIM genera su propio HTTPRoute y hace el `URLRewrite`: el publish manda en `metadata.backend` el **gateway
+privado** (`kind: Service`, `name`, `namespace`, `port`) y, en `metadata.backend.destinationFqdn`, el dominio del
+scope (`<app>-<scope>.ms.ws.bancogalicia.com.ar`, sin esquema: va directo como `hostname` del `URLRewrite`). Cada regla de la ruta de APIM reescribe el host a ese
+dominio y manda el pedido al gateway, que lo entrega a la ruta del scope: siempre llega al despliegue activo,
+también durante un blue/green, sin republicar.
+
+```json
+"backend": {
+  "kind": "Service",
+  "name": "gateway-private",
+  "port": 8080,
+  "namespace": "gateways",
+  "destinationFqdn": "<app-name>-<scope-name>.ms.ws.bancogalicia.com.ar"
+}
+```
+
+Pendiente del lado de APIM y del cluster: el `ReferenceGrant` en `gateways` para el `backendRef` entre
+namespaces, el TLS hacia el gateway si el puerto es HTTPS, y que la AuthPolicy del scope acepte ese segundo
+paso (con s2s activo, el validador de la ruta del scope rechazó al consumidor con 401 `x-egress-token` en
+`gal-kuadrant-poc`).
+
+Alternativas evaluadas:
+- Mandar el Service del despliegue activo (decisión del 2026-10-19): el backend queda desactualizado con cada
+  deploy nuevo del scope.
+- Colgar las políticas de la ruta del scope (abajo): funciona, pero exige `merge`, `when` y llevar las
+  operaciones del swagger a la autorización.
+
+## Propuesta: colgar las políticas de la ruta del scope (probado el 2026-10-19)
+
+En lugar de generar un HTTPRoute propio (que tendría que volver a entrar al Gateway para llegar al scope),
+APIM cuelga sus políticas del HTTPRoute que ya genera el deploy de nullplatform para el scope en el Gateway de
+ingreso (`k-8-s-<scope>-<id>-internal`); el publish manda el nombre de esa ruta.
+
+Esa ruta también la usa el tráfico s2s, que tiene su propia AuthPolicy (el validador de `x-egress-token`). Se
+probó en `gal-kuadrant-poc` (Kuadrant v1.5.2) con una AuthPolicy como la de APIM (`app_key` + autorización por
+`app_id`) sobre `payments/k-8-s-eks-1049050904-internal`:
+
+| Configuración | s2s | `app_key` + `app_id` correctos | `app_key` de otra app | sin credencial | `x-egress-token` inventado |
+|---|---|---|---|---|---|
+| sin policy de APIM (línea de base) | 200 | 401 | 401 | 401 | 401 |
+| las dos `atomic` (default) | **401** | 200 | 401 | 401 | 401 |
+| APIM `merge`, validador `atomic` | **401** | 200 | 401 | 401 | — |
+| las dos `merge`, authz de APIM sin `when` | **403** | 200 | 403 | 401 | 401 |
+| **las dos `merge`, authz de APIM con `when`** | **200** | **200** | **403** | **401** | **401** |
+
+Con `atomic`, dos AuthPolicies sobre la misma ruta no se combinan: la más nueva deja a la otra `Overridden`, así
+que la de APIM además **apaga el validador de s2s**. Funciona solo así:
+
+- **las dos** AuthPolicies declaran `spec.defaults.strategy: merge` (alcanza con que una sea `atomic` para que
+  la pisen);
+- los nombres de las reglas no se repiten entre las dos políticas (el merge es por nombre);
+- las reglas de **autorización** de APIM llevan `when: has(request.headers.app_key)`: en `merge` las
+  autenticaciones se combinan en OR pero las autorizaciones en AND, y sin el `when` la de `app_id` rechaza al
+  tráfico s2s. La del validador ya tiene su `when` sobre el `iss`.
+
+Pedido a APIM: generar la AuthPolicy (y la RateLimitPolicy) con `defaults.strategy: merge`, nombres de reglas
+propios y `when` en sus autorizaciones, y aceptar en el publish el nombre del HTTPRoute de destino en lugar de
+generar uno. Del lado nuestro, el validador de `s2s-traffic-migrator` tiene que pasar a `defaults` con
+`strategy: merge`.
+
+## Para discutir cuando hagamos la publicación en el service
+
+- Cómo tener aprobaciones para QA / producción (lo preguntaron en la reunión).
+- No hay casos de error que tenga que manejar el service más allá de `400`.
+- De dónde sale el `tenant`.
+- Cómo se consume la API de scheduler para `parentRefs`.
