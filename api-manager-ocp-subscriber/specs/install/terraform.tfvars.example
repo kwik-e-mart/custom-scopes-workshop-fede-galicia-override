@@ -1,0 +1,6 @@
+np_api_key = "REEMPLAZAR_CON_LA_API_KEY_DEL_PROVIDER"
+nrn        = "organization=REEMPLAZAR:account=REEMPLAZAR"
+
+tags_selectors = {
+  role = "REEMPLAZAR"
+}

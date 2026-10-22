@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail_external() {
+  echo "subscriber: $1" >&2
+  exit 1
+}
+
+for name in API_SUBSCRIBER_URL API_SUBSCRIBER_TOKEN; do
+  if [ -z "${!name-}" ]; then
+    fail_external "el agente no tiene configurada la variable $name."
+  fi
+done
+if [[ "$API_SUBSCRIBER_URL" != https://* ]]; then
+  fail_external "API_SUBSCRIBER_URL tiene que ser https."
+fi
+
+context=$(printf %s "${NP_ACTION_CONTEXT-}" | sed "s/^'//;s/'$//")
+action=$(printf %s "$context" | jq -r '.notification.action // .action // empty' 2>/dev/null) || action=""
+if [ "$action" != "list-apim-plans" ]; then
+  fail_external "acción de external context desconocida: '$action'."
+fi
+
+response=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" \
+  | curl -sS --config - --connect-timeout 10 --max-time 30 -w '\n%{http_code}' \
+    -X GET "$API_SUBSCRIBER_URL/v1/plans" -H "Accept: application/json") || response=$'\n000'
+code="${response##*$'\n'}"
+body="${response%$'\n'*}"
+
+if [[ ! "$code" =~ ^2 ]]; then
+  fail_external "GET /v1/plans respondió HTTP $code: $(printf %s "$body" | head -c 300 | tr -d '\000-\011\013-\037\177')"
+fi
+
+plans=$(printf %s "$body" | jq -ce 'if (.items | type) == "array" then {plans: (.items | map({id} + (if .maxTps != null then {maxTps} else {} end)))} else error("sin items") end' 2>/dev/null) \
+  || fail_external "GET /v1/plans no devolvió una lista de planes en items."
+
+printf '%s\n' "$plans"

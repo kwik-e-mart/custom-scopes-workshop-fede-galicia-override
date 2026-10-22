@@ -1,0 +1,3 @@
+#!/bin/bash
+set -euo pipefail
+echo "subscriber: el link no cambia nada en APIM; la suscripción es del namespace." >&2

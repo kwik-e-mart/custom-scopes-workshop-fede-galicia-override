@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHANGE_PLAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$CHANGE_PLAN_DIR/subscriber_lib"
+
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+change_plan() {
+  require_agent_config
+  load_notification
+
+  local service_id action_id subscription_id plan_id
+  service_id=$(notification_field '.service.id')
+  action_id=$(notification_field '.id')
+  subscription_id=$(notification_field '.service.attributes.subscription_id')
+  plan_id=$(notification_field '.parameters.plan_id')
+
+  require_action_ids "$service_id" "$action_id"
+  if [ -z "$subscription_id" ]; then
+    fail "subscriber: esta instancia no tiene subscription_id; la suscripción nunca se dio de alta."
+  fi
+  require_subscription_id_format "$subscription_id"
+  if [ -z "$plan_id" ]; then
+    fail "subscriber: falta plan_id en el pedido."
+  fi
+  require_plan_id_format "$plan_id"
+  require_provider_namespace
+
+  lookup_subscription_owner "$subscription_id"
+  if [ -z "$SUBSCRIPTION_OWNER" ]; then
+    fail "subscriber: APIM no conoce la suscripción $subscription_id; no hay plan que cambiar."
+  fi
+  require_owned_by_namespace "$subscription_id" "$PROVIDER_NAMESPACE"
+
+  local body
+  body=$(jq -nc --arg plan_id "$plan_id" --arg callback "$(callback_url "$service_id" "$action_id")" \
+    '{planId: $plan_id, callbackUrl: $callback}')
+
+  log info "subscriber: cambiando el plan de $subscription_id a $plan_id."
+  apim_request PATCH "/v1/subscriptions/$subscription_id" "$body" "$action_id"
+
+  local results operation_id
+  case "$APIM_HTTP_CODE" in
+    202)
+      operation_id=$(printf %s "$APIM_BODY" | jq -r '.id // empty')
+      results=$(jq -nc --arg op "$operation_id" '{operation_id: $op}')
+      report_progress "Cambio de plan en curso (operación $operation_id)." "$results" \
+        || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    *)
+      fail "subscriber: APIM rechazó el cambio de plan (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
+      ;;
+  esac
+}
+
+change_plan
