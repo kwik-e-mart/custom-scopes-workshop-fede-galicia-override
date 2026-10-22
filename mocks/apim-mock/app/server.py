@@ -249,14 +249,9 @@ def api_object_paths(namespace, name):
 
 
 def destination_host(destination):
-    if not isinstance(destination, str):
+    if not isinstance(destination, str) or not HOSTNAME_PATTERN.fullmatch(destination):
         return None
-    parsed = urllib.parse.urlparse(destination)
-    if parsed.scheme != "https" or parsed.path not in ("", "/") or parsed.query or parsed.params or parsed.fragment:
-        return None
-    if parsed.port is not None or parsed.username or not parsed.hostname:
-        return None
-    return parsed.hostname if HOSTNAME_PATTERN.fullmatch(parsed.hostname) else None
+    return destination
 
 
 def api_manifests(publication, route_paths=()):
@@ -318,7 +313,7 @@ class App:
             if operation.get("kind") == "planChange":
                 self.schedule(self.complete_plan_change, operation["id"])
         for publication in list(self.state["publications"].values()):
-            if publication.get("status") == "pushed":
+            if publication.get("status") == "commited":
                 self.schedule(self.complete_publication, publication["apiId"], publication["ref"])
 
     def schedule(self, fn, *args):
@@ -666,6 +661,8 @@ class App:
         return 202, public_operation(operation)
 
     def validate_publication(self, body):
+        if not is_text(body.get("origen")):
+            return "Falta origen."
         if not is_text(body.get("tenant")):
             return "El tenant de publicación es obligatorio."
         for field in ("organization", "repository", "environment", "cluster"):
@@ -701,7 +698,7 @@ class App:
         if backend is not None and not (isinstance(backend, dict) and is_text(backend.get("name"))):
             return "metadata.backend tiene que tener al menos name."
         if backend is not None and "destinationFqdn" in backend and not destination_host(backend["destinationFqdn"]):
-            return "metadata.backend.destinationFqdn tiene que ser https://<hostname>, sin path ni puerto."
+            return "metadata.backend.destinationFqdn tiene que ser un hostname, sin esquema, path ni puerto."
         if not NAMESPACE_PATTERN.fullmatch(metadata["namespace"]) or not self.namespace_allowed_for_objects(metadata["namespace"]):
             return f"El mock no puede publicar en el namespace {metadata['namespace']}."
         return None
@@ -725,7 +722,7 @@ class App:
         hostnames = metadata.get("hostnames") or [f"{namespace}-{name}-{tenant}-{environment}.{self.settings['domain']}"]
         callback_url = body.get("callbackUrl")
         publication = {
-            "apiId": api_id, "ref": ref, "status": "pushed", "hostname": hostnames[0], "namespace": namespace,
+            "apiId": api_id, "ref": ref, "status": "commited", "hostname": hostnames[0], "namespace": namespace,
             "apiName": name, "tenant": tenant, "environment": environment,
             "repository": f"{body['organization']}/{body['repository']}",
             "manifestPath": f"clusters/{body['cluster']}/apis/{namespace}/{name}",
@@ -737,7 +734,7 @@ class App:
         self.state["publications"][api_id] = publication
         self.save()
         response = {
-            "status": "pushed",
+            "status": "commited",
             "message": "La publicación fue pusheada correctamente a Git y Argo sigue sincronizándose.",
             "apiId": api_id, "hostname": publication["hostname"], "namespace": namespace, "apiName": name,
             "tenant": tenant, "environment": environment, "repository": publication["repository"],
@@ -779,13 +776,13 @@ class App:
     def complete_publication(self, api_id, ref):
         with self.lock:
             publication = self.state["publications"].get(api_id)
-            if not publication or publication["ref"] != ref or publication["status"] != "pushed":
+            if not publication or publication["ref"] != ref or publication["status"] != "commited":
                 return
             pending = dict(publication)
         applied = pending["repository"].split("/", 1)[1].startswith("fail-") is False and self.apply_api_objects(pending)
         with self.lock:
             publication = self.state["publications"].get(api_id)
-            current = publication and publication["ref"] == ref and publication["status"] == "pushed"
+            current = publication and publication["ref"] == ref and publication["status"] == "commited"
             if not current:
                 notification = None
             elif not applied:

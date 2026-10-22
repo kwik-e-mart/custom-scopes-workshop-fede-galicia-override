@@ -461,6 +461,7 @@ def publish_body(**overrides):
         "branch": "master",
         "environment": "qas",
         "tenant": "b2c",
+        "origen": "nullplatform",
         "cluster": "cluster1",
         "legajo": "l0510541",
         "callbackUrl": CALLBACK,
@@ -484,7 +485,7 @@ class PublisherTest(unittest.TestCase):
         app, _, _, _ = make_app()
         status, body = call(app, "POST", PUBLISH, publish_body())
         self.assertEqual(status, 200)
-        self.assertEqual(body["status"], "pushed")
+        self.assertEqual(body["status"], "commited")
         self.assertEqual(body["apiId"], "apim-svc-1")
         self.assertEqual(body["hostname"], "test-kuadrant-test-kuadrant-b2c-qas.bancogalicia.com.ar")
         self.assertEqual(body["manifestPath"], "clusters/cluster1/apis/test-kuadrant/test-kuadrant")
@@ -776,7 +777,7 @@ class PublishedObjectsTest(unittest.TestCase):
         app, k8s, _, scheduler = make_app()
         body = publish_body()
         body["metadata"]["backend"] = {"kind": "Service", "name": "gateway-private", "namespace": "gateways", "port": 8080,
-                                       "destinationFqdn": "https://test-kuadrant-main.ms.ws.bancogalicia.com.ar"}
+                                       "destinationFqdn": "test-kuadrant-main.ms.ws.bancogalicia.com.ar"}
         call(app, "POST", PUBLISH, body)
         scheduler.run_all()
         rule = k8s.objects[ROUTE]["spec"]["rules"][0]
@@ -798,14 +799,22 @@ class PublishedObjectsTest(unittest.TestCase):
         scheduler.run_all()
         self.assertNotIn("filters", k8s.objects[ROUTE]["spec"]["rules"][0])
 
-    def test_un_destino_que_no_es_https_con_host_responde_400(self):
-        for fqdn in ["http://app.bancogalicia.com.ar", "app.bancogalicia.com.ar", "https://", "https://app.bancogalicia.com.ar/path", "https://a b", 8080]:
+    def test_un_destino_que_no_es_un_hostname_responde_400(self):
+        for fqdn in ["https://app.bancogalicia.com.ar", "app.bancogalicia.com.ar/path", "app.bancogalicia.com.ar:443", "a b", "", 8080]:
             app, _, _, _ = make_app()
             body = publish_body()
             body["metadata"]["backend"] = {"kind": "Service", "name": "gateway-private", "namespace": "gateways", "port": 8080, "destinationFqdn": fqdn}
             status, response = call(app, "POST", PUBLISH, body)
             self.assertEqual(status, 400, fqdn)
             self.assertIn("destinationFqdn", response["message"], fqdn)
+
+    def test_sin_origen_responde_400(self):
+        app, _, _, _ = make_app()
+        body = publish_body()
+        del body["origen"]
+        status, response = call(app, "POST", PUBLISH, body)
+        self.assertEqual(status, 400)
+        self.assertIn("origen", response["message"])
 
     def test_el_backend_del_pedido_reemplaza_al_default(self):
         app, k8s, _, scheduler = make_app()
