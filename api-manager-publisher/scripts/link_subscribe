@@ -19,9 +19,7 @@ link_subscribe() {
   require_action_ids "$link_id" "$action_id"
   require_provider_namespace
 
-  local credential_env
-  credential_env=$(yq -r '.configuration.APIM_CREDENTIAL_ENV | map(.name) | join(" y ")' "$LINK_SUBSCRIBE_DIR/../override/values.yaml")
-  SUBSCRIPTION_CREDENTIAL_HINT="Tus deployments reciben la credencial como $credential_env a partir del próximo deploy: mandalas en los headers app_id y app_key."
+  SUBSCRIPTION_CREDENTIAL_HINT="Tus deployments reciben la credencial como APIM_APP_ID y APIM_APP_KEY a partir del próximo deploy: mandalas en los headers app_id y app_key."
 
   request_subscription \
     "$(echo "$params" | jq -r '.approval_ref // empty')" \
