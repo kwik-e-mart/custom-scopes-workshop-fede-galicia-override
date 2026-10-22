@@ -66,7 +66,7 @@ setup() {
 
 @test "el link y el override identifican al servicio con el mismo provider" {
   [ "$(jq -r '.selectors.provider' "$SERVICE")" = "API Manager" ]
-  [ "$(yq -r '.configuration.APIM_PUBLISHER_PROVIDER' "${BATS_TEST_DIRNAME}/../override/values.yaml")" = "API Manager" ]
+  [ "$(yq -r '.configuration.APIM_PUBLISHER_PROVIDER' "${BATS_TEST_DIRNAME}/../../override/values.yaml")" = "API Manager" ]
 }
 
 @test "el faq del link explica las env vars de la credencial" {
