@@ -43,6 +43,7 @@ publish() {
   require_source_repository "$(echo "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
   require_provider_namespace
   require_cluster_name
+  require_sigla_and_project
   require_parent_refs
   require_scope_destination "$(echo "$params" | jq -r '.scope // empty')" "$(echo "${CONTEXT-}" | jq -r '.application.id // empty')"
   require_gateway_backend
@@ -57,6 +58,8 @@ publish() {
     --arg environment "$PUBLISH_ENVIRONMENT" \
     --arg tenant "$PUBLISH_TENANT" \
     --arg cluster "$CLUSTER_NAME" \
+    --arg sigla "$PUBLISH_SIGLA" \
+    --arg project "$PUBLISH_PROJECT" \
     --arg legajo "$legajo" \
     --arg window "$window" \
     --arg hits "$hits" \
@@ -66,7 +69,7 @@ publish() {
     --arg destination "$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
     '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
-      tenant: $tenant, origen: "nullplatform", cluster: $cluster, callbackUrl: $callback,
+      tenant: $tenant, origen: "nullplatform", sigla: $sigla, project: $project, cluster: $cluster, callbackUrl: $callback,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $legajo == "" then {} else {legajo: $legajo} end)

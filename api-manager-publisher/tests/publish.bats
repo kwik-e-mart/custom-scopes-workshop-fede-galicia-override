@@ -20,8 +20,9 @@ set_request() {
 }
 
 set_context() {
-  CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" \
-    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":{cluster:({namespace:"payments"} + (if $cluster == "" then {} else {id:$cluster} end))}}}')
+  CONTEXT=$(jq -nc --arg repo "$1" --arg cluster "${2-gal-kuadrant-poc}" --arg project "${3-zosc-pagos}" \
+    '{application:{id:20,repository_url:$repo},providers:{"container-orchestration":{cluster:({namespace:"payments"} + (if $cluster == "" then {} else {id:$cluster} end))}}}
+     + (if $project == "" then {} else {tags:{namespace:$project}} end)')
 }
 
 pushed() {
@@ -35,7 +36,7 @@ pushed() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c","origen":"nullplatform",
+{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
@@ -202,6 +203,40 @@ JSON
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -r .cluster "$CURL_BODIES_DIR/0.json")" = "cluster1" ]
+}
+
+@test "la sigla es la primera parte del namespace sin pasarla a mayusculas" {
+  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc PLCL-PlatformOps
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "PLCL" ]
+  [ "$(jq -r .project "$CURL_BODIES_DIR/0.json")" = "PLCL-PlatformOps" ]
+}
+
+@test "sin namespace en el contexto falla sin llamar a APIM nombrando los overrides" {
+  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc ""
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PROJECT* ]] || false
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_SIGLA* ]]
+}
+
+@test "APIM_SIGLA y APIM_PROJECT reemplazan los valores del namespace" {
+  export APIM_SIGLA=arqc APIM_PROJECT=arqc-kuadrant
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
+  [ "$(jq -r .project "$CURL_BODIES_DIR/0.json")" = "arqc-kuadrant" ]
+}
+
+@test "los overrides alcanzan aunque el contexto no traiga namespace" {
+  set_context https://github.com/zosc-zosconnect/test-kuadrant gal-kuadrant-poc ""
+  export APIM_SIGLA=arqc APIM_PROJECT=arqc-kuadrant
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
 }
 
 @test "acepta la url del repo con .git" {
