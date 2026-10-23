@@ -43,7 +43,7 @@ publish() {
   require_source_repository "$(echo "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
   require_provider_namespace
   require_cluster_name
-  require_sigla_and_project
+  require_sigla_and_project "$(notification_field '.tags.namespace')"
   require_parent_refs
   require_scope_destination "$(echo "$params" | jq -r '.scope // empty')" "$(echo "${CONTEXT-}" | jq -r '.application.id // empty')"
   require_gateway_backend

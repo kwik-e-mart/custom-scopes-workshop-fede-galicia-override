@@ -32,8 +32,8 @@ Qué se manda a APIM y de dónde sale:
 | `branch` / `tag` / `commit` | formulario |
 | `environment` | dimensión `environment` del service (`dev`, `int`, `qas` o `prd`) |
 | `tenant` | `b2c` fijo por ahora |
-| `project` | tag `namespace` del contexto, o `APIM_PROJECT` |
-| `sigla` | primera parte del namespace (la misma que el label `sigla` del override, sin mayúsculas), o `APIM_SIGLA` |
+| `project` | tag `namespace` de la notificación de la acción, o `APIM_PROJECT` |
+| `sigla` | primera parte de ese namespace, sin pasarla a mayúsculas, o `APIM_SIGLA` |
 | `cluster` | `cluster.id` del provider de `container-orchestration` (el mismo que usa el s2s), o `APIM_CLUSTER_NAME` |
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |

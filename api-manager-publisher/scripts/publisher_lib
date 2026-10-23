@@ -42,10 +42,8 @@ require_cluster_name() {
 }
 
 require_sigla_and_project() {
-  local namespace
-  namespace=$(echo "${CONTEXT-}" | jq -r '[.namespace.slug?, .tags.namespace?] | map(select(type == "string" and . != "")) | first // empty' 2>/dev/null) || namespace=""
-  PUBLISH_PROJECT=$(echo "${CONTEXT-}" | jq -r '.tags.namespace // empty' 2>/dev/null) || PUBLISH_PROJECT=""
-  PUBLISH_SIGLA="${namespace%%-*}"
+  PUBLISH_PROJECT="$1"
+  PUBLISH_SIGLA="${1%%-*}"
   if [ -n "${APIM_PROJECT-}" ]; then
     PUBLISH_PROJECT="$APIM_PROJECT"
   fi
@@ -53,7 +51,7 @@ require_sigla_and_project() {
     PUBLISH_SIGLA="$APIM_SIGLA"
   fi
   if [ -z "$PUBLISH_PROJECT" ] || [ -z "$PUBLISH_SIGLA" ]; then
-    fail "publisher: el contexto no trae el namespace para la sigla y el project; configurá APIM_SIGLA y APIM_PROJECT en el agente."
+    fail "publisher: la notificación no trae el tag namespace para la sigla y el project; configurá APIM_SIGLA y APIM_PROJECT en el agente."
   fi
 }
 
