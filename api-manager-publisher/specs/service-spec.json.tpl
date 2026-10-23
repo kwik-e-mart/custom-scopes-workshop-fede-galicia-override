@@ -67,10 +67,19 @@
             "update"
           ]
         },
+        "rate_limit_enabled": {
+          "type": "boolean",
+          "title": "Limitar el tráfico total de la API",
+          "default": false,
+          "editableOn": [
+            "create",
+            "update"
+          ]
+        },
         "hits_per_window": {
           "type": "integer",
           "title": "Llamadas permitidas",
-          "description": "Opcional. Máximo de llamadas que acepta la API en el período elegido; va junto con el período.",
+          "description": "Máximo de llamadas que acepta la API en el período elegido, sumando a todos los suscriptores.",
           "minimum": 1,
           "editableOn": [
             "create",
@@ -80,7 +89,7 @@
         "window": {
           "type": "string",
           "title": "Período",
-          "description": "Opcional. Período en el que se cuentan las llamadas permitidas.",
+          "description": "Período en el que se cuentan las llamadas permitidas.",
           "oneOf": [
             {
               "const": "1s",
@@ -138,7 +147,7 @@
         "elements": [
           {
             "type": "Label",
-            "text": "## API Manager Publisher\n\n### FAQ\n\n**¿Cuándo tengo que usarlo?** Cuando querés que tu API quede publicada en el API Manager (Kuadrant) para que otras aplicaciones, tuyas o de otros equipos, la consuman con credenciales.\n\n**¿Qué hace el servicio?** Le pide al API Publisher de APIM que publique tu API a partir del OpenAPI (`openapi.yaml`, `openapi.yml` u `openapi.json`) que está en la raíz de tu repo, en la referencia que elijas. Solo quedan expuestos los paths y métodos del OpenAPI; lo que no está declarado sigue siendo inalcanzable. APIM además registra la API en el catálogo.\n\n**¿A dónde llega el tráfico?** Al scope que elijas: la API apunta al despliegue activo de ese scope.\n\n**¿Cuánto tarda?** La acción queda en curso hasta que APIM confirma que la API quedó registrada (unos minutos). Si algo falla, termina con el motivo.\n\n**¿Cómo hace otra app para consumirme?** Se linkea a este servicio con la solicitud aprobada en ServiceNow (RITM) y un plan. Queda suscripta y usa la credencial de su namespace (headers `app_id` y `app_key`).\n\n**¿Puedo cortarle el acceso a alguien?** Sí, borrando su link: se da de baja la suscripción si la creó ese link. La suscripción es del namespace, así que afecta a todas sus aplicaciones.\n\n**¿Cómo actualizo la API?** Con la acción de actualizar, eligiendo la nueva referencia del repo. Cada cambio del OpenAPI tiene que subir al menos la versión patch.\n\n**¿Tengo que cambiar algo en mi código?** No. Solo tener el OpenAPI en la raíz del repo.\n\n## Instrucciones\n\n- Elegí el scope que va a recibir el tráfico, el tipo de referencia (branch, tag o commit) y su nombre.\n\n- El límite de tráfico es opcional: si lo usás, completá las llamadas permitidas y el período.\n\n- Borrar el servicio todavía no despublica la API en APIM: pedí la baja al equipo de APIM.\n\n- Ante cualquier problema comunicarse con el equipo de soporte de plataforma",
+            "text": "## API Manager Publisher\n\n### FAQ\n\n**¿Cuándo tengo que usarlo?** Cuando querés que tu API quede publicada en el API Manager (Kuadrant) para que otras aplicaciones, tuyas o de otros equipos, la consuman con credenciales.\n\n**¿Qué hace el servicio?** Le pide al API Publisher de APIM que publique tu API a partir del OpenAPI (`openapi.yaml`, `openapi.yml` u `openapi.json`) que está en la raíz de tu repo, en la referencia que elijas. Solo quedan expuestos los paths y métodos del OpenAPI; lo que no está declarado sigue siendo inalcanzable. APIM además registra la API en el catálogo.\n\n**¿A dónde llega el tráfico?** Al scope que elijas: la API apunta al despliegue activo de ese scope.\n\n**¿Cuánto tarda?** La acción queda en curso hasta que APIM confirma que la API quedó registrada (unos minutos). Si algo falla, termina con el motivo.\n\n**¿Cómo hace otra app para consumirme?** Se linkea a este servicio con la solicitud aprobada en ServiceNow (RITM) y un plan. Queda suscripta y usa la credencial de su namespace (headers `app_id` y `app_key`).\n\n**¿Puedo cortarle el acceso a alguien?** Sí, borrando su link: se da de baja la suscripción si la creó ese link. La suscripción es del namespace, así que afecta a todas sus aplicaciones.\n\n**¿Cómo actualizo la API?** Con la acción de actualizar, eligiendo la nueva referencia del repo. Cada cambio del OpenAPI tiene que subir al menos la versión patch.\n\n**¿Tengo que cambiar algo en mi código?** No. Solo tener el OpenAPI en la raíz del repo.\n\n## Instrucciones\n\n- Elegí el scope que va a recibir el tráfico, el tipo de referencia (branch, tag o commit) y su nombre.\n\n- El límite de tráfico total de la API es opcional y está en la sección ADVANCED.\n\n- Borrar el servicio todavía no despublica la API en APIM: pedí la baja al equipo de APIM.\n\n- Ante cualquier problema comunicarse con el equipo de soporte de plataforma",
             "options": {
               "format": "markdown"
             }
@@ -160,12 +169,58 @@
             "scope": "#/properties/legajo"
           },
           {
-            "type": "Control",
-            "scope": "#/properties/hits_per_window"
-          },
-          {
-            "type": "Control",
-            "scope": "#/properties/window"
+            "type": "Categorization",
+            "options": {
+              "collapsable": {
+                "label": "ADVANCED",
+                "collapsed": true
+              }
+            },
+            "elements": [
+              {
+                "type": "Category",
+                "label": "Rate limit",
+                "elements": [
+                  {
+                    "type": "Label",
+                    "text": "Por defecto la API no tiene un rate limit propio: cada suscriptor ya tiene el suyo, según el plan que eligió al linkearse.\n\nEste rate limit es **global**: limita el tráfico de todos los suscriptores sumados. Usalo para proteger tu backend cuando la suma de los planes supera lo que soporta.",
+                    "options": {
+                      "format": "markdown"
+                    }
+                  },
+                  {
+                    "type": "Control",
+                    "scope": "#/properties/rate_limit_enabled"
+                  },
+                  {
+                    "rule": {
+                      "effect": "SHOW",
+                      "condition": {
+                        "scope": "#/properties/rate_limit_enabled",
+                        "schema": {
+                          "const": true
+                        }
+                      }
+                    },
+                    "type": "Control",
+                    "scope": "#/properties/hits_per_window"
+                  },
+                  {
+                    "rule": {
+                      "effect": "SHOW",
+                      "condition": {
+                        "scope": "#/properties/rate_limit_enabled",
+                        "schema": {
+                          "const": true
+                        }
+                      }
+                    },
+                    "type": "Control",
+                    "scope": "#/properties/window"
+                  }
+                ]
+              }
+            ]
           },
           {
             "type": "Control",
