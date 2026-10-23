@@ -22,16 +22,17 @@ setup() {
   LOCAL_IN=s2s-ingress-istio.gateways.svc.cluster.local
   LOCAL_IN_SVC=s2s-ingress-istio
   GW_NS=gateways
+  INGRESS_GW=s2s-ingress
   FQDN=gal-poc-reports-dev-cvbdn.galicia-poc.nullapps.io
 }
 
 # render <platform> <interceptions-json>
 render() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" '{
+  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" '{
     namespace:"payments", gateway_name:"egress-gw", gateway_class:"istio",
     listen_port:8080, token_duration:60, wristband_secret:"wristband-key-payments-g0",
     egress_issuer:"https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -59,11 +60,11 @@ render() {
 
 # Los archivos rendeados con contenido, en orden de aplicación (sólo el basename).
 rendered_files() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" '{
+  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" '{
     namespace:"payments", gateway_name:"egress-gw", gateway_class:"istio",
     listen_port:8080, token_duration:60, wristband_secret:"wristband-key-payments-g0",
     egress_issuer:"https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:"s2s-ingress", vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -950,4 +951,31 @@ sin_sigla() {
     gomplate -f "$rbac" | yq -N 'select(.kind == "ClusterRole") | .rules[].resources[]' | sort -u)
   [[ "$recursos" != *"pods/exec"* ]] || false
   [[ "$recursos" != *"pods/log"* ]]
+}
+
+@test "ningun workflow declara las variables de override: si las declara, el agente deja de poder pisarlas" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" declaradas
+  declaradas=$(grep -nE "^  [A-Z_]+_OVERRIDE:" "$dir/create.yaml" "$dir/delete.yaml" || true)
+  [ -z "$declaradas" ] || { echo "$declaradas" >&2; false; }
+}
+
+@test "build_context resuelve un override para cada valor del ingreso que cambia entre sustratos" {
+  local bc="${BATS_TEST_DIRNAME}/../scripts/k8s/build_context" v
+  for v in GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME LOCAL_INGRESS_HOST; do
+    grep -q "^if \[ -n \"\${${v}_OVERRIDE:-}\" \]; then$" "$bc" \
+      || { echo "falta el override de $v en build_context" >&2; false; }
+  done
+}
+
+@test "el parentRef de la route de ingreso apunta al Gateway configurado, no a un nombre fijo" {
+  INGRESS_GW=envoy GW_NS=envoy-ingress run render openshift "$(rule 0)"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute" and (.metadata.name | test("^s2s-ingress-"))) | .spec.parentRefs[0].name')" = "envoy" ] || false
+  [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute" and (.metadata.name | test("^s2s-ingress-"))) | .spec.parentRefs[0].namespace')" = "envoy-ingress" ]
+}
+
+@test "ningun manifiesto nombra al Gateway de ingreso con un literal" {
+  local dir="${BATS_TEST_DIRNAME}/../manifests" literales
+  literales=$(grep -rn 'name: s2s-ingress$' "$dir" || true)
+  [ -z "$literales" ] || { echo "$literales" >&2; false; }
 }

@@ -706,3 +706,62 @@ MOCK
   [[ "$output" == *"no se pudieron listar las HTTPRoute"* ]] || false
   [[ "$output" == *"sin que nadie valide el token"* ]]
 }
+
+leer_vars() {  # <nombres...>
+  local expr="" n
+  for n in "$@"; do expr="${expr}echo ${n}=\$${n}; "; done
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" run bash -c 'source "$1" >/dev/null; bash -c "$2"' _ "$BC" "$expr"
+}
+
+@test "el override del agente le gana al valor que fija el workflow" {
+  export GATEWAY_NAMESPACE=gateways GATEWAY_NAMESPACE_OVERRIDE=ingress-ocp
+  export INGRESS_GATEWAY_NAME=s2s-ingress INGRESS_GATEWAY_NAME_OVERRIDE=gateway-mesh
+  leer_vars GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"GATEWAY_NAMESPACE=ingress-ocp"* ]] || false
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=gateway-mesh"* ]]
+}
+
+@test "un override vacío no pisa el valor del workflow" {
+  export GATEWAY_NAMESPACE=gateways GATEWAY_NAMESPACE_OVERRIDE=""
+  export INGRESS_GATEWAY_NAME=s2s-ingress INGRESS_GATEWAY_NAME_OVERRIDE=""
+  export LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local LOCAL_INGRESS_HOST_OVERRIDE=""
+  leer_vars GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME LOCAL_INGRESS_HOST
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"GATEWAY_NAMESPACE=gateways"* ]] || false
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=s2s-ingress"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local"* ]]
+}
+
+@test "el override del host de ingreso se propaga al Service y a su namespace" {
+  export LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local
+  export LOCAL_INGRESS_HOST_OVERRIDE=gateway-mesh-istio.ingress-ocp.svc.cluster.local
+  leer_vars LOCAL_INGRESS_HOST LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LOCAL_INGRESS_SERVICE=gateway-mesh-istio"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_SERVICE_NAMESPACE=ingress-ocp"* ]]
+}
+
+@test "sin ningún override el resultado es el mismo que antes: EKS no se entera" {
+  leer_vars GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME LOCAL_INGRESS_HOST LOCAL_INGRESS_SERVICE_NAMESPACE
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"GATEWAY_NAMESPACE=gateways"* ]] || false
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=s2s-ingress"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_SERVICE_NAMESPACE=gateways"* ]]
+}
+
+@test "un override con un valor inválido aborta, igual que uno del workflow" {
+  export GATEWAY_NAMESPACE_OVERRIDE="Ingress OCP"
+  run_bc
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"gateway_namespace"* ]]
+}
+
+@test "el log dice qué valores pisó el entorno del agente" {
+  export GATEWAY_NAMESPACE_OVERRIDE=ingress-ocp
+  run_bc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"el entorno del agente pisa la configuración del workflow"* ]] || false
+  [[ "$output" == *"GATEWAY_NAMESPACE=ingress-ocp"* ]]
+}

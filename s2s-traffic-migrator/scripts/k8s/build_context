@@ -25,11 +25,16 @@ PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
 LISTEN_PORT="${LISTEN_PORT:-8080}"
 TOKEN_DURATION="${TOKEN_DURATION:-60}"
 GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
+OVERRIDES_ACTIVOS=""
 # El ingreso del sustrato opuesto. Es configuración del service y NO un campo del form: el dev
 # declara identidades de nullplatform, nunca direcciones de transporte.
 PEER_GATEWAY_HOST="${PEER_GATEWAY_HOST:-}"
 # El ingreso de ESTE cluster. Con origen EKS la rama no migrada también entra por un Gateway.
 LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
+if [ -n "${LOCAL_INGRESS_HOST_OVERRIDE:-}" ]; then
+  LOCAL_INGRESS_HOST="$LOCAL_INGRESS_HOST_OVERRIDE"
+  OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} LOCAL_INGRESS_HOST=${LOCAL_INGRESS_HOST}"
+fi
 LOCAL_INGRESS_TLS_MODE="${LOCAL_INGRESS_TLS_MODE-skip-verify}"
 LOCAL_INGRESS_SERVICE="${LOCAL_INGRESS_HOST%%.*}"
 LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_HOST#*.}"
@@ -37,6 +42,10 @@ LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_SERVICE_NAMESPACE%%.*}"
 # Namespace del Gateway de ingreso. Es `gateways` y no `istio-system` porque el template de
 # HTTPRoute de los scopes de nullplatform hardcodea ese namespace en su parentRef.
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
+if [ -n "${GATEWAY_NAMESPACE_OVERRIDE:-}" ]; then
+  GATEWAY_NAMESPACE="$GATEWAY_NAMESPACE_OVERRIDE"
+  OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} GATEWAY_NAMESPACE=${GATEWAY_NAMESPACE}"
+fi
 # La AuthPolicy que valida el wristband en el ingreso de ESTE cluster. La emite este service y
 # espera a que quede Enforced después de colgarle su route de ingreso: Kuadrant no aplica una
 # policy que no esté en el camino de ninguna route, y sin ese wait el destino aceptaría tráfico
@@ -66,6 +75,10 @@ PEER_JWKS_URL="${PEER_JWKS_URL:-}"
 JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-jwks-egress}"
 JWKS_IMAGE="${JWKS_IMAGE:-registry.access.redhat.com/ubi9/httpd-24:latest}"
 INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
+if [ -n "${INGRESS_GATEWAY_NAME_OVERRIDE:-}" ]; then
+  INGRESS_GATEWAY_NAME="$INGRESS_GATEWAY_NAME_OVERRIDE"
+  OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} INGRESS_GATEWAY_NAME=${INGRESS_GATEWAY_NAME}"
+fi
 # La AuthPolicy que firma el wristband a la salida. La crea el chart del namespace y su
 # `signingKeyRefs` es la fuente de verdad de cuál es la clave vigente.
 EGRESS_AUTHPOLICY="${EGRESS_AUTHPOLICY:-sign}"
@@ -466,6 +479,9 @@ export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
 export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME JWKS_IMAGE
 export EGRESS_AUTHPOLICY ISSUER_DOMAIN NAMESPACE_SETUP_ENABLED SIGLA
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
+if [ -n "$OVERRIDES_ACTIVOS" ]; then
+  log info "egress-interceptor: el entorno del agente pisa la configuración del workflow en:$OVERRIDES_ACTIVOS"
+fi
 log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \
   | while IFS= read -r RULE_LINE; do log info "$RULE_LINE"; done
