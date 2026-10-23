@@ -467,12 +467,12 @@ rule() {  # <percent> [service]
 
 # ── el ingreso de OpenShift lo declara el service, no el layer ────────────────
 
-@test "con origen OpenShift se emite la route de ingreso, en el namespace del Gateway" {
+@test "con origen OpenShift la route de ingreso vive en el namespace de la app, no en el del Gateway" {
   # Su backend es el alias `<svc>-local`, que también es del service. Declararla desde el layer
   # obligaba a crear los alias antes que nadie para que el backendRef resolviera.
   run render openshift "$(rule 100)"
   local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
-  [ "$(echo "$r" | yq '.metadata.namespace')" = "$GW_NS" ]
+  [ "$(echo "$r" | yq '.metadata.namespace')" = "payments" ]
   [ "$(echo "$r" | yq '.spec.parentRefs[0].name')" = "s2s-ingress" ]
   [ "$(echo "$r" | yq '.spec.parentRefs[0].namespace')" = "$GW_NS" ]
   [ "$(echo "$r" | yq '.spec.rules[0].matches[0].headers[0].name')" = "X-NP-SVC" ]
@@ -484,7 +484,7 @@ rule() {  # <percent> [service]
   run render openshift "$(rule 100)"
   local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
   [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "reports-local" ]
-  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].namespace')" = "payments" ]
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].namespace')" = "null" ]
 }
 
 @test "la route de ingreso sella la respuesta con el cluster que atendió" {
@@ -978,4 +978,29 @@ sin_sigla() {
   local dir="${BATS_TEST_DIRNAME}/../manifests" literales
   literales=$(grep -rn 'name: s2s-ingress$' "$dir" || true)
   [ -z "$literales" ] || { echo "$literales" >&2; false; }
+}
+
+@test "en OpenShift la route de ingreso y su validador viven en el mismo namespace que la app" {
+  INGRESS_GW=ingress GW_NS=envoy-ingress run render openshift "$(rule 0)"
+  [ "$status" -eq 0 ]
+  local rt pol
+  rt=$(echo "$output" | yq -N 'select(.kind == "HTTPRoute" and (.metadata.name | test("^s2s-ingress-"))) | .metadata.namespace')
+  pol=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .metadata.namespace')
+  [ "$rt" = "payments" ] || false
+  [ "$pol" = "payments" ] || false
+  [ "$rt" = "$pol" ]
+}
+
+@test "la route de ingreso cruza al Gateway por parentRef pero su backend es local: sin ReferenceGrant" {
+  INGRESS_GW=ingress GW_NS=envoy-ingress run render openshift "$(rule 0)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" HTTPRoute s2s-ingress-reports)
+  [ "$(echo "$r" | yq '.spec.parentRefs[0].namespace')" = "envoy-ingress" ] || false
+  [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].namespace')" = "null" ]
+}
+
+@test "el reconcile no escribe en el namespace del Gateway de ingreso" {
+  local rec="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile" usos
+  usos=$(grep -n 'kubectl -n "\$GATEWAY_NAMESPACE"' "$rec" || true)
+  [ -z "$usos" ] || { echo "$usos" >&2; false; }
 }
