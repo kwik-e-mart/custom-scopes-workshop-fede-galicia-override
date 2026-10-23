@@ -69,7 +69,7 @@
         },
         "rate_limit_enabled": {
           "type": "boolean",
-          "title": "Limitar el tráfico total de la API",
+          "title": "Habilitar rate limit global",
           "default": false,
           "editableOn": [
             "create",
@@ -183,7 +183,7 @@
                 "elements": [
                   {
                     "type": "Label",
-                    "text": "Por defecto la API no tiene un rate limit propio: cada suscriptor ya tiene el suyo, según el plan que eligió al linkearse.\n\nEste rate limit es **global**: limita el tráfico de todos los suscriptores sumados. Usalo para proteger tu backend cuando la suma de los planes supera lo que soporta.",
+                    "text": "Por defecto, la API no define un rate limit global: cada suscriptor elige su plan de consumo al momento de linkear.\n\nEl rate limit global permite restringir el total agregado de requests que acepta la API, considerando todos sus suscriptores.",
                     "options": {
                       "format": "markdown"
                     }
