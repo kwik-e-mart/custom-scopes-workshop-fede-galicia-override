@@ -1,5 +1,7 @@
 {{- /*
-Sólo con origen OpenShift, y en el namespace del Gateway de INGRESO, no en el de la app.
+Sólo con origen OpenShift, y en el namespace de la app: el listener del Gateway de ingreso
+acepta routes de los namespaces aplicativos y no del suyo, y así el backendRef queda local y no
+necesita ReferenceGrant.
 Es la contracara de 50-: lo que EKS manda para acá tiene que encontrar por dónde entrar.
 
 Lo declara el service y no el layer porque su backend es el alias `<svc>-local`, que también es
@@ -18,7 +20,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: {{ printf "s2s-ingress-%s" $svc | quote }}
-  namespace: {{ $.gateway_namespace | quote }}
+  namespace: {{ $.namespace | quote }}
   labels:
     {{ $.managed_label }}: "true"
     nullplatform: "true"
@@ -55,7 +57,6 @@ spec:
       # que entregarle el tráfico de entrada lo mandaría de vuelta a salir.
       backendRefs:
         - name: {{ printf "%s-local" $svc | quote }}
-          namespace: {{ $.namespace | quote }}
           port: {{ $.listen_port | conv.ToInt }}
 {{- end }}
 {{- end }}

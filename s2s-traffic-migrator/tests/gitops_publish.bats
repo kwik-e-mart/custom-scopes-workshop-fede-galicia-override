@@ -283,7 +283,7 @@ HOOK
   [ -f "$BATS_TEST_TMPDIR/tree/reports/60-httproute-ingress.yaml" ]
   [ ! -f "$BATS_TEST_TMPDIR/tree/40-destinationrule-local-ingress.yaml" ]
   run objetos "$BATS_TEST_TMPDIR/tree/reports/60-httproute-ingress.yaml"
-  [ "$output" = "HTTPRoute/gateways/s2s-ingress-reports" ]
+  [ "$output" = "HTTPRoute/payments/s2s-ingress-reports" ]
 }
 
 @test "desde OpenShift la hoja trae el alias y el Service que captura" {

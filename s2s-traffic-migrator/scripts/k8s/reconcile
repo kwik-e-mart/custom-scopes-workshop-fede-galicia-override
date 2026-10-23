@@ -194,11 +194,8 @@ reconcile_ingress_validator() {  # <archivo rendeado>
 # Se borran por label y no por nombre: el nombre lleva el de la route del scope, que puede haber
 # cambiado entre el apply y el delete si el scope se redesplegó.
 delete_ingress_validator_rules() {
-  local ns
-  for ns in "$NAMESPACE" "$GATEWAY_NAMESPACE"; do
-    kubectl -n "$ns" delete authpolicy.kuadrant.io \
-      -l "${MANAGED_LABEL}=true" --ignore-not-found 2>/dev/null || true
-  done
+  kubectl -n "$NAMESPACE" delete authpolicy.kuadrant.io \
+    -l "${MANAGED_LABEL}=true" --ignore-not-found
 }
 
 if [ "$ACTION" = "delete" ]; then
@@ -243,10 +240,6 @@ if [ "$ACTION" = "delete" ]; then
   fi
   kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "${MANAGED_LABEL}=true" --ignore-not-found \
     || die "falló el borrado de los objetos del interceptor en $NAMESPACE."
-  # La route de ingreso de OpenShift vive en el namespace del Gateway, no en el de la app.
-  kubectl -n "$GATEWAY_NAMESPACE" delete httproute.gateway.networking.k8s.io \
-    -l "${MANAGED_LABEL}=true" --ignore-not-found \
-    || die "falló el borrado de la route de ingreso en $GATEWAY_NAMESPACE."
   if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
     delete_ingress_validator_rules \
       || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
@@ -561,9 +554,9 @@ if [ "$PLATFORM" != "eks" ]; then
   # faltante o un alias que no se creó.
   for svc in $DECLARED_SERVICES; do
     for cond in Accepted ResolvedRefs; do
-      if ! wait_route_condition "$GATEWAY_NAMESPACE" "s2s-ingress-${svc}" "$cond" 120; then
-        log error "la HTTPRoute de ingreso de '$svc' no llegó a $cond=True en el ns $GATEWAY_NAMESPACE."
-        log error "$(route_conditions "$GATEWAY_NAMESPACE" "s2s-ingress-${svc}")"
+      if ! wait_route_condition "$NAMESPACE" "s2s-ingress-${svc}" "$cond" 120; then
+        log error "la HTTPRoute de ingreso de '$svc' no llegó a $cond=True en el ns $NAMESPACE."
+        log error "$(route_conditions "$NAMESPACE" "s2s-ingress-${svc}")"
         log error "  Sin esto el tráfico que llega del otro sustrato no tiene por dónde entrar."
         if [ "$cond" = "ResolvedRefs" ]; then
           log error "  Con ResolvedRefs en False mirá el alias ${svc}-local y el ReferenceGrant hacia $NAMESPACE."
@@ -580,7 +573,6 @@ fi
 # origen OpenShift como cuando era un prerequisito del layer.
 if [ -n "$VALIDATOR_FILE" ]; then
   VALIDATOR_NS="$NAMESPACE"
-  [ "$PLATFORM" = "eks" ] || VALIDATOR_NS="$GATEWAY_NAMESPACE"
   for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
       -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     if ! kubectl -n "$VALIDATOR_NS" wait --for=condition=Enforced "authpolicy/$POL" --timeout=180s; then
@@ -643,7 +635,7 @@ for svc in $STALE_SERVICES; do
   kubectl -n "$NAMESPACE" delete \
     "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${svc}" \
     "destinationrule.networking.istio.io/${GATEWAY_NAME}-${svc}-scope" --ignore-not-found
-  kubectl -n "$GATEWAY_NAMESPACE" delete \
+  kubectl -n "$NAMESPACE" delete \
     "httproute.gateway.networking.k8s.io/s2s-ingress-${svc}" --ignore-not-found
 done
 
