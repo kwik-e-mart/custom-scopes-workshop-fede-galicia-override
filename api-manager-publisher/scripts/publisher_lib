@@ -41,6 +41,20 @@ require_cluster_name() {
   fi
 }
 
+require_sigla_and_project() {
+  PUBLISH_PROJECT="$1"
+  PUBLISH_SIGLA="${1%%-*}"
+  if [ -n "${APIM_PROJECT-}" ]; then
+    PUBLISH_PROJECT="$APIM_PROJECT"
+  fi
+  if [ -n "${APIM_SIGLA-}" ]; then
+    PUBLISH_SIGLA="$APIM_SIGLA"
+  fi
+  if [ -z "$PUBLISH_PROJECT" ] || [ -z "$PUBLISH_SIGLA" ]; then
+    fail "publisher: la notificación no trae el tag namespace para la sigla y el project; configurá APIM_SIGLA y APIM_PROJECT en el agente."
+  fi
+}
+
 require_parent_refs() {
   local gateway="${INGRESS_GATEWAY_NAME:-s2s-ingress}" namespace="${GATEWAY_NAMESPACE:-gateways}"
   local label='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'

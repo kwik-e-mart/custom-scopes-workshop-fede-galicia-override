@@ -12,9 +12,10 @@ setup() {
 }
 
 set_request() {
-  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" --arg env "$3" \
-    '{notification:{id:"act-1",type:"create",
-      service:({id:"svc-1",attributes:$a} + (if $env == "" then {} else {dimensions:{environment:$env}} end)),parameters:$p}}')
+  NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" --arg env "$3" --arg project "${4-zosc-pagos}" \
+    '{notification:({id:"act-1",type:"create",
+      service:({id:"svc-1",attributes:$a} + (if $env == "" then {} else {dimensions:{environment:$env}} end)),parameters:$p}
+      + (if $project == "" then {} else {tags:{namespace:$project}} end))}')
   export NP_MOCK_SCOPES
   NP_MOCK_SCOPES='[{"slug":"main","id":1049050904,"domain":"test-kuadrant-main.ms.ws.bancogalicia.com.ar","dimensions":{"environment":"qas"}},{"slug":"draft","id":555,"domain":"test-kuadrant-draft.ms.ws.bancogalicia.com.ar","dimensions":{"environment":"qas"}}]'
 }
@@ -35,7 +36,7 @@ pushed() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c","origen":"nullplatform",
+{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
@@ -202,6 +203,40 @@ JSON
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -r .cluster "$CURL_BODIES_DIR/0.json")" = "cluster1" ]
+}
+
+@test "la sigla es la primera parte del namespace sin pasarla a mayusculas" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas PLCL-PlatformOps
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "PLCL" ]
+  [ "$(jq -r .project "$CURL_BODIES_DIR/0.json")" = "PLCL-PlatformOps" ]
+}
+
+@test "sin tag namespace en la notificacion falla sin llamar a APIM nombrando los overrides" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas ""
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PROJECT* ]] || false
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_SIGLA* ]]
+}
+
+@test "APIM_SIGLA y APIM_PROJECT reemplazan los valores del namespace" {
+  export APIM_SIGLA=arqc APIM_PROJECT=arqc-kuadrant
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
+  [ "$(jq -r .project "$CURL_BODIES_DIR/0.json")" = "arqc-kuadrant" ]
+}
+
+@test "los overrides alcanzan aunque la notificacion no traiga el tag namespace" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas ""
+  export APIM_SIGLA=arqc APIM_PROJECT=arqc-kuadrant
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
 }
 
 @test "acepta la url del repo con .git" {
