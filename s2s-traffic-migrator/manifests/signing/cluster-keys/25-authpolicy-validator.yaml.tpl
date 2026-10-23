@@ -26,7 +26,7 @@ apiVersion: {{ $raiz.authpolicy_api_version | quote }}
 kind: AuthPolicy
 metadata:
   name: {{ printf "%s-%s" $raiz.ingress_authpolicy $ruta | quote }}
-  namespace: {{ if eq $raiz.platform "eks" }}{{ $ns | quote }}{{ else }}{{ $raiz.gateway_namespace | quote }}{{ end }}
+  namespace: {{ $ns | quote }}
   labels:
     {{ $raiz.managed_label }}: "true"
     nullplatform: "true"
