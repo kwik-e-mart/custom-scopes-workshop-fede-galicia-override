@@ -93,3 +93,31 @@ sin_anotacion() { : >"$FAKE_ANNOTATION_FILE"; }
   [ "$status" -ne 0 ]
   [[ "$output" == *"PROPIO Gateway"* ]]
 }
+
+cargar_delete_validador() {
+  export MANAGED_LABEL="egress-interceptor/managed"
+  export GATEWAY_NAMESPACE=envoy-ingress
+  eval "$(awk '/^delete_ingress_validator_rules\(\) \{/,/^\}/' "${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile")"
+}
+
+@test "si no se puede borrar el validador, la funcion FALLA en vez de devolver 0" {
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+echo 'Error from server (Forbidden): authpolicies.kuadrant.io is forbidden' >&2
+exit 1
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
+  cargar_delete_validador
+  run delete_ingress_validator_rules
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"Forbidden"* ]]
+}
+
+@test "el borrado del validador no toca el namespace del Gateway de ingreso" {
+  cargar_delete_validador
+  run delete_ingress_validator_rules
+  [ "$status" -eq 0 ] || false
+  grep -q -- "-n payments delete authpolicy" "$KUBECTL_CALLS" || false
+  ! grep -q -- "-n envoy-ingress" "$KUBECTL_CALLS"
+}
