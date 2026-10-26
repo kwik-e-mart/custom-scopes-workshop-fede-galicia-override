@@ -54,8 +54,8 @@ require_sigla_and_project() {
   fi
 }
 
-require_deployed_commit() {
-  local scope_id="$1" scope_slug="$2" entity deployment_id release_id build_id
+require_deployed_release() {
+  local scope_id="$1" scope_slug="$2" entity deployment_id release_id
   entity=$(np scope read --id "$scope_id" --format json) \
     || fail "publisher: no se pudo leer el scope '$scope_slug' para saber qué versión tiene desplegada."
   deployment_id=$(echo "$entity" | jq -r '.active_deployment // empty')
@@ -70,16 +70,9 @@ require_deployed_commit() {
   fi
   entity=$(np release read --id "$release_id" --format json) \
     || fail "publisher: no se pudo leer el release $release_id desplegado en el scope '$scope_slug'."
-  build_id=$(echo "$entity" | jq -r '.build_id // empty')
   DEPLOYED_RELEASE=$(echo "$entity" | jq -r '.semver // empty')
-  if [[ ! "$build_id" =~ ^[0-9]+$ ]]; then
-    fail "publisher: el release $release_id desplegado en el scope '$scope_slug' no tiene build."
-  fi
-  entity=$(np build read --id "$build_id" --format json) \
-    || fail "publisher: no se pudo leer el build $build_id desplegado en el scope '$scope_slug'."
-  DEPLOYED_COMMIT=$(echo "$entity" | jq -r '.commit.id // empty')
-  if [[ ! "$DEPLOYED_COMMIT" =~ ^[0-9a-f]{7,40}$ ]]; then
-    fail "publisher: el build $build_id desplegado en el scope '$scope_slug' no tiene un commit válido."
+  if [[ ! "$DEPLOYED_RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._/+-]*$ ]]; then
+    fail "publisher: el release $release_id desplegado en el scope '$scope_slug' no tiene un semver que se pueda publicar como tag ('$DEPLOYED_RELEASE')."
   fi
 }
 

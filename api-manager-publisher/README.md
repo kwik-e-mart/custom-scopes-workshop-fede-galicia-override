@@ -12,7 +12,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope), el legajo y, opcional en ADVANCED, el rate limit global (`rate_limit_enabled` con `window` + `hits_per_window`). La acción queda en
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
-- **Se publica la versión desplegada en el scope**: el commit del build del deployment activo. Sin deployment activo
+- **Se publica la versión desplegada en el scope**: el release del deployment activo, como tag de git. Sin deployment activo
   la acción falla. Desplegar no republica: hay que ejecutar la acción de actualizar después de cada deploy.
 - **Actualizar = republicar** con la versión desplegada en ese momento o con otro rate limit (APIM sobrescribe la misma ruta).
 - **Después del 200 del publish**, cuelga en cada route del scope (`nullplatform=true,scope_id=<id>`) una
@@ -30,7 +30,7 @@ Qué se manda a APIM y de dónde sale:
 | Campo | Origen |
 |---|---|
 | `organization`, `repository` | `repository_url` de la aplicación |
-| `commit` | commit del build del deployment activo del scope (`scope` → `deployment` → `release` → `build`) |
+| `tag` | `semver` del release del deployment activo del scope (`scope` → `deployment` → `release`) |
 | `environment` | dimensión `environment` del service (`dev`, `int`, `qas` o `prd`) |
 | `tenant` | `b2c` fijo por ahora |
 | `project` | tag `namespace` de la notificación de la acción, o `APIM_PROJECT` |

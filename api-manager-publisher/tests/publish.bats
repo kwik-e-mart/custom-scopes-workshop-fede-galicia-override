@@ -36,7 +36,7 @@ pushed() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"organization":"zosc-zosconnect","repository":"test-kuadrant","commit":"23032fcf8b0e54a43b96af18a0648f59c32a6908","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
+{"organization":"zosc-zosconnect","repository":"test-kuadrant","tag":"0.2.5","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
@@ -55,16 +55,16 @@ JSON
   [ -z "$(np_last_update_flag --status)" ]
 }
 
-@test "publica el commit del build que tiene desplegado el scope elegido" {
+@test "publica como tag el release que tiene desplegado el scope elegido" {
   queue_response 200 "$(pushed)"
   run_step
   [ "$status" -eq 0 ]
   grep -qx '\["scope","read","--id","1049050904","--format","json"\]' "$NP_CALLS_LOG"
   grep -qx '\["deployment","read","--id","789675678","--format","json"\]' "$NP_CALLS_LOG"
   grep -qx '\["release","read","--id","1093627349","--format","json"\]' "$NP_CALLS_LOG"
-  grep -qx '\["build","read","--id","13464037","--format","json"\]' "$NP_CALLS_LOG"
-  [ "$(jq -c '{branch, tag, commit}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":null,"commit":"23032fcf8b0e54a43b96af18a0648f59c32a6908"}' ]
-  [[ "$output" == *"0.2.5"*"23032fcf8b0e54a43b96af18a0648f59c32a6908"* ]] || false
+  ! grep -q '"build"' "$NP_CALLS_LOG"
+  [ "$(jq -c '{branch, tag, commit}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"0.2.5","commit":null}' ]
+  [[ "$output" == *"release 0.2.5"* ]]
 }
 
 @test "un scope sin deployment activo falla sin llamar a APIM avisando que la aplicacion no esta desplegada" {
@@ -76,7 +76,7 @@ JSON
 }
 
 @test "si no puede leer la version desplegada falla sin llamar a APIM" {
-  for entity in scope deployment release build; do
+  for entity in scope deployment release; do
     export NP_MOCK_READ_FAIL="$entity"
     : >"$CURL_CALLS_LOG"
     run_step
@@ -85,8 +85,16 @@ JSON
   done
 }
 
-@test "un build sin commit valido falla sin llamar a APIM" {
-  export NP_MOCK_BUILD_READ='{"id":13464037,"branch":"main","commit":{"id":"no es un sha"}}'
+@test "un release sin semver falla sin llamar a APIM" {
+  export NP_MOCK_RELEASE_READ='{"id":1093627349,"build_id":13464037}'
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"1093627349"* ]]
+}
+
+@test "un semver que no puede ser un tag de git falla sin llamar a APIM" {
+  export NP_MOCK_RELEASE_READ='{"id":1093627349,"semver":"0.2.5 rc","build_id":13464037}'
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
@@ -324,7 +332,7 @@ JSON
   set_request '{"scope":"main","ref_type":"branch","ref":"main","legajo":"l0510541"}' '{"ref_type":"commit","ref":"a1b2c3d"}' qas
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -c '{branch, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"commit":"23032fcf8b0e54a43b96af18a0648f59c32a6908","legajo":"l0510541"}' ]
+  [ "$(jq -c '{branch, tag, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"0.2.5","commit":null,"legajo":"l0510541"}' ]
 }
 
 @test "el parentRefs es el gateway de ingreso que usa el s2s" {

@@ -45,7 +45,7 @@ publish() {
   require_sigla_and_project "$(notification_field '.tags.namespace')"
   require_parent_refs
   require_scope_destination "$(echo "$params" | jq -r '.scope // empty')" "$(echo "${CONTEXT-}" | jq -r '.application.id // empty')"
-  require_deployed_commit "$SCOPE_ID" "$SCOPE_SLUG"
+  require_deployed_release "$SCOPE_ID" "$SCOPE_SLUG"
   require_gateway_backend
   require_publish_environment "$(notification_field '.service.dimensions.environment')"
 
@@ -53,7 +53,7 @@ publish() {
   body=$(jq -nc \
     --arg organization "$SOURCE_ORGANIZATION" \
     --arg repository "$SOURCE_REPOSITORY" \
-    --arg commit "$DEPLOYED_COMMIT" \
+    --arg tag "$DEPLOYED_RELEASE" \
     --arg environment "$PUBLISH_ENVIRONMENT" \
     --arg tenant "$PUBLISH_TENANT" \
     --arg cluster "$CLUSTER_NAME" \
@@ -67,14 +67,14 @@ publish() {
     --argjson backend "$GATEWAY_BACKEND" \
     --arg destination "$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
-    '{organization: $organization, repository: $repository, commit: $commit, environment: $environment,
+    '{organization: $organization, repository: $repository, tag: $tag, environment: $environment,
       tenant: $tenant, origen: "nullplatform", sigla: $sigla, project: $project, cluster: $cluster, callbackUrl: $callback,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $legajo == "" then {} else {legajo: $legajo} end)
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
-  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release ${DEPLOYED_RELEASE:-sin semver}, commit $DEPLOYED_COMMIT) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
+  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release $DEPLOYED_RELEASE) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
   apim_request POST /v1/kuadrant/manifests/publish "$body" ""
 
   local status message results

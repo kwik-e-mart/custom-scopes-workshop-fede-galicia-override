@@ -12,7 +12,6 @@ setup_publisher() {
   export NP_MOCK_SCOPE_READ='{"id":1049050904,"slug":"main","active_deployment":789675678}'
   export NP_MOCK_DEPLOYMENT_READ='{"id":789675678,"status":"finalized","release_id":1093627349}'
   export NP_MOCK_RELEASE_READ='{"id":1093627349,"semver":"0.2.5","build_id":13464037}'
-  export NP_MOCK_BUILD_READ='{"id":13464037,"branch":"main","commit":{"id":"23032fcf8b0e54a43b96af18a0648f59c32a6908"}}'
   unset NP_MOCK_READ_FAIL APIM_CLUSTER_NAME APIM_SIGLA APIM_PROJECT NP_MOCK_SCOPE_FAIL KUBECTL_MOCK_FAIL KUBECTL_MOCK_APPLY_FAIL KUBECTL_MOCK_DELETE_FAIL LOCAL_INGRESS_HOST APIM_GATEWAY_PORT INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE
 
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
@@ -48,7 +47,6 @@ if [ "${2-}" = "read" ]; then
     scope) printf '%s\n' "$NP_MOCK_SCOPE_READ" ;;
     deployment) printf '%s\n' "$NP_MOCK_DEPLOYMENT_READ" ;;
     release) printf '%s\n' "$NP_MOCK_RELEASE_READ" ;;
-    build) printf '%s\n' "$NP_MOCK_BUILD_READ" ;;
     *) echo "np: unknown entity ${1-}" >&2; exit 1 ;;
   esac
   exit 0
