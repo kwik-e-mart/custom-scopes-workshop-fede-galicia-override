@@ -75,6 +75,10 @@ aplicación con dimensiones que coinciden con las del scope, igual que en `pom-s
 no toca el deployment; con link y sin el Secret en el namespace, el deploy falla. Para usarlo, el channel del scope
 tiene que pasar `--overrides-path=<repo>/api-manager-publisher/override`.
 
+El mismo override frena el borrado de un scope que tiene una API publicada: busca en la aplicación services de
+`APIM_PUBLISHER_PROVIDER` (sin los archivados) cuyo `scope` sea el que se borra y, si hay alguno, el delete falla
+pidiendo despublicar la API antes. Así la API nunca queda apuntando a un scope que ya no existe.
+
 ## Instalación
 
 ```bash
