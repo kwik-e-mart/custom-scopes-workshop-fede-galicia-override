@@ -9,11 +9,12 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 ## Cómo se usa
 
 - **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (APIM genera su
-  HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope), la referencia del repo (`branch` / `tag` / `commit`,
-  por default `main`), el legajo y, opcional en ADVANCED, el rate limit global (`rate_limit_enabled` con `window` + `hits_per_window`). La acción queda en
+  HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope), el legajo y, opcional en ADVANCED, el rate limit global (`rate_limit_enabled` con `window` + `hits_per_window`). La acción queda en
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
-- **Actualizar = republicar** con otra referencia o rate limit (APIM sobrescribe la misma ruta).
+- **Se publica la versión desplegada en el scope**: el commit del build del deployment activo. Sin deployment activo
+  la acción falla. Desplegar no republica: hay que ejecutar la acción de actualizar después de cada deploy.
+- **Actualizar = republicar** con la versión desplegada en ese momento o con otro rate limit (APIM sobrescribe la misma ruta).
 - **Después del 200 del publish**, cuelga en cada route del scope (`nullplatform=true,scope_id=<id>`) una
   AuthPolicy `<apiId>-<route>` que acepta las credenciales de esa API (`app_key` con label `api-id`, `app_id`
   igual al label `app-id`). Es la que deja pasar el reingreso de APIM por el gateway privado; se combina en
@@ -29,7 +30,7 @@ Qué se manda a APIM y de dónde sale:
 | Campo | Origen |
 |---|---|
 | `organization`, `repository` | `repository_url` de la aplicación |
-| `branch` / `tag` / `commit` | formulario |
+| `commit` | commit del build del deployment activo del scope (`scope` → `deployment` → `release` → `build`) |
 | `environment` | dimensión `environment` del service (`dev`, `int`, `qas` o `prd`) |
 | `tenant` | `b2c` fijo por ahora |
 | `project` | tag `namespace` de la notificación de la acción, o `APIM_PROJECT` |

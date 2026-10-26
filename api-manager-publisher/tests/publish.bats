@@ -7,7 +7,7 @@ setup() {
   setup_publisher
   STEP="$PUBLISHER_SCRIPTS/publish"
   export NP_ACTION_CONTEXT CONTEXT
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","legajo":"l0510541"}' qas
+  set_request '{}' '{"scope":"main","legajo":"l0510541"}' qas
   set_context https://github.com/zosc-zosconnect/test-kuadrant
 }
 
@@ -36,7 +36,7 @@ pushed() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"organization":"zosc-zosconnect","repository":"test-kuadrant","branch":"main","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
+{"organization":"zosc-zosconnect","repository":"test-kuadrant","commit":"23032fcf8b0e54a43b96af18a0648f59c32a6908","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
  "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
@@ -55,29 +55,59 @@ JSON
   [ -z "$(np_last_update_flag --status)" ]
 }
 
-@test "un tag o un commit viajan en su campo" {
-  set_request '{}' '{"scope":"main","ref_type":"tag","ref":"v1.2.3"}' qas
+@test "publica el commit del build que tiene desplegado el scope elegido" {
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -c '{branch, tag, commit}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"v1.2.3","commit":null}' ]
+  [ "$status" -eq 0 ]
+  grep -qx '\["scope","read","--id","1049050904","--format","json"\]' "$NP_CALLS_LOG"
+  grep -qx '\["deployment","read","--id","789675678","--format","json"\]' "$NP_CALLS_LOG"
+  grep -qx '\["release","read","--id","1093627349","--format","json"\]' "$NP_CALLS_LOG"
+  grep -qx '\["build","read","--id","13464037","--format","json"\]' "$NP_CALLS_LOG"
+  [ "$(jq -c '{branch, tag, commit}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":null,"commit":"23032fcf8b0e54a43b96af18a0648f59c32a6908"}' ]
+  [[ "$output" == *"0.2.5"*"23032fcf8b0e54a43b96af18a0648f59c32a6908"* ]] || false
+}
+
+@test "un scope sin deployment activo falla sin llamar a APIM avisando que la aplicacion no esta desplegada" {
+  export NP_MOCK_SCOPE_READ='{"id":1049050904,"slug":"main","active_deployment":null}'
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"no se puede publicar una aplicación que no está desplegada"*"main"* ]] || false
+}
+
+@test "si no puede leer la version desplegada falla sin llamar a APIM" {
+  for entity in scope deployment release build; do
+    export NP_MOCK_READ_FAIL="$entity"
+    : >"$CURL_CALLS_LOG"
+    run_step
+    [ ! -s "$CURL_CALLS_LOG" ]
+    [ "$(np_last_update_flag --status)" = "failed" ]
+  done
+}
+
+@test "un build sin commit valido falla sin llamar a APIM" {
+  export NP_MOCK_BUILD_READ='{"id":13464037,"branch":"main","commit":{"id":"no es un sha"}}'
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
 @test "un service anterior al check sigue mandando el rate limit si tiene window y hits" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","window":"10s","hits_per_window":100}' qas
+  set_request '{}' '{"scope":"main","window":"10s","hits_per_window":100}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -c '{window, hitsPerWindow}' "$CURL_BODIES_DIR/0.json")" = '{"window":"10s","hitsPerWindow":100}' ]
 }
 
 @test "con el check de rate limit prendido viajan window y hits" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","rate_limit_enabled":true,"window":"1m","hits_per_window":500}' qas
+  set_request '{}' '{"scope":"main","rate_limit_enabled":true,"window":"1m","hits_per_window":500}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -c '{window, hitsPerWindow}' "$CURL_BODIES_DIR/0.json")" = '{"window":"1m","hitsPerWindow":500}' ]
 }
 
 @test "con el check de rate limit apagado no viaja aunque queden valores cargados" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","rate_limit_enabled":false,"window":"1m","hits_per_window":500}' qas
+  set_request '{}' '{"scope":"main","rate_limit_enabled":false,"window":"1m","hits_per_window":500}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$status" -eq 0 ]
@@ -85,28 +115,28 @@ JSON
 }
 
 @test "con el check prendido y sin valores falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","rate_limit_enabled":true}' qas
+  set_request '{}' '{"scope":"main","rate_limit_enabled":true}' qas
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
 @test "window sin hits falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","window":"10s"}' qas
+  set_request '{}' '{"scope":"main","window":"10s"}' qas
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
 @test "sin legajo no lo manda" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas
+  set_request '{}' '{"scope":"main"}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq 'has("legajo")' "$CURL_BODIES_DIR/0.json")" = "false" ]
 }
 
 @test "un legajo con otro formato falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","legajo":"510541"}' qas
+  set_request '{}' '{"scope":"main","legajo":"510541"}' qas
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *legajo* ]]
@@ -134,7 +164,7 @@ JSON
 }
 
 @test "el backend es el Service del ingreso local y el destino es el dominio del scope elegido" {
-  set_request '{}' '{"scope":"draft","ref_type":"branch","ref":"main"}' qas
+  set_request '{}' '{"scope":"draft"}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -cS .metadata.backend "$CURL_BODIES_DIR/0.json")" = '{"destinationFqdn":"test-kuadrant-draft.ms.ws.bancogalicia.com.ar","kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443}' ]
@@ -171,7 +201,7 @@ JSON
 }
 
 @test "un scope que no es de la aplicacion falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"otro","ref_type":"branch","ref":"main"}' qas
+  set_request '{}' '{"scope":"otro"}' qas
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"otro"* ]]
@@ -185,7 +215,7 @@ JSON
 }
 
 @test "el ambiente sale de la dimension del service: development se publica como dev" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' development
+  set_request '{}' '{"scope":"main"}' development
   queue_response 200 "$(pushed)"
   run_step
   [ "$status" -eq 0 ]
@@ -193,21 +223,21 @@ JSON
 }
 
 @test "production se publica como prd" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' production
+  set_request '{}' '{"scope":"main"}' production
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "prd" ]
 }
 
 @test "un service sin dimension environment falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' ""
+  set_request '{}' '{"scope":"main"}' ""
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *environment* ]]
 }
 
 @test "un ambiente desconocido falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' sandbox
+  set_request '{}' '{"scope":"main"}' sandbox
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
@@ -228,7 +258,7 @@ JSON
 }
 
 @test "la sigla es la primera parte del namespace sin pasarla a mayusculas" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas PLCL-PlatformOps
+  set_request '{}' '{"scope":"main"}' qas PLCL-PlatformOps
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "PLCL" ]
@@ -236,7 +266,7 @@ JSON
 }
 
 @test "sin tag namespace en la notificacion falla sin llamar a APIM nombrando los overrides" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas ""
+  set_request '{}' '{"scope":"main"}' qas ""
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
@@ -253,7 +283,7 @@ JSON
 }
 
 @test "los overrides alcanzan aunque la notificacion no traiga el tag namespace" {
-  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main"}' qas ""
+  set_request '{}' '{"scope":"main"}' qas ""
   export APIM_SIGLA=arqc APIM_PROJECT=arqc-kuadrant
   queue_response 200 "$(pushed)"
   run_step
@@ -290,11 +320,11 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "republicar toma los atributos guardados y los parametros nuevos" {
+@test "republicar toma los atributos guardados y la version desplegada aunque el service tenga una referencia vieja" {
   set_request '{"scope":"main","ref_type":"branch","ref":"main","legajo":"l0510541"}' '{"ref_type":"commit","ref":"a1b2c3d"}' qas
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -c '{branch, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"commit":"a1b2c3d","legajo":"l0510541"}' ]
+  [ "$(jq -c '{branch, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"commit":"23032fcf8b0e54a43b96af18a0648f59c32a6908","legajo":"l0510541"}' ]
 }
 
 @test "el parentRefs es el gateway de ingreso que usa el s2s" {

@@ -4,7 +4,6 @@ PUBLISHER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$PUBLISHER_LIB_DIR/subscriber_lib"
 
 PUBLISH_TENANT="b2c"
-REF_PATTERN='^[A-Za-z0-9._/-]+$'
 LEGAJO_PATTERN='^l[0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
 
@@ -52,6 +51,35 @@ require_sigla_and_project() {
   fi
   if [ -z "$PUBLISH_PROJECT" ] || [ -z "$PUBLISH_SIGLA" ]; then
     fail "publisher: la notificación no trae el tag namespace para la sigla y el project; configurá APIM_SIGLA y APIM_PROJECT en el agente."
+  fi
+}
+
+require_deployed_commit() {
+  local scope_id="$1" scope_slug="$2" entity deployment_id release_id build_id
+  entity=$(np scope read --id "$scope_id" --format json) \
+    || fail "publisher: no se pudo leer el scope '$scope_slug' para saber qué versión tiene desplegada."
+  deployment_id=$(echo "$entity" | jq -r '.active_deployment // empty')
+  if [[ ! "$deployment_id" =~ ^[0-9]+$ ]]; then
+    fail "publisher: no se puede publicar una aplicación que no está desplegada: el scope '$scope_slug' no tiene un deployment activo."
+  fi
+  entity=$(np deployment read --id "$deployment_id" --format json) \
+    || fail "publisher: no se pudo leer el deployment activo $deployment_id del scope '$scope_slug'."
+  release_id=$(echo "$entity" | jq -r '.release_id // empty')
+  if [[ ! "$release_id" =~ ^[0-9]+$ ]]; then
+    fail "publisher: el deployment activo $deployment_id del scope '$scope_slug' no tiene release."
+  fi
+  entity=$(np release read --id "$release_id" --format json) \
+    || fail "publisher: no se pudo leer el release $release_id desplegado en el scope '$scope_slug'."
+  build_id=$(echo "$entity" | jq -r '.build_id // empty')
+  DEPLOYED_RELEASE=$(echo "$entity" | jq -r '.semver // empty')
+  if [[ ! "$build_id" =~ ^[0-9]+$ ]]; then
+    fail "publisher: el release $release_id desplegado en el scope '$scope_slug' no tiene build."
+  fi
+  entity=$(np build read --id "$build_id" --format json) \
+    || fail "publisher: no se pudo leer el build $build_id desplegado en el scope '$scope_slug'."
+  DEPLOYED_COMMIT=$(echo "$entity" | jq -r '.commit.id // empty')
+  if [[ ! "$DEPLOYED_COMMIT" =~ ^[0-9a-f]{7,40}$ ]]; then
+    fail "publisher: el build $build_id desplegado en el scope '$scope_slug' no tiene un commit válido."
   fi
 }
 

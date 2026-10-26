@@ -17,10 +17,14 @@ setup() {
   [ ! -d "$SPECS/actions" ]
 }
 
-@test "publicar pide el scope y la referencia del repo" {
-  [ "$(jq -c '.attributes.schema.required | sort' "$SERVICE")" = '["ref","ref_type","scope"]' ]
-  [ "$(jq -c '.attributes.schema.properties.ref_type.enum' "$SERVICE")" = '["branch","tag","commit"]' ]
-  [ "$(jq -r '.attributes.schema.properties.ref.default' "$SERVICE")" = "main" ]
+@test "publicar pide solo el scope: la version es la que tiene desplegada" {
+  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope"]' ]
+  [ "$(jq -c '.attributes.schema.properties | [has("ref"), has("ref_type")]' "$SERVICE")" = '[false,false]' ]
+  [ "$(jq -c '[.. | objects | select(has("scope") and (.scope | type == "string")) | .scope | split("/") | last] | map(select(. == "ref" or . == "ref_type"))' "$SERVICE")" = '[]' ]
+}
+
+@test "el faq explica que desplegar no republica la API" {
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == *"desplegada"*"actualizar"*"no republica"* ]] || false
 }
 
 @test "los datos de APIM se ven y no se editan" {
@@ -35,11 +39,11 @@ setup() {
   [ "$(jq -r '.attributes.schema.properties.scope.additionalKeywords.enum' "$SERVICE")" = '[.scopes[]?.slug] | if length == 0 then ["No scopes available for selected environment"] else . end' ]
 }
 
-@test "el formulario explica el servicio y ordena tipo de referencia antes que la referencia" {
+@test "el formulario explica el servicio y pide scope y legajo" {
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].type' "$SERVICE")" = "Label" ]
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].options.format' "$SERVICE")" = "markdown" ]
   [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == "## API Manager Publisher"*"### FAQ"* ]] || false
-  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:4]' "$SERVICE")" = '["scope","ref_type","ref","legajo"]' ]
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:2]' "$SERVICE")" = '["scope","legajo"]' ]
 }
 
 @test "el rate limit va en una seccion ADVANCED colapsada con una unica tab Rate limit" {
