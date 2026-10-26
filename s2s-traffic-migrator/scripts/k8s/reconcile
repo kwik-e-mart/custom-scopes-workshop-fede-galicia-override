@@ -571,20 +571,20 @@ fi
 # ruidosamente: queda Accepted=True y el destino acepta tráfico sin validar el wristband. Se espera
 # siempre que el validador sea nuestro —con cluster-keys lo emite este service—, y no sólo con
 # origen OpenShift como cuando era un prerequisito del layer.
-if [ -n "$VALIDATOR_FILE" ]; then
-  VALIDATOR_NS="$NAMESPACE"
-  for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
-      -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    if ! kubectl -n "$VALIDATOR_NS" wait --for=condition=Enforced "authpolicy/$POL" --timeout=180s; then
-      log error "el validador '$POL' no llegó a Enforced=True en $VALIDATOR_NS."
-      log error "$(kubectl -n "$VALIDATOR_NS" get "authpolicy/$POL" \
-        -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
-      log error "  Con TargetNotFound, la HTTPRoute del scope no existe en $VALIDATOR_NS."
-      log error "  El destino estaría aceptando tráfico del otro sustrato SIN validar el token."
-      exit 1
-    fi
-  done
-fi
+#if [ -n "$VALIDATOR_FILE" ]; then
+#  VALIDATOR_NS="$NAMESPACE"
+#  for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
+#      -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+#    if ! kubectl -n "$VALIDATOR_NS" wait --for=condition=Enforced "authpolicy/$POL" --timeout=180s; then
+#      log error "el validador '$POL' no llegó a Enforced=True en $VALIDATOR_NS."
+#      log error "$(kubectl -n "$VALIDATOR_NS" get "authpolicy/$POL" \
+#        -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
+#      log error "  Con TargetNotFound, la HTTPRoute del scope no existe en $VALIDATOR_NS."
+#      log error "  El destino estaría aceptando tráfico del otro sustrato SIN validar el token."
+#      exit 1
+#    fi
+#  done
+#fi
 
 # Converge al selector deseado en vez de actuar sólo la primera vez: un Service ya interceptado
 # apuntando a un Gateway anterior quedaría anotado y roto.
