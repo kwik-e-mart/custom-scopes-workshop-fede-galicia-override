@@ -6,7 +6,7 @@ setup() {
     return 1
   }
   OVERRIDE="${BATS_TEST_DIRNAME}/../override"
-  STEP="$OVERRIDE/scope/scripts/require_no_published_api"
+  STEP="$OVERRIDE/deployment/scripts/require_no_published_api"
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
@@ -36,8 +36,12 @@ service() {
     '{id: "s-1", name: $name, status: "active", selectors: {provider: $provider}, attributes: {scope: $scope}}'
 }
 
-@test "el workflow de borrado del scope corre el chequeo despues de armar el contexto" {
-  [ "$(yq -o=json -I=0 '.steps[] | select(.name == "require_no_published_api") | pick(["type", "after", "file"])' "$OVERRIDE/scope/workflows/delete.yaml")" = '{"type":"script","after":"build context","file":"$OVERRIDES_PATH/scope/scripts/require_no_published_api"}' ]
+@test "el workflow de borrado del deployment corre el chequeo despues de armar el contexto" {
+  [ "$(yq -o=json -I=0 '.steps[] | select(.name == "require_no_published_api") | pick(["type", "after", "file"])' "$OVERRIDE/deployment/workflows/delete.yaml")" = '{"type":"script","after":"build context","file":"$OVERRIDES_PATH/deployment/scripts/require_no_published_api"}' ]
+}
+
+@test "el chequeo no esta en el borrado del scope porque ahi el deployment ya no existe" {
+  [ ! -e "$OVERRIDE/scope/workflows/delete.yaml" ]
 }
 
 @test "sin APIs publicadas sobre el scope sigue el workflow" {
@@ -46,12 +50,12 @@ service() {
   [[ "$output" == *NEXT_STEP_RAN* ]]
 }
 
-@test "con una API publicada sobre el scope frena el borrado pidiendo despublicarla" {
+@test "con una API publicada sobre el scope frena el borrado del deployment pidiendo despublicarla" {
   NP_MOCK_SERVICES="[$(service "Payments API" "$APIM_PUBLISHER_PROVIDER" eks)]"
   run_step
   [ "$status" -ne 0 ]
   [[ "$output" != *NEXT_STEP_RAN* ]] || false
-  [[ "$output" == *"eks"*"Payments API"* ]] || false
+  [[ "$output" == *"No se puede borrar ni pausar el scope"*"eks"*"Payments API"* ]] || false
   [[ "$output" == *"despublicar"* ]]
 }
 

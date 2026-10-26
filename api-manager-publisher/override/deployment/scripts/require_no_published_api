@@ -13,7 +13,7 @@ PUBLISHED_APIS=$(echo "$SERVICES" | jq -r --arg provider "$APIM_PUBLISHER_PROVID
   [(.results? // .)[] | select(.selectors.provider == $provider and .attributes.scope == $scope) | .name] | join(", ")')
 
 if [ -n "$PUBLISHED_APIS" ]; then
-  echo "❌ No se puede borrar el scope '$SCOPE_SLUG': tiene publicada la API $PUBLISHED_APIS en el $APIM_PUBLISHER_PROVIDER. Primero hay que despublicar la API borrando su service." >&2
+  echo "❌ No se puede borrar ni pausar el scope '$SCOPE_SLUG' mientras tenga publicada la API $PUBLISHED_APIS en el $APIM_PUBLISHER_PROVIDER. Primero hay que despublicar la API borrando su service." >&2
   exit 1
 fi
 
