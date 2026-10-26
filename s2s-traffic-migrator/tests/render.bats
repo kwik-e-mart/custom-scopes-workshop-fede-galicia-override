@@ -857,7 +857,7 @@ rule() {  # <percent> [service]
   while IFS= read -r nombre; do
     valor=$(grep -E "^  ${nombre}: " "$wf" | head -1 | sed -E "s/^  ${nombre}: //; s/^\"//; s/\"$//")
     [ -n "$valor" ] || continue
-    defecto=$(grep -E "^${nombre}=\"\\\$\{${nombre}:-" "$bc" | head -1 | sed -E "s/^${nombre}=\"\\\$\{${nombre}:-//; s/\}\"$//")
+    defecto=$(grep -E "^${nombre}=\"\\\$\{${nombre}:?-" "$bc" | head -1 | sed -E "s/^${nombre}=\"\\\$\{${nombre}:?-//; s/\}\"$//")
     [ -n "$defecto" ] || continue
     [ "$valor" = "$defecto" ] || {
       echo "el workflow fija ${nombre}='${valor}' pero el default del script es '${defecto}'" >&2

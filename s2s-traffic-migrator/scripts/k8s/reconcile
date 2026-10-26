@@ -571,7 +571,11 @@ fi
 # ruidosamente: queda Accepted=True y el destino acepta tráfico sin validar el wristband. Se espera
 # siempre que el validador sea nuestro —con cluster-keys lo emite este service—, y no sólo con
 # origen OpenShift como cuando era un prerequisito del layer.
-if [ -n "$VALIDATOR_FILE" ]; then
+if [ -n "$VALIDATOR_FILE" ] && [ "${INGRESS_VALIDATOR_WAIT_ENFORCED-true}" != "true" ]; then
+  log warn "egress-interceptor: INGRESS_VALIDATOR_WAIT_ENFORCED=false, no se espera que el validador de ingreso enforcee."
+  log warn "  La AuthPolicy se aplica igual, pero el tráfico que llegue del otro sustrato puede entrar SIN que se valide el token."
+  log warn "  Es para un ingreso que todavía no puede enforcear. Volvelo a true en cuanto se arregle."
+elif [ -n "$VALIDATOR_FILE" ]; then
   VALIDATOR_NS="$NAMESPACE"
   for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
       -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do

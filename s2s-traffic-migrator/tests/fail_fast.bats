@@ -527,3 +527,35 @@ correr_delete() {
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
+
+@test "con INGRESS_VALIDATOR_WAIT_ENFORCED=false el validador que no enforcea NO frena el desvío" {
+  SIGNING_STRATEGY=cluster-keys INGRESS_VALIDATOR_WAIT_ENFORCED=false \
+    FALLA_WAIT="authpolicy/s2s-validator-" run correr
+  [ "$status" -eq 0 ] || false
+  [[ "$output" == *"no se espera que el validador de ingreso enforcee"* ]] || false
+  [[ "$output" == *"SIN que se valide el token"* ]] || false
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "con el flag apagado el validador se aplica igual: sólo se saltea la espera" {
+  SIGNING_STRATEGY=cluster-keys INGRESS_VALIDATOR_WAIT_ENFORCED=false run correr
+  [ "$status" -eq 0 ] || false
+  run grep -c 'wait .*authpolicy/s2s-validator-' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "el flag NO afecta al validador de egreso: si sign no enforcea, sigue abortando" {
+  SIGNING_STRATEGY=cluster-keys INGRESS_VALIDATOR_WAIT_ENFORCED=false \
+    FALLA_WAIT="authpolicy/sign" run correr
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"no llegó a Enforced=True"* ]] || false
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "sin declarar el flag se espera el Enforced igual que siempre" {
+  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="authpolicy/s2s-validator-" run correr
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"SIN validar el token"* ]]
+}
