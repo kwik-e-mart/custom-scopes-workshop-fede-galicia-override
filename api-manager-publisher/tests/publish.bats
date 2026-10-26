@@ -62,11 +62,33 @@ JSON
   [ "$(jq -c '{branch, tag, commit}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"v1.2.3","commit":null}' ]
 }
 
-@test "el rate limit viaja si vienen window y hits" {
+@test "un service anterior al check sigue mandando el rate limit si tiene window y hits" {
   set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","window":"10s","hits_per_window":100}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -c '{window, hitsPerWindow}' "$CURL_BODIES_DIR/0.json")" = '{"window":"10s","hitsPerWindow":100}' ]
+}
+
+@test "con el check de rate limit prendido viajan window y hits" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","rate_limit_enabled":true,"window":"1m","hits_per_window":500}' qas
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -c '{window, hitsPerWindow}' "$CURL_BODIES_DIR/0.json")" = '{"window":"1m","hitsPerWindow":500}' ]
+}
+
+@test "con el check de rate limit apagado no viaja aunque queden valores cargados" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","rate_limit_enabled":false,"window":"1m","hits_per_window":500}' qas
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[has("window"), has("hitsPerWindow")]' "$CURL_BODIES_DIR/0.json")" = '[false,false]' ]
+}
+
+@test "con el check prendido y sin valores falla sin llamar a APIM" {
+  set_request '{}' '{"scope":"main","ref_type":"branch","ref":"main","rate_limit_enabled":true}' qas
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
 @test "window sin hits falla sin llamar a APIM" {

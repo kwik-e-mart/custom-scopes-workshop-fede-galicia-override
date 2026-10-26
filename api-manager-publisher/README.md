@@ -10,7 +10,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 
 - **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (APIM genera su
   HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope), la referencia del repo (`branch` / `tag` / `commit`,
-  por default `main`), el legajo y, opcional, el rate limit (`window` + `hits_per_window`). La acción queda en
+  por default `main`), el legajo y, opcional en ADVANCED, el rate limit global (`rate_limit_enabled` con `window` + `hits_per_window`). La acción queda en
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
 - **Actualizar = republicar** con otra referencia o rate limit (APIM sobrescribe la misma ruta).

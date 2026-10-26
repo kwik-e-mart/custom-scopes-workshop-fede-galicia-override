@@ -39,7 +39,36 @@ setup() {
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].type' "$SERVICE")" = "Label" ]
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].options.format' "$SERVICE")" = "markdown" ]
   [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == "## API Manager Publisher"*"### FAQ"* ]] || false
-  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:6]' "$SERVICE")" = '["scope","ref_type","ref","legajo","hits_per_window","window"]' ]
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:4]' "$SERVICE")" = '["scope","ref_type","ref","legajo"]' ]
+}
+
+@test "el rate limit va en una seccion ADVANCED colapsada con una unica tab Rate limit" {
+  local advanced
+  advanced=$(jq -c '.attributes.schema.uiSchema.elements[] | select(.type == "Categorization")' "$SERVICE")
+  [ "$(echo "$advanced" | jq -c .options.collapsable)" = '{"label":"ADVANCED","collapsed":true}' ]
+  [ "$(echo "$advanced" | jq -c '[.elements[] | {type, label}]')" = '[{"type":"Category","label":"Rate limit"}]' ]
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | map(select(. == "hits_per_window" or . == "window" or . == "rate_limit_enabled"))' "$SERVICE")" = '[]' ]
+}
+
+@test "la tab Rate limit explica el limite global y muestra los inputs solo con el check prendido" {
+  local tab
+  tab=$(jq -c '.attributes.schema.uiSchema.elements[] | select(.type == "Categorization") | .elements[0]' "$SERVICE")
+  [ "$(echo "$tab" | jq -r '.elements[0].type')" = "Label" ]
+  [ "$(echo "$tab" | jq -r '.elements[0].options.format')" = "markdown" ]
+  [[ "$(echo "$tab" | jq -r '.elements[0].text')" == *"no define un rate limit global"*"suscriptor"*"todos sus suscriptores"* ]] || false
+  [ "$(echo "$tab" | jq -c '[.elements[] | select(.type == "Control") | .scope | split("/") | last]')" = '["rate_limit_enabled","hits_per_window","window"]' ]
+  [ "$(echo "$tab" | jq -c '.elements[] | select(.type == "Control" and (.scope | endswith("/rate_limit_enabled"))) | has("rule")')" = "false" ]
+  for field in hits_per_window window; do
+    [ "$(echo "$tab" | jq -c --arg f "$field" '.elements[] | select(.type == "Control" and (.scope | endswith("/" + $f))) | .rule')" = '{"effect":"SHOW","condition":{"scope":"#/properties/rate_limit_enabled","schema":{"const":true}}}' ]
+  done
+}
+
+@test "el check del rate limit arranca apagado y los inputs no tienen valor por defecto" {
+  [ "$(jq -c '.attributes.schema.properties.rate_limit_enabled | {type, default}' "$SERVICE")" = '{"type":"boolean","default":false}' ]
+  [ "$(jq -c '.attributes.schema.properties.rate_limit_enabled.editableOn' "$SERVICE")" = '["create","update"]' ]
+  for field in hits_per_window window; do
+    [ "$(jq -r --arg f "$field" '.attributes.schema.properties[$f] | has("default")' "$SERVICE")" = "false" ]
+  done
 }
 
 @test "el rate limit se elige con nombres que se entienden" {

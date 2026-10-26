@@ -17,12 +17,20 @@ publish() {
   action_id=$(notification_field '.id')
   require_action_ids "$service_id" "$action_id"
 
-  local ref_type ref legajo window hits
+  local ref_type ref legajo window hits rate_limit
   ref_type=$(echo "$params" | jq -r '.ref_type // "branch"')
   ref=$(echo "$params" | jq -r '.ref // empty')
   legajo=$(echo "$params" | jq -r '.legajo // empty')
   window=$(echo "$params" | jq -r '.window // empty')
   hits=$(echo "$params" | jq -r '.hits_per_window // empty')
+  rate_limit=$(echo "$params" | jq -r '.rate_limit_enabled | if . == null then empty else tostring end')
+  if [ "$rate_limit" = "false" ]; then
+    window=""
+    hits=""
+  fi
+  if [ "$rate_limit" = "true" ] && [ -z "$window$hits" ]; then
+    fail "publisher: el rate limit global está habilitado pero faltan las llamadas permitidas y el período."
+  fi
 
   case "$ref_type" in
     branch|tag|commit) ;;
