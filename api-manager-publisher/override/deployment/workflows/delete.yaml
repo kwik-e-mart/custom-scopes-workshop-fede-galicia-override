@@ -1,0 +1,5 @@
+steps:
+  - name: require_no_published_api
+    type: script
+    after: build context
+    file: "$OVERRIDES_PATH/deployment/scripts/require_no_published_api"

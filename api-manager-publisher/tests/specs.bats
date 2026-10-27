@@ -17,10 +17,14 @@ setup() {
   [ ! -d "$SPECS/actions" ]
 }
 
-@test "publicar pide el scope y la referencia del repo" {
-  [ "$(jq -c '.attributes.schema.required | sort' "$SERVICE")" = '["ref","ref_type","scope"]' ]
-  [ "$(jq -c '.attributes.schema.properties.ref_type.enum' "$SERVICE")" = '["branch","tag","commit"]' ]
-  [ "$(jq -r '.attributes.schema.properties.ref.default' "$SERVICE")" = "main" ]
+@test "publicar pide solo el scope: la version es la que tiene desplegada" {
+  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope"]' ]
+  [ "$(jq -c '.attributes.schema.properties | [has("ref"), has("ref_type")]' "$SERVICE")" = '[false,false]' ]
+  [ "$(jq -c '[.. | objects | select(has("scope") and (.scope | type == "string")) | .scope | split("/") | last] | map(select(. == "ref" or . == "ref_type"))' "$SERVICE")" = '[]' ]
+}
+
+@test "el faq explica que desplegar no republica la API" {
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == *"desplegada"*"actualizar"*"no republica"* ]] || false
 }
 
 @test "los datos de APIM se ven y no se editan" {
@@ -35,11 +39,40 @@ setup() {
   [ "$(jq -r '.attributes.schema.properties.scope.additionalKeywords.enum' "$SERVICE")" = '[.scopes[]?.slug] | if length == 0 then ["No scopes available for selected environment"] else . end' ]
 }
 
-@test "el formulario explica el servicio y ordena tipo de referencia antes que la referencia" {
+@test "el formulario explica el servicio y pide scope y legajo" {
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].type' "$SERVICE")" = "Label" ]
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].options.format' "$SERVICE")" = "markdown" ]
   [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == "## API Manager Publisher"*"### FAQ"* ]] || false
-  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:6]' "$SERVICE")" = '["scope","ref_type","ref","legajo","hits_per_window","window"]' ]
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:2]' "$SERVICE")" = '["scope","legajo"]' ]
+}
+
+@test "el rate limit va en una seccion ADVANCED colapsada con una unica tab Rate limit" {
+  local advanced
+  advanced=$(jq -c '.attributes.schema.uiSchema.elements[] | select(.type == "Categorization")' "$SERVICE")
+  [ "$(echo "$advanced" | jq -c .options.collapsable)" = '{"label":"ADVANCED","collapsed":true}' ]
+  [ "$(echo "$advanced" | jq -c '[.elements[] | {type, label}]')" = '[{"type":"Category","label":"Rate limit"}]' ]
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | map(select(. == "hits_per_window" or . == "window" or . == "rate_limit_enabled"))' "$SERVICE")" = '[]' ]
+}
+
+@test "la tab Rate limit explica el limite global y muestra los inputs solo con el check prendido" {
+  local tab
+  tab=$(jq -c '.attributes.schema.uiSchema.elements[] | select(.type == "Categorization") | .elements[0]' "$SERVICE")
+  [ "$(echo "$tab" | jq -r '.elements[0].type')" = "Label" ]
+  [ "$(echo "$tab" | jq -r '.elements[0].options.format')" = "markdown" ]
+  [[ "$(echo "$tab" | jq -r '.elements[0].text')" == *"no define un rate limit global"*"suscriptor"*"todos sus suscriptores"* ]] || false
+  [ "$(echo "$tab" | jq -c '[.elements[] | select(.type == "Control") | .scope | split("/") | last]')" = '["rate_limit_enabled","hits_per_window","window"]' ]
+  [ "$(echo "$tab" | jq -c '.elements[] | select(.type == "Control" and (.scope | endswith("/rate_limit_enabled"))) | has("rule")')" = "false" ]
+  for field in hits_per_window window; do
+    [ "$(echo "$tab" | jq -c --arg f "$field" '.elements[] | select(.type == "Control" and (.scope | endswith("/" + $f))) | .rule')" = '{"effect":"SHOW","condition":{"scope":"#/properties/rate_limit_enabled","schema":{"const":true}}}' ]
+  done
+}
+
+@test "el check del rate limit arranca apagado y los inputs no tienen valor por defecto" {
+  [ "$(jq -c '.attributes.schema.properties.rate_limit_enabled | {type, default}' "$SERVICE")" = '{"type":"boolean","default":false}' ]
+  [ "$(jq -c '.attributes.schema.properties.rate_limit_enabled.editableOn' "$SERVICE")" = '["create","update"]' ]
+  for field in hits_per_window window; do
+    [ "$(jq -r --arg f "$field" '.attributes.schema.properties[$f] | has("default")' "$SERVICE")" = "false" ]
+  done
 }
 
 @test "el rate limit se elige con nombres que se entienden" {

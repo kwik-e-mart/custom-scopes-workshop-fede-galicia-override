@@ -9,7 +9,10 @@ setup_publisher() {
   export KUBECTL_MOCK_ROUTES='{"items":[{"metadata":{"name":"k-8-s-main-1049050904-internal"},"spec":{"rules":[{"backendRefs":[{"kind":"Service","name":"d-1049050904-111","port":8080,"weight":30},{"kind":"Service","name":"d-1049050904-222","port":8080,"weight":70}]}]}}]}'
   export KUBECTL_APPLIED_DIR="$BATS_TEST_TMPDIR/applied"
   mkdir -p "$KUBECTL_APPLIED_DIR"
-  unset APIM_CLUSTER_NAME APIM_SIGLA APIM_PROJECT NP_MOCK_SCOPE_FAIL KUBECTL_MOCK_FAIL KUBECTL_MOCK_APPLY_FAIL KUBECTL_MOCK_DELETE_FAIL LOCAL_INGRESS_HOST APIM_GATEWAY_PORT INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE
+  export NP_MOCK_SCOPE_READ='{"id":1049050904,"slug":"main","active_deployment":789675678}'
+  export NP_MOCK_DEPLOYMENT_READ='{"id":789675678,"status":"finalized","release_id":1093627349}'
+  export NP_MOCK_RELEASE_READ='{"id":1093627349,"semver":"0.2.5","build_id":13464037}'
+  unset NP_MOCK_READ_FAIL APIM_CLUSTER_NAME APIM_SIGLA APIM_PROJECT NP_MOCK_SCOPE_FAIL KUBECTL_MOCK_FAIL KUBECTL_MOCK_APPLY_FAIL KUBECTL_MOCK_DELETE_FAIL LOCAL_INGRESS_HOST APIM_GATEWAY_PORT INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE
 
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
@@ -36,6 +39,16 @@ jq -nc '$ARGS.positional' --args -- "$@" >>"$NP_CALLS_LOG"
 if [ "${1-} ${2-}" = "scope list" ]; then
   if [ "${NP_MOCK_SCOPE_FAIL:-0}" = "1" ]; then echo "np: error" >&2; exit 1; fi
   printf '%s\n' "$NP_MOCK_SCOPES"
+  exit 0
+fi
+if [ "${2-}" = "read" ]; then
+  if [ "${NP_MOCK_READ_FAIL-}" = "${1-}" ]; then echo "np: error" >&2; exit 1; fi
+  case "${1-}" in
+    scope) printf '%s\n' "$NP_MOCK_SCOPE_READ" ;;
+    deployment) printf '%s\n' "$NP_MOCK_DEPLOYMENT_READ" ;;
+    release) printf '%s\n' "$NP_MOCK_RELEASE_READ" ;;
+    *) echo "np: unknown entity ${1-}" >&2; exit 1 ;;
+  esac
   exit 0
 fi
 if [ "${2-} ${3-}" = "action update" ] && [ "${NP_MOCK_UPDATE_FAIL:-0}" = "1" ]; then
