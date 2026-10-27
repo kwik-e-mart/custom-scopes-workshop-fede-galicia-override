@@ -17,20 +17,19 @@ publish() {
   action_id=$(notification_field '.id')
   require_action_ids "$service_id" "$action_id"
 
-  local ref_type ref legajo window hits
-  ref_type=$(echo "$params" | jq -r '.ref_type // "branch"')
-  ref=$(echo "$params" | jq -r '.ref // empty')
+  local legajo window hits rate_limit
   legajo=$(echo "$params" | jq -r '.legajo // empty')
   window=$(echo "$params" | jq -r '.window // empty')
   hits=$(echo "$params" | jq -r '.hits_per_window // empty')
-
-  case "$ref_type" in
-    branch|tag|commit) ;;
-    *) fail "publisher: ref_type tiene que ser branch, tag o commit (llegó '$ref_type')." ;;
-  esac
-  if [[ ! "$ref" =~ $REF_PATTERN ]]; then
-    fail "publisher: la referencia '$ref' no es un branch, tag o commit válido."
+  rate_limit=$(echo "$params" | jq -r '.rate_limit_enabled | if . == null then empty else tostring end')
+  if [ "$rate_limit" = "false" ]; then
+    window=""
+    hits=""
   fi
+  if [ "$rate_limit" = "true" ] && [ -z "$window$hits" ]; then
+    fail "publisher: el rate limit global está habilitado pero faltan las llamadas permitidas y el período."
+  fi
+
   if [ -n "$legajo" ] && [[ ! "$legajo" =~ $LEGAJO_PATTERN ]]; then
     fail "publisher: el legajo tiene que tener el formato l#######."
   fi
@@ -46,6 +45,7 @@ publish() {
   require_sigla_and_project "$(notification_field '.tags.namespace')"
   require_parent_refs
   require_scope_destination "$(echo "$params" | jq -r '.scope // empty')" "$(echo "${CONTEXT-}" | jq -r '.application.id // empty')"
+  require_deployed_release "$SCOPE_ID" "$SCOPE_SLUG"
   require_gateway_backend
   require_publish_environment "$(notification_field '.service.dimensions.environment')"
 
@@ -53,8 +53,7 @@ publish() {
   body=$(jq -nc \
     --arg organization "$SOURCE_ORGANIZATION" \
     --arg repository "$SOURCE_REPOSITORY" \
-    --arg ref_type "$ref_type" \
-    --arg ref "$ref" \
+    --arg tag "$DEPLOYED_RELEASE" \
     --arg environment "$PUBLISH_ENVIRONMENT" \
     --arg tenant "$PUBLISH_TENANT" \
     --arg cluster "$CLUSTER_NAME" \
@@ -68,14 +67,14 @@ publish() {
     --argjson backend "$GATEWAY_BACKEND" \
     --arg destination "$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
-    '{organization: $organization, repository: $repository, ($ref_type): $ref, environment: $environment,
+    '{organization: $organization, repository: $repository, tag: $tag, environment: $environment,
       tenant: $tenant, origen: "nullplatform", sigla: $sigla, project: $project, cluster: $cluster, callbackUrl: $callback,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $legajo == "" then {} else {legajo: $legajo} end)
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
-  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY ($ref_type $ref) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
+  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release $DEPLOYED_RELEASE) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
   apim_request POST /v1/kuadrant/manifests/publish "$body" ""
 
   local status message results

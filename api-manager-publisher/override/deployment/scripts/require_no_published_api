@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+SCOPE_SLUG=$(echo "$CONTEXT" | jq -r '.scope.slug')
+APPLICATION_NRN=$(echo "$CONTEXT" | jq -r '.scope.nrn | sub(":scope=.*$"; "")')
+
+if ! SERVICES=$(np service list --nrn "$APPLICATION_NRN" --status:ne archived --all --format json); then
+  echo "❌ Failed to list the services of $APPLICATION_NRN: cannot verify that no API is published on scope '$SCOPE_SLUG'" >&2
+  exit 1
+fi
+
+PUBLISHED_APIS=$(echo "$SERVICES" | jq -r --arg provider "$APIM_PUBLISHER_PROVIDER" --arg scope "$SCOPE_SLUG" '
+  [(.results? // .)[] | select(.selectors.provider == $provider and .attributes.scope == $scope) | .name] | join(", ")')
+
+if [ -n "$PUBLISHED_APIS" ]; then
+  echo "❌ No se puede borrar ni pausar el scope '$SCOPE_SLUG' mientras tenga publicada la API $PUBLISHED_APIS en el $APIM_PUBLISHER_PROVIDER. Primero hay que despublicar la API borrando su service." >&2
+  exit 1
+fi
+
+echo "✅ No $APIM_PUBLISHER_PROVIDER API is published on scope '$SCOPE_SLUG'"
