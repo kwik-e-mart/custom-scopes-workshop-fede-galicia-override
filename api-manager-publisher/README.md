@@ -21,7 +21,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   `merge` con el validador del s2s, que también tiene que estar en `merge`.
 - **Borrar**: APIM todavía no tiene endpoint de baja. Borra las AuthPolicies de la API (el scope deja de
   aceptar sus credenciales) y cierra avisando que la API sigue publicada; la baja se pide a APIM por fuera.
-- **Linkear una app = suscribirla.** El link pide el RITM aprobado y el plan, y lo pide al API Subscriber
+- **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato,, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. El unlink da de baja
   la suscripción solo si ese link la creó.
 
@@ -54,6 +54,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el `cluster.id` del provider |
 | `APIM_SIGLA`, `APIM_PROJECT` | opcionales: reemplazan la `sigla` y el `project` que salen del namespace |
+| `APIM_CONSUMER_NAMESPACE` | opcional: reemplaza el namespace que suscriben los links (y que se verifica en el unlink) en todas las apps del agente. No cambia el namespace de la API publicada |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |

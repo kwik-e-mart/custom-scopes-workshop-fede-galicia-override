@@ -81,19 +81,20 @@ setup() {
   [ "$(jq -c '[.attributes.schema.properties.window.oneOf[] | {const, title}]' "$SERVICE")" = '[{"const":"1s","title":"por segundo"},{"const":"10s","title":"cada 10 segundos"},{"const":"1m","title":"por minuto"},{"const":"1h","title":"por hora"}]' ]
 }
 
-@test "el link pide RITM y plan y guarda la suscripcion" {
+@test "el link pide el ticket y plan y guarda la suscripcion" {
   [ "$(jq -c '.attributes.schema.required | sort' "$CONNECT")" = '["approval_ref","plan_id"]' ]
   [ "$(jq -c '[.attributes.schema.properties.plan_id.oneOf[].const]' "$CONNECT")" = '["bronze","gold","no-limits"]' ]
   [ "$(jq -c '.attributes.schema.properties.owns_subscription | {type, visibleOn}' "$CONNECT")" = '{"type":"boolean","visibleOn":[]}' ]
-  [ "$(jq -r '.attributes.schema.properties.approval_ref.pattern' "$CONNECT")" = '^RITM[0-9]+$' ]
+  [ "$(jq -c '.attributes.schema.properties.approval_ref | has("pattern")' "$CONNECT")" = "false" ]
 }
 
 @test "el link explica el ticket de suscripcion y que tiene que estar aprobado" {
-  [ "$(jq -r '.attributes.schema.properties.approval_ref.title' "$CONNECT")" = "Ticket de solicitud de suscripción (RITM)" ]
+  [ "$(jq -r '.attributes.schema.properties.approval_ref.title' "$CONNECT")" = "Ticket de solicitud de suscripción" ]
+  ! grep -q 'RITM' "$CONNECT"
   [[ "$(jq -r '.attributes.schema.properties.approval_ref.description' "$CONNECT")" == *"aprobado"*"falla"* ]] || false
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].type' "$CONNECT")" = "Label" ]
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].options.format' "$CONNECT")" = "markdown" ]
-  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$CONNECT")" == "## Suscripción a la API"*"### FAQ"*"RITM"* ]] || false
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$CONNECT")" == "## Suscripción a la API"*"### FAQ"*"ticket"*"aprobado"* ]] || false
   [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last]' "$CONNECT")" = '["approval_ref","plan_id","subscription_id","operation_id","consumer_namespace"]' ]
 }
 
