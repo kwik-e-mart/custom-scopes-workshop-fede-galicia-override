@@ -10,6 +10,7 @@ close_failed() {
 
 case "${SERVICE_ACTION_TYPE-}" in
   create) WORKFLOW=link ;;
+  update) WORKFLOW=link_update ;;
   delete) WORKFLOW=unlink ;;
   *) close_failed "publisher: acción de link no soportada: type='${SERVICE_ACTION_TYPE-}' slug='${SERVICE_ACTION-}'." ;;
 esac

@@ -86,6 +86,7 @@ setup() {
   [ "$(jq -c '[.attributes.schema.properties.plan_id.oneOf[].const]' "$CONNECT")" = '["bronze","gold","no-limits"]' ]
   [ "$(jq -c '.attributes.schema.properties.owns_subscription | {type, visibleOn}' "$CONNECT")" = '{"type":"boolean","visibleOn":[]}' ]
   [ "$(jq -c '.attributes.schema.properties.approval_ref | has("pattern")' "$CONNECT")" = "false" ]
+  [ "$(jq -c '[.attributes.schema.properties.approval_ref.editableOn, .attributes.schema.properties.plan_id.editableOn]' "$CONNECT")" = '[["create","update"],["create","update"]]' ]
 }
 
 @test "el link explica el ticket de suscripcion y que tiene que estar aprobado" {
