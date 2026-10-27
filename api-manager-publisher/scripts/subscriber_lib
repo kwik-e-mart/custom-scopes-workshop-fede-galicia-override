@@ -99,6 +99,14 @@ require_provider_namespace() {
   fi
 }
 
+require_consumer_namespace() {
+  require_provider_namespace
+  CONSUMER_NAMESPACE="$PROVIDER_NAMESPACE"
+  if [ -n "${APIM_CONSUMER_NAMESPACE-}" ]; then
+    CONSUMER_NAMESPACE="$APIM_CONSUMER_NAMESPACE"
+  fi
+}
+
 require_plan_id_format() {
   if [[ ! "$1" =~ $PLAN_ID_PATTERN ]]; then
     fail "subscriber: plan_id inválido: '$1'."
@@ -256,14 +264,14 @@ request_unsubscription() {
   if [ -z "$key" ]; then
     fail "subscriber: la notificación no trae el id de la acción."
   fi
-  require_provider_namespace
+  require_consumer_namespace
 
   lookup_subscription_owner "$subscription_id"
   if [ -z "$SUBSCRIPTION_OWNER" ]; then
     close_action success "La suscripción $subscription_id ya no existe en APIM."
     return
   fi
-  require_owned_by_namespace "$subscription_id" "$PROVIDER_NAMESPACE"
+  require_owned_by_namespace "$subscription_id" "$CONSUMER_NAMESPACE"
 
   log info "subscriber: dando de baja $subscription_id."
   apim_request DELETE "/v1/subscriptions/$subscription_id" "" "$key"

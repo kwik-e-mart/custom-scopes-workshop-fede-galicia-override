@@ -45,6 +45,17 @@ link_context() {
   [ ! -s "$CURL_CALLS_LOG" ]
 }
 
+@test "APIM_CONSUMER_NAMESPACE reemplaza el namespace que se suscribe" {
+  STEP="$PUBLISHER_SCRIPTS/link_subscribe"
+  export APIM_CONSUMER_NAMESPACE="zosc-pruebas"
+  link_context '{}' '{"approval_ref":"UR0866152","plan_id":"gold"}'
+  queue_response 202 '{"id":"op-1","target":"sub-api-0866152--zosc-pruebas"}'
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .consumerNamespace "$CURL_BODIES_DIR/0.json")" = "zosc-pruebas" ]
+  [ "$(np_last_update_flag --results | jq -r .consumer_namespace)" = "zosc-pruebas" ]
+}
+
 @test "un 409 cierra el link success sin ser duenio" {
   STEP="$PUBLISHER_SCRIPTS/link_subscribe"
   link_context '{}' '{"approval_ref":"RITM0012345","plan_id":"gold"}'
@@ -64,6 +75,18 @@ link_context() {
   [ "$status" -eq 0 ]
   grep -q '^DELETE https://apisub.test/v1/subscriptions/sub-api-0012345--ledger idem=act-l ' "$CURL_CALLS_LOG"
   [ "$(np_updates | tail -n1 | jq -c '.[0:3]')" = '["link","action","update"]' ]
+  [ "$(np_last_update_flag --status)" = "success" ]
+}
+
+@test "el unlink con APIM_CONSUMER_NAMESPACE da de baja la suscripcion de ese namespace" {
+  STEP="$PUBLISHER_SCRIPTS/link_unsubscribe"
+  export APIM_CONSUMER_NAMESPACE="zosc-pruebas"
+  link_context '{"subscription_id":"sub-api-0866152--zosc-pruebas","owns_subscription":true}' '{}'
+  queue_response 200 '{"id":"sub-api-0866152--zosc-pruebas","consumerNamespace":"zosc-pruebas"}'
+  queue_response 202 '{"id":"op-2"}'
+  run_step
+  [ "$status" -eq 0 ]
+  grep -q '^DELETE https://apisub.test/v1/subscriptions/sub-api-0866152--zosc-pruebas idem=act-l ' "$CURL_CALLS_LOG"
   [ "$(np_last_update_flag --status)" = "success" ]
 }
 

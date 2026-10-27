@@ -54,6 +54,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el `cluster.id` del provider |
 | `APIM_SIGLA`, `APIM_PROJECT` | opcionales: reemplazan la `sigla` y el `project` que salen del namespace |
+| `APIM_CONSUMER_NAMESPACE` | opcional: reemplaza el namespace que suscriben los links (y que se verifica en el unlink) en todas las apps del agente. No cambia el namespace de la API publicada |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |

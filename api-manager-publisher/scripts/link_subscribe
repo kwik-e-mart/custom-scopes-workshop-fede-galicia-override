@@ -17,14 +17,14 @@ link_subscribe() {
   link_id=$(notification_field '.link.id')
   action_id=$(notification_field '.id')
   require_action_ids "$link_id" "$action_id"
-  require_provider_namespace
+  require_consumer_namespace
 
   SUBSCRIPTION_CREDENTIAL_HINT="Tus deployments reciben la credencial como APIM_APP_ID y APIM_APP_KEY a partir del próximo deploy: mandalas en los headers app_id y app_key."
 
   request_subscription \
     "$(echo "$params" | jq -r '.approval_ref // empty')" \
     "$(echo "$params" | jq -r '.plan_id // empty')" \
-    "$PROVIDER_NAMESPACE" \
+    "$CONSUMER_NAMESPACE" \
     "$(callback_url "$link_id" "$action_id")" \
     "$action_id"
 }
