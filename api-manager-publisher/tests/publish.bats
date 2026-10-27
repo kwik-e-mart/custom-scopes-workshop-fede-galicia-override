@@ -265,6 +265,14 @@ JSON
   [ "$(jq -r .cluster "$CURL_BODIES_DIR/0.json")" = "cluster1" ]
 }
 
+@test "APIM_CONSUMER_NAMESPACE no cambia el namespace de la API publicada" {
+  export APIM_CONSUMER_NAMESPACE="zosc-pruebas"
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .metadata.namespace "$CURL_BODIES_DIR/0.json")" = "payments" ]
+}
+
 @test "la sigla es la primera parte del namespace sin pasarla a mayusculas" {
   set_request '{}' '{"scope":"main"}' qas PLCL-PlatformOps
   queue_response 200 "$(pushed)"

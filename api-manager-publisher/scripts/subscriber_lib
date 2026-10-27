@@ -2,7 +2,6 @@
 
 NP_API_BASE_URL="https://api.nullplatform.com"
 SUBSCRIPTION_ID_PATTERN='sub-[a-z0-9]([a-z0-9.-]*[a-z0-9])?--[a-z0-9]([a-z0-9.-]*[a-z0-9])?'
-APPROVAL_REF_PATTERN='^RITM[0-9]+$'
 PLAN_ID_PATTERN='^[A-Za-z0-9._-]+$'
 APIM_DETAIL_MAX_CHARS=300
 APIM_LOG_BODY_MAX_CHARS=2000
@@ -97,6 +96,14 @@ require_provider_namespace() {
   PROVIDER_NAMESPACE=$(echo "${CONTEXT-}" | jq -r '.providers["container-orchestration"].cluster.namespace // empty' 2>/dev/null) || PROVIDER_NAMESPACE=""
   if [ -z "$PROVIDER_NAMESPACE" ]; then
     fail "subscriber: el provider container-orchestration no trae cluster.namespace; no se adivina el namespace a suscribir."
+  fi
+}
+
+require_consumer_namespace() {
+  require_provider_namespace
+  CONSUMER_NAMESPACE="$PROVIDER_NAMESPACE"
+  if [ -n "${APIM_CONSUMER_NAMESPACE-}" ]; then
+    CONSUMER_NAMESPACE="$APIM_CONSUMER_NAMESPACE"
   fi
 }
 
@@ -208,9 +215,6 @@ request_subscription() {
   if [ -z "$approval_ref" ] || [ -z "$plan_id" ]; then
     fail "subscriber: faltan approval_ref o plan_id en el pedido."
   fi
-  if [[ ! "$approval_ref" =~ $APPROVAL_REF_PATTERN ]]; then
-    fail "subscriber: approval_ref inválido: '$approval_ref'. Tiene que ser un número de RITM."
-  fi
   require_plan_id_format "$plan_id"
 
   local body
@@ -260,14 +264,14 @@ request_unsubscription() {
   if [ -z "$key" ]; then
     fail "subscriber: la notificación no trae el id de la acción."
   fi
-  require_provider_namespace
+  require_consumer_namespace
 
   lookup_subscription_owner "$subscription_id"
   if [ -z "$SUBSCRIPTION_OWNER" ]; then
     close_action success "La suscripción $subscription_id ya no existe en APIM."
     return
   fi
-  require_owned_by_namespace "$subscription_id" "$PROVIDER_NAMESPACE"
+  require_owned_by_namespace "$subscription_id" "$CONSUMER_NAMESPACE"
 
   log info "subscriber: dando de baja $subscription_id."
   apim_request DELETE "/v1/subscriptions/$subscription_id" "" "$key"
