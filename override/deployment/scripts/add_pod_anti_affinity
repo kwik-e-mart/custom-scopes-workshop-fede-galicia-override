@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+
+APPLICATION=$(echo "$CONTEXT" | jq -r '.application.slug // empty')
+
+if [ -z "$APPLICATION" ]; then
+  echo "⚠️ Cannot set pod anti-affinity: the context has no application.slug — deployments go without it" >&2
+  return 0
+fi
+
+# Must match the 'application' label the base template puts on every pod.
+POD_ANTI_AFFINITY_TERM=$(jq -cn --arg app "$APPLICATION" '{
+  weight: 100,
+  podAffinityTerm: {
+    labelSelector: { matchExpressions: [ { key: "application", operator: "In", values: [ $app ] } ] },
+    topologyKey: "kubernetes.io/hostname"
+  }
+}')
+export POD_ANTI_AFFINITY_TERM
+
+for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
+  [ -f "$deployment_file" ] || continue
+  kind=$(yq eval '.kind' "$deployment_file")
+  echo "📝 Setting pod anti-affinity in $deployment_file (kind: $kind)"
+
+  if [ "$kind" = "CronJob" ]; then
+    pod_spec=".spec.jobTemplate.spec.template.spec"
+  else
+    pod_spec=".spec.template.spec"
+  fi
+
+  yq eval -i "${pod_spec}.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution |= ((. // []) + [env(POD_ANTI_AFFINITY_TERM)])" "$deployment_file"
+
+  echo "✅ Added podAntiAffinity in $deployment_file"
+done
