@@ -28,6 +28,23 @@ link_context() {
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM_APP_ID y APIM_APP_KEY"*"próximo deploy"* ]] || false
 }
 
+@test "el link manda el ticket tal cual lo cargaron, sin validar su formato" {
+  STEP="$PUBLISHER_SCRIPTS/link_subscribe"
+  link_context '{}' '{"approval_ref":"UR0866152","plan_id":"gold"}'
+  queue_response 202 '{"id":"op-1","target":"sub-api-0866152--ledger"}'
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .approvalRef "$CURL_BODIES_DIR/0.json")" = "UR0866152" ]
+}
+
+@test "el link sin ticket falla sin llamar al API Subscriber" {
+  STEP="$PUBLISHER_SCRIPTS/link_subscribe"
+  link_context '{}' '{"plan_id":"gold"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [ ! -s "$CURL_CALLS_LOG" ]
+}
+
 @test "un 409 cierra el link success sin ser duenio" {
   STEP="$PUBLISHER_SCRIPTS/link_subscribe"
   link_context '{}' '{"approval_ref":"RITM0012345","plan_id":"gold"}'

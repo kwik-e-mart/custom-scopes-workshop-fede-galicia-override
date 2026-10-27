@@ -2,7 +2,6 @@
 
 NP_API_BASE_URL="https://api.nullplatform.com"
 SUBSCRIPTION_ID_PATTERN='sub-[a-z0-9]([a-z0-9.-]*[a-z0-9])?--[a-z0-9]([a-z0-9.-]*[a-z0-9])?'
-APPROVAL_REF_PATTERN='^RITM[0-9]+$'
 PLAN_ID_PATTERN='^[A-Za-z0-9._-]+$'
 APIM_DETAIL_MAX_CHARS=300
 APIM_LOG_BODY_MAX_CHARS=2000
@@ -207,9 +206,6 @@ request_subscription() {
   local approval_ref="$1" plan_id="$2" namespace="$3" callback="$4" key="$5"
   if [ -z "$approval_ref" ] || [ -z "$plan_id" ]; then
     fail "subscriber: faltan approval_ref o plan_id en el pedido."
-  fi
-  if [[ ! "$approval_ref" =~ $APPROVAL_REF_PATTERN ]]; then
-    fail "subscriber: approval_ref inválido: '$approval_ref'. Tiene que ser un número de RITM."
   fi
   require_plan_id_format "$plan_id"
 

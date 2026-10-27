@@ -21,7 +21,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   `merge` con el validador del s2s, que también tiene que estar en `merge`.
 - **Borrar**: APIM todavía no tiene endpoint de baja. Borra las AuthPolicies de la API (el scope deja de
   aceptar sus credenciales) y cierra avisando que la API sigue publicada; la baja se pide a APIM por fuera.
-- **Linkear una app = suscribirla.** El link pide el RITM aprobado y el plan, y lo pide al API Subscriber
+- **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato,, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. El unlink da de baja
   la suscripción solo si ese link la creó.
 
