@@ -17,8 +17,13 @@ setup() {
   [ ! -d "$SPECS/actions" ]
 }
 
-@test "publicar pide solo el scope: la version es la que tiene desplegada" {
-  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope"]' ]
+@test "el FAQ dice que borrar el servicio da de baja la API" {
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == *"Borrar el servicio da de baja la API en APIM"* ]] || false
+  ! grep -q "pedí la baja" "$SERVICE"
+}
+
+@test "publicar pide el scope y el legajo: la version es la que tiene desplegada" {
+  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope","legajo"]' ]
   [ "$(jq -c '.attributes.schema.properties | [has("ref"), has("ref_type")]' "$SERVICE")" = '[false,false]' ]
   [ "$(jq -c '[.. | objects | select(has("scope") and (.scope | type == "string")) | .scope | split("/") | last] | map(select(. == "ref" or . == "ref_type"))' "$SERVICE")" = '[]' ]
 }
