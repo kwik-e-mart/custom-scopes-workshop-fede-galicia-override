@@ -341,7 +341,7 @@ fi
 
 if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   if [ -z "$PEER_GATEWAY_HOST" ]; then
-    log error "egress-interceptor: falta PEER_GATEWAY_HOST en la configuración del workflow."
+    log error "egress-interceptor: falta PEER_GATEWAY_HOST en el entorno del agente."
     log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
     exit 1
   fi

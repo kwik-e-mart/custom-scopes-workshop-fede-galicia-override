@@ -1004,3 +1004,12 @@ sin_sigla() {
   usos=$(grep -n 'kubectl -n "\$GATEWAY_NAMESPACE"' "$rec" || true)
   [ -z "$usos" ] || { echo "$usos" >&2; false; }
 }
+
+@test "el workflow no fija los valores del peer: esos los trae el agente" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" n declaradas
+  declaradas=""
+  for n in PEER_GATEWAY_HOST PEER_CA_SECRET PEER_JWKS_URL; do
+    declaradas="${declaradas}$(grep -lE "^  ${n}: " "$dir/create.yaml" "$dir/delete.yaml" 2>/dev/null | sed "s/\$/ -> ${n}/")"
+  done
+  [ -z "$declaradas" ] || { echo "$declaradas" >&2; false; }
+}
