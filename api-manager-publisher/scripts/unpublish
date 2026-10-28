@@ -8,16 +8,62 @@ ACTION_SETTLED=0
 trap close_on_unexpected_exit EXIT
 
 unpublish() {
+  require_publisher_config
   load_notification
-  local api_id
+
+  local service_id action_id api_id legajo message
+  service_id=$(notification_field '.service.id')
+  action_id=$(notification_field '.id')
+  require_action_ids "$service_id" "$action_id"
   api_id=$(notification_field '.service.attributes.api_id')
-  if [ -z "$api_id" ]; then
-    close_action success "APIM todavía no tiene endpoint de baja: la API sin apiId sigue publicada. Pedí la baja a APIM por fuera."
-    return
+  legajo=$(notification_field '.service.attributes.legajo')
+  if [[ ! "$legajo" =~ $LEGAJO_PATTERN ]]; then
+    fail "publisher: APIM necesita el legajo de quien pide la baja (formato l#######); cargalo editando el servicio y volvé a borrarlo."
   fi
+
+  require_source_repository "$(echo "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
   require_provider_namespace
-  detach_scope_auth_policies "$api_id" "$PROVIDER_NAMESPACE"
-  close_action success "APIM todavía no tiene endpoint de baja: la API $api_id sigue publicada, pero el scope ya no acepta sus credenciales. Pedí la baja a APIM por fuera."
+  require_cluster_name
+  require_sigla_and_project "$(notification_field '.tags.namespace')"
+  require_publish_environment "$(notification_field '.service.dimensions.environment')"
+
+  local body
+  body=$(jq -nc \
+    --arg sigla "$PUBLISH_SIGLA" \
+    --arg project "$PUBLISH_PROJECT" \
+    --arg environment "$PUBLISH_ENVIRONMENT" \
+    --arg tenant "$PUBLISH_TENANT" \
+    --arg cluster "$CLUSTER_NAME" \
+    --arg name "$SOURCE_REPOSITORY" \
+    --arg namespace "$PROVIDER_NAMESPACE" \
+    --arg legajo "$legajo" \
+    --arg callback "$(callback_url "$service_id" "$action_id")" \
+    '{sigla: $sigla, proyecto: $project, environment: $environment, tenant: $tenant, cluster: $cluster,
+      name: $name, namespace: $namespace, legajo: $legajo, origen: "nullplatform", callbackUrl: $callback}')
+
+  log info "publisher: pidiendo la baja de $SOURCE_REPOSITORY en $PUBLISH_ENVIRONMENT."
+  apim_request POST /v1/kuadrant/manifests/delete "$body" ""
+
+  case "$APIM_HTTP_CODE" in
+    202)
+      if [ -n "$api_id" ]; then
+        detach_scope_auth_policies "$api_id" "$PROVIDER_NAMESPACE"
+      fi
+      report_progress "Baja en curso en APIM. APIM avisa cuando la API quede dada de baja." \
+        "$(echo "$APIM_BODY" | jq -c '{deletion_id: .deletionId}')" \
+        || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    404)
+      if [ -n "$api_id" ]; then
+        detach_scope_auth_policies "$api_id" "$PROVIDER_NAMESPACE"
+      fi
+      close_action success "La API no tiene manifests publicados en APIM: no hay nada que dar de baja."
+      ;;
+    *)
+      message=$(echo "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
+      fail "publisher: APIM rechazó la baja (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
+      ;;
+  esac
 }
 
 unpublish

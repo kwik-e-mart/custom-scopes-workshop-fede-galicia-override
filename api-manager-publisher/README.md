@@ -19,8 +19,8 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   AuthPolicy `<apiId>-<route>` que acepta las credenciales de esa API (`app_key` con label `api-id`, `app_id`
   igual al label `app-id`). Es la que deja pasar el reingreso de APIM por el gateway privado; se combina en
   `merge` con el validador del s2s, que también tiene que estar en `merge`.
-- **Borrar**: APIM todavía no tiene endpoint de baja. Borra las AuthPolicies de la API (el scope deja de
-  aceptar sus credenciales) y cierra avisando que la API sigue publicada; la baja se pide a APIM por fuera.
+- **Borrar**: pide la baja a APIM (`/v1/kuadrant/manifests/delete`, con el legajo del servicio) y, cuando
+  APIM la acepta, borra las AuthPolicies de la API. La acción queda abierta hasta el callback de APIM.
 - **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato,, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. El unlink da de baja
   la suscripción solo si ese link la creó.
