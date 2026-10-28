@@ -253,7 +253,7 @@ request_subscription() {
 }
 
 request_plan_change() {
-  local subscription_id="$1" approval_ref="$2" plan_id="$3" callback="$4" key="$5"
+  local subscription_id="$1" approval_ref="$2" plan_id="$3" callback="$4" key="$5" owns="${6-false}"
   if [ -z "$subscription_id" ]; then
     fail "subscriber: el link no tiene una suscripción en APIM; no hay plan para cambiar."
   fi
@@ -281,7 +281,8 @@ request_plan_change() {
     202)
       operation_id=$(echo "$APIM_BODY" | jq -r '.id // empty')
       report_progress "Cambio de plan en curso (operación $operation_id). APIM avisa cuando quede aplicado." \
-        "$(jq -nc --arg op "$operation_id" '{operation_id: $op}')" \
+        "$(jq -nc --arg sub "$subscription_id" --arg op "$operation_id" --arg ns "$CONSUMER_NAMESPACE" --argjson owns "$owns" \
+          '{subscription_id: $sub, operation_id: $op, consumer_namespace: $ns, owns_subscription: $owns}')" \
         || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
       ;;
     *)

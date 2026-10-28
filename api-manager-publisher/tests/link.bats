@@ -114,7 +114,18 @@ update_context() {
   grep -q '^PATCH https://apisub.test/v1/subscriptions/sub-api-0866152--ledger idem=act-l auth=Bearer tok-123 ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/1.json")" = '{"approvalRef":"UR0900001","callbackUrl":"https://api.nullplatform.com/link/l-1/action/act-l","planId":"gold"}' ]
   [ "$(np_updates | tail -n1 | jq -c '.[0:3]')" = '["link","action","update"]' ]
-  [ "$(np_last_update_flag --results | jq -c .)" = '{"operation_id":"op-3"}' ]
+  [ "$(np_last_update_flag --results | jq -c .)" = '{"subscription_id":"sub-api-0866152--ledger","operation_id":"op-3","consumer_namespace":"ledger","owns_subscription":true}' ]
+}
+
+@test "el update conserva lo que el link sabe de su suscripcion aunque el formulario mande otros valores" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context true '{"approval_ref":"UR0900001","plan_id":"gold","owns_subscription":false,"subscription_id":"sub-api-9999999--otro","consumer_namespace":"otro"}'
+  queue_response 200 '{"id":"sub-api-0866152--ledger","consumerNamespace":"ledger"}'
+  queue_response 202 '{"id":"op-3"}'
+  run_step
+  [ "$status" -eq 0 ]
+  grep -q '^PATCH https://apisub.test/v1/subscriptions/sub-api-0866152--ledger ' "$CURL_CALLS_LOG"
+  [ "$(np_last_update_flag --results | jq -c '{subscription_id, owns_subscription, consumer_namespace}')" = '{"subscription_id":"sub-api-0866152--ledger","owns_subscription":true,"consumer_namespace":"ledger"}' ]
 }
 
 @test "el update cambia el plan aunque el link no haya creado la suscripcion" {

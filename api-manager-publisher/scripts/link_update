@@ -20,11 +20,12 @@ link_update() {
   require_consumer_namespace
 
   request_plan_change \
-    "$(echo "$params" | jq -r '.subscription_id // empty')" \
+    "$(notification_field '.link.attributes.subscription_id')" \
     "$(echo "$params" | jq -r '.approval_ref // empty')" \
     "$(echo "$params" | jq -r '.plan_id // empty')" \
     "$(callback_url "$link_id" "$action_id")" \
-    "$action_id"
+    "$action_id" \
+    "$(echo "$NOTIFICATION" | jq -r '.link.attributes.owns_subscription // false')"
 }
 
 link_update
