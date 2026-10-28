@@ -1,0 +1,41 @@
+#!/bin/bash
+set -euo pipefail
+
+for deployment_file in "$OUTPUT_DIR"/deployment-*.yaml; do
+  [ -f "$deployment_file" ] || continue
+  kind=$(yq eval '.kind' "$deployment_file")
+  echo "📝 Setting topology spread constraints in $deployment_file (kind: $kind)"
+
+  if [ "$kind" = "CronJob" ]; then
+    pod_template=".spec.jobTemplate.spec.template"
+  else
+    pod_template=".spec.template"
+  fi
+
+  # The selector must match the 'name' label the base template puts on every pod.
+  pod_name=$(yq eval "${pod_template}.metadata.labels.name // \"\"" "$deployment_file")
+  if [ -z "$pod_name" ]; then
+    echo "⚠️ Cannot set topology spread constraints: no 'name' label in ${pod_template}.metadata.labels of $deployment_file — it goes without them" >&2
+    continue
+  fi
+
+  TOPOLOGY_SPREAD_CONSTRAINTS=$(jq -cn --arg name "$pod_name" '
+    [
+      { topologyKey: "topology.kubernetes.io/zone", whenUnsatisfiable: "ScheduleAnyway" },
+      { topologyKey: "kubernetes.io/hostname",      whenUnsatisfiable: "ScheduleAnyway" }
+    ]
+    | map({
+        maxSkew: 1,
+        topologyKey,
+        whenUnsatisfiable,
+        nodeAffinityPolicy: "Honor",
+        nodeTaintsPolicy: "Honor",
+        matchLabelKeys: ["pod-template-hash"],
+        labelSelector: { matchLabels: { name: $name } }
+      })')
+  export TOPOLOGY_SPREAD_CONSTRAINTS
+
+  yq eval -i "${pod_template}.spec.topologySpreadConstraints |= ((. // []) + env(TOPOLOGY_SPREAD_CONSTRAINTS) | unique_by(.topologyKey))" "$deployment_file"
+
+  echo "✅ Added topologySpreadConstraints (name=$pod_name, zone + hostname, ScheduleAnyway) in $deployment_file"
+done

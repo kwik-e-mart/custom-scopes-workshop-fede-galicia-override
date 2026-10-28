@@ -21,7 +21,7 @@ steps:
     type: script
     after: create deployment
     file: "$OVERRIDES_PATH/deployment/scripts/strip_s2s_headers"
-  - name: add_pod_anti_affinity
+  - name: add_topology_spread_constraints
     type: script
     after: create deployment
-    file: "$OVERRIDES_PATH/deployment/scripts/add_pod_anti_affinity"
+    file: "$OVERRIDES_PATH/deployment/scripts/add_topology_spread_constraints"
