@@ -341,18 +341,18 @@ fi
 
 if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   if [ -z "$PEER_GATEWAY_HOST" ]; then
-    log error "egress-interceptor: falta PEER_GATEWAY_HOST en la configuración del workflow."
+    log error "egress-interceptor: falta PEER_GATEWAY_HOST en el entorno del agente."
     log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
     exit 1
   fi
   if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
     if [ -z "$NETWORKING_VAULT_ADDR" ]; then
-      log error "egress-interceptor: falta NETWORKING_VAULT_ADDR en la configuración del workflow."
+      log error "egress-interceptor: falta NETWORKING_VAULT_ADDR en el entorno del agente."
       log error "  Con la estrategia 'spiffe' el token lo mintea Vault: sin su dirección no hay quién firme."
       exit 1
     fi
     if [ -z "$NETWORKING_VAULT_SPIFFE_MOUNT" ]; then
-      log error "egress-interceptor: falta NETWORKING_VAULT_SPIFFE_MOUNT en la configuración del workflow."
+      log error "egress-interceptor: falta NETWORKING_VAULT_SPIFFE_MOUNT en el entorno del agente."
       log error "  Es el path donde está montado el secrets engine 'spiffe' que emite los JWT-SVID."
       exit 1
     fi

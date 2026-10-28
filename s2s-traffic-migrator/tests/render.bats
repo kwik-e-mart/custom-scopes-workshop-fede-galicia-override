@@ -1004,3 +1004,25 @@ sin_sigla() {
   usos=$(grep -n 'kubectl -n "\$GATEWAY_NAMESPACE"' "$rec" || true)
   [ -z "$usos" ] || { echo "$usos" >&2; false; }
 }
+
+@test "el workflow no fija ningún valor que cambie entre clusters: esos los trae el agente" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" n declaradas
+  declaradas=""
+  for n in NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE NETWORKING_VAULT_SPIFFE_MOUNT \
+           NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET \
+           VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE \
+           VAULT_KV_MOUNT VAULT_KV_CLUSTER \
+           LOCAL_JWKS_URL PEER_JWKS_URL PEER_CA_SECRET PEER_GATEWAY_HOST \
+           LOCAL_INGRESS_HOST LOCAL_INGRESS_TLS_MODE GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME \
+           GATEWAY_CLASS KEYGEN_IMAGE JWKS_IMAGE \
+           WRISTBAND_SECRET_NAME EGRESS_ISSUER_URL GITOPS_BRANCH; do
+    declaradas="${declaradas}$(grep -lE "^  ${n}: " "$dir/create.yaml" "$dir/delete.yaml" 2>/dev/null | sed "s/\$/ -> ${n}/")"
+  done
+  [ -z "$declaradas" ] || { echo "$declaradas" >&2; false; }
+}
+
+@test "los dos workflows declaran exactamente la misma configuración" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift"
+  diff <(sed -n '/^configuration:/,/^steps:/p' "$dir/create.yaml") \
+       <(sed -n '/^configuration:/,/^steps:/p' "$dir/delete.yaml")
+}
