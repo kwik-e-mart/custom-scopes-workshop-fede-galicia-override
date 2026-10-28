@@ -28,6 +28,9 @@ RITM_CONFLICT = "RITM9990409"
 RITM_NOT_APPROVED = "RITM9990422"
 RITM_UNAVAILABLE = "RITM9990503"
 RITM_ROLLBACK = "RITM9990666"
+LEGAJO_ROLLBACK = "l9990666"
+PLAN_CHANGE_FIELDS = ("planId", "approvalRef", "callbackUrl")
+DELETE_FIELDS = ("sigla", "proyecto", "environment", "tenant", "cluster", "name", "namespace", "legajo")
 FINAL_FAILED_STATES = ("RolledBack", "Failed")
 PUBLIC_OPERATION_FIELDS = ("id", "kind", "state", "target", "error")
 GENERATED_FILES = ["httproute.yaml", "ratelimitpolicy.yaml", "authpolicy.yaml", "apiproduct.yaml"]
@@ -39,7 +42,7 @@ def log(message):
 
 
 def empty_state():
-    return {"subscriptions": {}, "operations": {}, "idempotency": {}, "publications": {}}
+    return {"subscriptions": {}, "operations": {}, "idempotency": {}, "publications": {}, "deletions": {}}
 
 
 def is_text(value):
@@ -315,6 +318,9 @@ class App:
         for publication in list(self.state["publications"].values()):
             if publication.get("status") == "commited":
                 self.schedule(self.complete_publication, publication["apiId"], publication["ref"])
+        for deletion in list(self.state["deletions"].values()):
+            if not deletion.get("final"):
+                self.schedule(self.complete_deletion, deletion["deletionId"])
 
     def schedule(self, fn, *args):
         def run():
@@ -399,9 +405,14 @@ class App:
             return 200, public_operation(operation)
         if path == "/v1/kuadrant/manifests/publish" and method == "POST":
             return self.publish(body, outbox)
-        match = re.fullmatch(r"/v1/kuadrant/manifests/([^/]+)", path)
-        if match and method == "DELETE":
-            return self.unpublish(match.group(1))
+        if path == "/v1/kuadrant/manifests/delete" and method == "POST":
+            return self.delete_publication(body, outbox)
+        match = re.fullmatch(r"/v1/kuadrant/manifests/delete/([^/]+)", path)
+        if match and method == "GET":
+            deletion = self.state["deletions"].get(match.group(1))
+            if not deletion:
+                return 404, {"status": "error", "message": f"No existe la baja {match.group(1)}."}
+            return 200, public_deletion(deletion)
         if path == "/mock/state" and method == "GET":
             return 200, self.state
         if path == "/mock/reset" and method == "POST":
@@ -617,13 +628,22 @@ class App:
         replayed = self.replay(key, body)
         if replayed:
             return replayed
+        extra = sorted(set(body) - set(PLAN_CHANGE_FIELDS))
+        if extra:
+            return problem(422, "Unprocessable Entity", f"Campos fuera del contrato: {', '.join(extra)}.")
         plan_id = body.get("planId")
         if not is_text(plan_id):
             return problem(400, "Bad Request", "Falta planId o no es texto.")
         if plan_id not in PLAN_IDS:
             return problem(422, "Plan inválido", f"El plan {plan_id} no está en el catálogo.")
+        approval_ref = body.get("approvalRef")
+        if approval_ref == RITM_NOT_APPROVED:
+            return problem(422, "Unprocessable Entity",
+                           "Tu solicitud no está aprobada en ServiceNow; volvé a enviarla cuando se apruebe.")
         operation = self.new_operation("planChange", subscription_id, body.get("callbackUrl"))
         operation["planId"] = plan_id
+        if is_text(approval_ref):
+            operation["approvalRef"] = approval_ref
         self.remember(key, body, 202, operation)
         self.save()
         outbox.append((operation["callbackUrl"], f"Cambio de plan a {plan_id} escrito en Git; aplicándolo en los clusters.", {}))
@@ -641,6 +661,8 @@ class App:
                                                    "No se pudo cambiar el plan: la suscripción ya no existe.", False)
             else:
                 subscription["planId"] = operation["planId"]
+                if operation.get("approvalRef"):
+                    subscription["approvalRef"] = operation["approvalRef"]
                 operation["state"] = "Registered"
                 self.save()
                 notification = (operation["callbackUrl"], f"Plan cambiado a {operation['planId']}.", {"status": "success"})
@@ -665,7 +687,7 @@ class App:
             return "Falta origen."
         if not is_text(body.get("tenant")):
             return "El tenant de publicación es obligatorio."
-        for field in ("organization", "repository", "environment", "cluster"):
+        for field in ("organization", "repository", "environment", "cluster", "sigla", "project"):
             if not is_text(body.get(field)):
                 return f"El campo {field} es obligatorio."
         if body["environment"] not in ENVIRONMENTS:
@@ -801,13 +823,68 @@ class App:
         if notification:
             self.notifier.notify(*notification[:2], **notification[2])
 
-    def unpublish(self, api_id):
-        if api_id not in self.state["publications"]:
-            return 404, {"status": "error", "message": f"No existe la publicación {api_id}."}
-        self.delete_api_objects(self.state["publications"][api_id])
-        del self.state["publications"][api_id]
+    def validate_deletion(self, body):
+        for field in DELETE_FIELDS:
+            if not is_text(body.get(field)):
+                return f"El campo {field} es obligatorio."
+        if body["environment"] not in ENVIRONMENTS:
+            return f"El ambiente {body['environment']} no es válido; tiene que ser uno de {', '.join(ENVIRONMENTS)}."
+        if not LEGAJO_PATTERN.fullmatch(body["legajo"]):
+            return "El legajo tiene que tener el formato l#######."
+        return None
+
+    def delete_publication(self, body, outbox):
+        error = self.validate_deletion(body)
+        if error:
+            return publish_error(error)
+        publication = next((p for p in self.state["publications"].values()
+                            if p["namespace"] == body["namespace"] and p["apiName"] == body["name"]
+                            and p["tenant"] == body["tenant"] and p["environment"] == body["environment"]), None)
+        if not publication:
+            return 404, {"status": "error", "message": f"La API {body['name']} no tiene manifiestos publicados en {body['namespace']}."}
+        if publication["status"] == "commited":
+            return publish_error(f"La publicación de {publication['apiId']} está en curso; reintentá cuando termine.")
+        if any(not d["final"] and d["apiId"] == publication["apiId"] for d in self.state["deletions"].values()):
+            return publish_error(f"La baja de {publication['apiId']} ya está en curso.")
+        callback_url = body.get("callbackUrl")
+        deletion = {
+            "deletionId": str(uuid.uuid4()), "status": "Commited", "message": "Manifiestos eliminados del repositorio; la baja sigue en curso.",
+            "apiId": publication["apiId"], "apiName": publication["apiName"], "namespace": publication["namespace"],
+            "tenant": publication["tenant"], "environment": publication["environment"], "manifestPath": publication["manifestPath"],
+            "deletedFiles": GENERATED_FILES, "final": False, "legajo": body["legajo"],
+            "callbackUrl": callback_url if isinstance(callback_url, str) else "",
+        }
+        self.state["deletions"][deletion["deletionId"]] = deletion
         self.save()
-        return 200, {"status": "deleted", "apiId": api_id}
+        outbox.append((deletion["callbackUrl"], "Manifiestos eliminados de Git; Argo está sincronizando la baja.", {}))
+        self.schedule(self.complete_deletion, deletion["deletionId"])
+        return 202, public_deletion(deletion)
+
+    def complete_deletion(self, deletion_id):
+        with self.lock:
+            deletion = self.state["deletions"].get(deletion_id)
+            if not deletion or deletion["final"]:
+                return
+            deletion["final"] = True
+            publication = self.state["publications"].get(deletion["apiId"])
+            if deletion["legajo"] == LEGAJO_ROLLBACK:
+                deletion["status"] = "RolledBack"
+                deletion["message"] = f"Argo no confirmó la baja (mock: {LEGAJO_ROLLBACK}); se restauraron los manifiestos."
+                notification = (deletion["callbackUrl"], deletion["message"], {"level": "error", "status": "failed"})
+                publication = None
+            else:
+                deletion["status"] = "Deleted"
+                deletion["message"] = f"API {deletion['apiId']} dada de baja."
+                notification = (deletion["callbackUrl"], deletion["message"], {"status": "success"})
+                self.state["publications"].pop(deletion["apiId"], None)
+            self.save()
+        if publication:
+            self.delete_api_objects(publication)
+        self.notifier.notify(*notification[:2], **notification[2])
+
+
+def public_deletion(deletion):
+    return {field: value for field, value in deletion.items() if field not in ("legajo", "callbackUrl")}
 
 
 def make_handler(app):

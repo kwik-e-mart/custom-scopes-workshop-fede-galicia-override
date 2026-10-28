@@ -12,7 +12,7 @@ ConfigMap, así las repeticiones se comportan como en APIM aunque el pod se rein
 |---|---|
 | `POST /v1/subscriptions` | `202` con la operación `Committed`; a los `callbackDelaySeconds` crea el Secret de la credencial y avisa `success` al `callbackUrl`. |
 | `GET /v1/subscriptions/{id}` | La suscripción (`Syncing` → `Registered`) o `404`. |
-| `PATCH /v1/subscriptions/{id}` | Cambio de plan: `202`, aplica el plan y avisa `success`. |
+| `PATCH /v1/subscriptions/{id}` | Cambio de plan con `planId`, `approvalRef` y `callbackUrl` (otro campo → `422`): `202`, aplica el plan y el ticket y avisa `success`. Con `RITM9990422` → `422`. |
 | `DELETE /v1/subscriptions/{id}` | Baja: `202` (no avisa: el contrato no trae `callbackUrl`). Borra la credencial del gateway; no borra el Secret del namespace. |
 | `GET /v1/plans` | `bronze` (5), `gold` (20), `no-limits`. |
 | `GET /v1/operations/{id}` | Estado de la operación (respaldo del polling). |
@@ -43,8 +43,9 @@ además la credencial que lee Authorino en `credentialSecrets.gatewayNamespace` 
 
 | Endpoint | Comportamiento |
 |---|---|
-| `POST /v1/kuadrant/manifests/publish` | Valida la firma (`400 {status: error, message}`); `200 commited` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
-| `DELETE /v1/kuadrant/manifests/{apiId}` | **Provisorio** hasta que APIM pase el endpoint real: `200` o `404`. |
+| `POST /v1/kuadrant/manifests/publish` | Valida la firma, `sigla` y `project` incluidos (`400 {status: error, message}`); `200 commited` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
+| `POST /v1/kuadrant/manifests/delete` | Busca la API por `name`, `namespace`, `tenant` y `environment`: `202 Commited` con el `deletionId`; a los `callbackDelaySeconds` borra los objetos y avisa `success` (`Deleted`). Con legajo `l9990666` avisa `failed` (`RolledBack`) y deja la API. Sin manifests → `404`; publicación o baja en curso → `400`. |
+| `GET /v1/kuadrant/manifests/delete/{deletionId}` | Estado de la baja o `404`. |
 
 El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin callback de service,
 `<namespace>-<name>-<tenant>-1`. Publicar otra vez el mismo `apiId` con el mismo branch/tag/commit →

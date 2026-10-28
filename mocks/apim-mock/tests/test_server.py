@@ -396,6 +396,33 @@ class SubscriberTest(unittest.TestCase):
         self.assertEqual(sub["planId"], "bronze")
         self.assertEqual(notifier.calls[-1]["status"], "success")
 
+    def test_cambio_de_plan_con_el_ticket_no_aprobado_responde_422(self):
+        app, _, _, scheduler = make_app()
+        subscribe(app)
+        scheduler.run_all()
+        status, _ = call(app, "PATCH", "/v1/subscriptions/sub-api-0012345--sigla-x-qa",
+                         {"planId": "bronze", "approvalRef": server.RITM_NOT_APPROVED, "callbackUrl": CALLBACK},
+                         {"Idempotency-Key": "act-2"})
+        self.assertEqual(status, 422)
+
+    def test_cambio_de_plan_con_campos_fuera_del_contrato_responde_422(self):
+        app, _, _, scheduler = make_app()
+        subscribe(app)
+        scheduler.run_all()
+        status, _ = call(app, "PATCH", "/v1/subscriptions/sub-api-0012345--sigla-x-qa",
+                         {"planId": "bronze", "consumerNamespace": "otro"}, {"Idempotency-Key": "act-2"})
+        self.assertEqual(status, 422)
+
+    def test_cambio_de_plan_guarda_el_ticket_que_lo_autorizo(self):
+        app, _, _, scheduler = make_app()
+        subscribe(app)
+        scheduler.run_all()
+        call(app, "PATCH", "/v1/subscriptions/sub-api-0012345--sigla-x-qa",
+             {"planId": "bronze", "approvalRef": "UR0900001", "callbackUrl": CALLBACK}, {"Idempotency-Key": "act-2"})
+        scheduler.run_all()
+        _, sub = call(app, "GET", "/v1/subscriptions/sub-api-0012345--sigla-x-qa")
+        self.assertEqual(sub["approvalRef"], "UR0900001")
+
     def test_cambio_de_plan_de_una_suscripcion_inexistente_responde_404(self):
         app, _, _, _ = make_app()
         status, _ = call(app, "PATCH", "/v1/subscriptions/sub-api-1--x", {"planId": "gold"}, {})
@@ -464,6 +491,8 @@ def publish_body(**overrides):
         "origen": "nullplatform",
         "cluster": "cluster1",
         "legajo": "l0510541",
+        "sigla": "zosc",
+        "project": "zosc-zosconnect",
         "callbackUrl": CALLBACK,
         "metadata": {
             "name": "test-kuadrant",
@@ -478,6 +507,15 @@ def publish_body(**overrides):
 
 
 PUBLISH = "/v1/kuadrant/manifests/publish"
+DELETE = "/v1/kuadrant/manifests/delete"
+DELETE_CALLBACK = "https://api.nullplatform.com/service/svc-1/action/act-9"
+
+
+def delete_body(**overrides):
+    body = {"sigla": "zosc", "proyecto": "zosc-zosconnect", "environment": "qas", "tenant": "b2c", "cluster": "cluster1",
+            "name": "test-kuadrant", "namespace": "test-kuadrant", "legajo": "l0510541", "origen": "nullplatform"}
+    body.update(overrides)
+    return body
 
 
 class PublisherTest(unittest.TestCase):
@@ -569,14 +607,102 @@ class PublisherTest(unittest.TestCase):
         status, _ = call(app, "POST", PUBLISH, body)
         self.assertEqual(status, 400)
 
-    def test_baja_provisoria_borra_la_publicacion(self):
+    def test_publicar_sin_sigla_o_project_responde_400(self):
+        app, _, _, _ = make_app()
+        for field in ("sigla", "project"):
+            body = publish_body()
+            body.pop(field)
+            status, response = call(app, "POST", PUBLISH, body)
+            self.assertEqual(status, 400)
+            self.assertIn(field, response["message"])
+
+    def test_baja_responde_202_commited_y_avisa_deleted_al_callback(self):
+        app, _, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        status, body = call(app, "POST", DELETE, delete_body(callbackUrl=DELETE_CALLBACK))
+        self.assertEqual(status, 202)
+        self.assertEqual(body["status"], "Commited")
+        self.assertEqual(body["apiId"], "apim-svc-1")
+        self.assertFalse(body["final"])
+        self.assertEqual(body["deletedFiles"], server.GENERATED_FILES)
+        self.assertEqual(notifier.calls[-1], {"url": DELETE_CALLBACK, "message": notifier.calls[-1]["message"], "level": "info", "status": None})
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "success")
+        self.assertEqual(notifier.calls[-1]["url"], DELETE_CALLBACK)
+        status, deletion = call(app, "GET", f"{DELETE}/{body['deletionId']}")
+        self.assertEqual(status, 200)
+        self.assertEqual(deletion["status"], "Deleted")
+        self.assertTrue(deletion["final"])
+        _, state = call(app, "GET", "/mock/state")
+        self.assertNotIn("apim-svc-1", state["publications"])
+
+    def test_baja_de_una_api_sin_manifests_responde_404(self):
+        app, _, _, _ = make_app()
+        status, _ = call(app, "POST", DELETE, delete_body())
+        self.assertEqual(status, 404)
+
+    def test_baja_sin_campos_obligatorios_responde_400(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        for field in ("sigla", "proyecto", "environment", "tenant", "cluster", "name", "namespace", "legajo"):
+            body = delete_body()
+            body.pop(field)
+            status, response = call(app, "POST", DELETE, body)
+            self.assertEqual(status, 400, field)
+            self.assertIn(field, response["message"])
+
+    def test_baja_con_legajo_invalido_responde_400(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        status, _ = call(app, "POST", DELETE, delete_body(legajo="510541"))
+        self.assertEqual(status, 400)
+
+    def test_baja_en_curso_responde_400(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        call(app, "POST", DELETE, delete_body())
+        status, response = call(app, "POST", DELETE, delete_body())
+        self.assertEqual(status, 400)
+        self.assertIn("en curso", response["message"])
+
+    def test_baja_durante_la_publicacion_responde_400(self):
+        app, _, _, _ = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        status, response = call(app, "POST", DELETE, delete_body())
+        self.assertEqual(status, 400)
+        self.assertIn("en curso", response["message"])
+
+    def test_baja_con_el_legajo_de_rollback_avisa_failed_y_deja_la_api(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        _, body = call(app, "POST", DELETE, delete_body(legajo=server.LEGAJO_ROLLBACK))
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        _, deletion = call(app, "GET", f"{DELETE}/{body['deletionId']}")
+        self.assertEqual(deletion["status"], "RolledBack")
+        self.assertTrue(deletion["final"])
+        _, state = call(app, "GET", "/mock/state")
+        self.assertIn("apim-svc-1", state["publications"])
+        self.assertIn(ROUTE, k8s.objects)
+
+    def test_consultar_una_baja_inexistente_responde_404(self):
+        app, _, _, _ = make_app()
+        status, _ = call(app, "GET", f"{DELETE}/no-existe")
+        self.assertEqual(status, 404)
+
+    def test_ya_no_existe_el_delete_provisorio(self):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
         status, _ = call(app, "DELETE", "/v1/kuadrant/manifests/apim-svc-1")
-        self.assertEqual(status, 200)
-        status, _ = call(app, "DELETE", "/v1/kuadrant/manifests/apim-svc-1")
         self.assertEqual(status, 404)
+        _, state = call(app, "GET", "/mock/state")
+        self.assertIn("apim-svc-1", state["publications"])
 
 
 class StateTest(unittest.TestCase):
@@ -869,7 +995,10 @@ class PublishedObjectsTest(unittest.TestCase):
     def test_una_baja_durante_la_publicacion_no_deja_objetos(self):
         app, k8s, _, scheduler = make_app()
         _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
-        k8s.during_apply = lambda: call(app, "DELETE", f"/v1/kuadrant/manifests/{response['apiId']}")
+        def delete_during_apply():
+            with app.lock:
+                del app.state["publications"][response["apiId"]]
+        k8s.during_apply = delete_during_apply
         scheduler.run_all()
         for path in (ROUTE, AUTH, RLP):
             self.assertNotIn(path, k8s.objects)
@@ -907,11 +1036,12 @@ class PublishedObjectsTest(unittest.TestCase):
         self.assertEqual(notifier.calls[-1]["status"], "failed")
         self.assertEqual([p for p in k8s.objects if "/apis/" in p], [])
 
-    def test_la_baja_provisoria_borra_los_objetos(self):
+    def test_la_baja_borra_los_objetos(self):
         app, k8s, _, scheduler = make_app()
-        _, response = call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
         scheduler.run_all()
-        call(app, "DELETE", f"/v1/kuadrant/manifests/{response['apiId']}")
+        call(app, "POST", DELETE, delete_body())
+        scheduler.run_all()
         for path in (ROUTE, AUTH, RLP):
             self.assertNotIn(path, k8s.objects)
 

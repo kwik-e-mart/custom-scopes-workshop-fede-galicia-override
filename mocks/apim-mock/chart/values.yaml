@@ -1,6 +1,6 @@
 image:
   repository: ""
-  tag: "0.2.6"
+  tag: "0.3.0"
   pullPolicy: IfNotPresent
 
 mock:
