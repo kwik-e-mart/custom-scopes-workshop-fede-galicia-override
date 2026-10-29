@@ -7,13 +7,13 @@ setup() {
   setup_publisher
   STEP="$PUBLISHER_SCRIPTS/unpublish"
   export NP_ACTION_CONTEXT CONTEXT
-  set_request '{"api_id":"payments-test-kuadrant-b2c-1","scope":"main","legajo":"l0510541"}'
+  set_request '{"api_id":"payments-test-kuadrant-b2c-1","scope":"main"}'
   CONTEXT=$(jq -nc '{application:{id:20,repository_url:"https://github.com/zosc-zosconnect/test-kuadrant"},providers:{"container-orchestration":{cluster:{namespace:"payments",id:"gal-kuadrant-poc"}}}}')
 }
 
 set_request() {
   NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" \
-    '{notification:{id:"act-3",type:"delete",tags:{namespace:"zosc-pagos"},service:{id:"svc-1",attributes:$a,dimensions:{environment:"qas"}}}}')
+    '{notification:{id:"act-3",type:"delete",user:{email:"l0510541@bancogalicia.com.ar"},tags:{namespace:"zosc-pagos"},service:{id:"svc-1",attributes:$a,dimensions:{environment:"qas"}}}}')
 }
 
 deleting() {
@@ -60,8 +60,24 @@ JSON
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
-@test "sin legajo falla sin llamar a APIM" {
-  set_request '{"api_id":"payments-test-kuadrant-b2c-1","scope":"main"}'
+@test "el legajo guardado en el servicio no se usa: va el del mail de quien borra" {
+  set_request '{"api_id":"payments-test-kuadrant-b2c-1","scope":"main","legajo":"l0000001"}'
+  set_user_email l1015317@bancogalicia.com.ar
+  queue_response 202 "$(deleting)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
+}
+
+@test "LEGAJO_OVERRIDE reemplaza el legajo del mail en la baja" {
+  set_user_email alejandro.durante@bancogalicia.com.ar
+  export LEGAJO_OVERRIDE=l0000002
+  queue_response 202 "$(deleting)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
+}
+
+@test "un mail que no es de legajo falla sin llamar a APIM" {
+  set_user_email alejandro.durante@bancogalicia.com.ar
   run_step
   [ "$(np_last_update_flag --status)" = "failed" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"legajo"* ]] || false
@@ -70,7 +86,7 @@ JSON
 }
 
 @test "sin apiId guardado pide la baja igual y no toca el cluster" {
-  set_request '{"scope":"main","legajo":"l0510541"}'
+  set_request '{"scope":"main"}'
   queue_response 404 '{}'
   run_step
   [ "$status" -eq 0 ]

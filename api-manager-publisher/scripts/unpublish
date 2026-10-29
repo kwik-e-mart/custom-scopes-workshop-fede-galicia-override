@@ -11,15 +11,12 @@ unpublish() {
   require_publisher_config
   load_notification
 
-  local service_id action_id api_id legajo message
+  local service_id action_id api_id message
   service_id=$(notification_field '.service.id')
   action_id=$(notification_field '.id')
   require_action_ids "$service_id" "$action_id"
   api_id=$(notification_field '.service.attributes.api_id')
-  legajo=$(notification_field '.service.attributes.legajo')
-  if [[ ! "$legajo" =~ $LEGAJO_PATTERN ]]; then
-    fail "publisher: APIM necesita el legajo de quien pide la baja (formato l#######); cargalo editando el servicio y volvé a borrarlo."
-  fi
+  require_legajo
 
   require_source_repository "$(echo "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
   require_provider_namespace
@@ -36,7 +33,7 @@ unpublish() {
     --arg cluster "$CLUSTER_NAME" \
     --arg name "$SOURCE_REPOSITORY" \
     --arg namespace "$PROVIDER_NAMESPACE" \
-    --arg legajo "$legajo" \
+    --arg legajo "$LEGAJO" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
     '{sigla: $sigla, proyecto: $project, environment: $environment, tenant: $tenant, cluster: $cluster,
       name: $name, namespace: $namespace, legajo: $legajo, origen: "nullplatform", callbackUrl: $callback}')

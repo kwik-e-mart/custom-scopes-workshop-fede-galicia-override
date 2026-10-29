@@ -22,8 +22,9 @@ setup() {
   ! grep -q "pedí la baja" "$SERVICE"
 }
 
-@test "publicar pide el scope y el legajo: la version es la que tiene desplegada" {
-  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope","legajo"]' ]
+@test "publicar pide solo el scope: la version es la desplegada y el legajo sale del usuario" {
+  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope"]' ]
+  [ "$(jq -c '.attributes.schema.properties | has("legajo")' "$SERVICE")" = "false" ]
   [ "$(jq -c '.attributes.schema.properties | [has("ref"), has("ref_type")]' "$SERVICE")" = '[false,false]' ]
   [ "$(jq -c '[.. | objects | select(has("scope") and (.scope | type == "string")) | .scope | split("/") | last] | map(select(. == "ref" or . == "ref_type"))' "$SERVICE")" = '[]' ]
 }
@@ -44,11 +45,11 @@ setup() {
   [ "$(jq -r '.attributes.schema.properties.scope.additionalKeywords.enum' "$SERVICE")" = '[.scopes[]?.slug] | if length == 0 then ["No scopes available for selected environment"] else . end' ]
 }
 
-@test "el formulario explica el servicio y pide scope y legajo" {
+@test "el formulario explica el servicio y pide el scope" {
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].type' "$SERVICE")" = "Label" ]
   [ "$(jq -r '.attributes.schema.uiSchema.elements[0].options.format' "$SERVICE")" = "markdown" ]
   [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == "## API Manager Publisher"*"### FAQ"* ]] || false
-  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:2]' "$SERVICE")" = '["scope","legajo"]' ]
+  [ "$(jq -c '[.attributes.schema.uiSchema.elements[] | select(.type == "Control") | .scope | split("/") | last] | .[0:1]' "$SERVICE")" = '["scope"]' ]
 }
 
 @test "el rate limit va en una seccion ADVANCED colapsada con una unica tab Rate limit" {

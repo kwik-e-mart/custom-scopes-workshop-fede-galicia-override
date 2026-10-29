@@ -14,8 +14,7 @@
       "type": "object",
       "$schema": "http://json-schema.org/draft-07/schema#",
       "required": [
-        "scope",
-        "legajo"
+        "scope"
       ],
       "properties": {
         "scope": {
@@ -25,16 +24,6 @@
           "additionalKeywords": {
             "enum": "[.scopes[]?.slug] | if length == 0 then [\"No scopes available for selected environment\"] else . end"
           },
-          "editableOn": [
-            "create",
-            "update"
-          ]
-        },
-        "legajo": {
-          "type": "string",
-          "title": "Legajo de quien publica",
-          "description": "Se informa en el cambio de ITIL. Formato l#######.",
-          "pattern": "^l[0-9]{7}$",
           "editableOn": [
             "create",
             "update"
@@ -128,10 +117,6 @@
           {
             "type": "Control",
             "scope": "#/properties/scope"
-          },
-          {
-            "type": "Control",
-            "scope": "#/properties/legajo"
           },
           {
             "type": "Categorization",

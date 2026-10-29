@@ -9,7 +9,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 ## Cómo se usa
 
 - **Crear la instancia = publicar.** El formulario pide el **scope** que atiende la API (APIM genera su
-  HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope), el legajo y, opcional en ADVANCED, el rate limit global (`rate_limit_enabled` con `window` + `hits_per_window`). La acción queda en
+  HTTPRoute contra el gateway privado y reescribe el host al dominio de ese scope) y, opcional en ADVANCED, el rate limit global (`rate_limit_enabled` con `window` + `hits_per_window`). La acción queda en
   curso hasta que APIM avisa `registered` (éxito) o `canceled` (falla). Quedan guardados `api_id`, `hostname` y
   `manifest_path`.
 - **Se publica la versión desplegada en el scope**: el release del deployment activo, como tag de git. Sin deployment activo
@@ -19,7 +19,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   AuthPolicy `<apiId>-<route>` que acepta las credenciales de esa API (`app_key` con label `api-id`, `app_id`
   igual al label `app-id`). Es la que deja pasar el reingreso de APIM por el gateway privado; se combina en
   `merge` con el validador del s2s, que también tiene que estar en `merge`.
-- **Borrar**: pide la baja a APIM (`/v1/kuadrant/manifests/delete`, con el legajo del servicio) y, cuando
+- **Borrar**: pide la baja a APIM (`/v1/kuadrant/manifests/delete`, con el legajo de quien borra) y, cuando
   APIM la acepta, borra las AuthPolicies de la API. La acción queda abierta hasta el callback de APIM.
 - **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. Editar el link cambia el plan
@@ -36,6 +36,7 @@ Qué se manda a APIM y de dónde sale:
 | `project` | tag `namespace` de la notificación de la acción, o `APIM_PROJECT` |
 | `sigla` | primera parte de ese namespace, sin pasarla a mayúsculas, o `APIM_SIGLA` |
 | `cluster` | `cluster.id` del provider de `container-orchestration` (el mismo que usa el s2s), o `APIM_CLUSTER_NAME` |
+| `legajo` | mail de quien ejecuta la acción sin el dominio (`l1015317@bancogalicia.com.ar` → `l1015317`), o `LEGAJO_OVERRIDE`. Si no tiene el formato `l#######` la acción falla |
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
 | `metadata.parentRefs` | el Gateway de ingreso que usa el s2s: `INGRESS_GATEWAY_NAME` (`s2s-ingress`) en `GATEWAY_NAMESPACE` (`gateways`) |
@@ -55,6 +56,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el `cluster.id` del provider |
 | `APIM_SIGLA`, `APIM_PROJECT` | opcionales: reemplazan la `sigla` y el `project` que salen del namespace |
 | `APIM_CONSUMER_NAMESPACE` | opcional: reemplaza el namespace que suscriben los links (y que se verifica en el unlink) en todas las apps del agente. No cambia el namespace de la API publicada |
+| `LEGAJO_OVERRIDE` | opcional: reemplaza el legajo que sale del mail del usuario en el publish y la baja. Para probar con usuarios que no tienen mail de legajo |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
 | `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |

@@ -20,6 +20,18 @@ require_publish_environment() {
   esac
 }
 
+require_legajo() {
+  local email
+  email=$(notification_field '.user.email')
+  LEGAJO=$(echo "${email%%@*}" | tr '[:upper:]' '[:lower:]')
+  if [ -n "${LEGAJO_OVERRIDE-}" ]; then
+    LEGAJO="$LEGAJO_OVERRIDE"
+  fi
+  if [[ ! "$LEGAJO" =~ $LEGAJO_PATTERN ]]; then
+    fail "publisher: APIM necesita el legajo de quien ejecuta la acción (formato l#######) y sale de su mail; '$LEGAJO' no lo es. Para probar con otro usuario configurá LEGAJO_OVERRIDE en el agente."
+  fi
+}
+
 require_source_repository() {
   local url="$1" path
   path=$(echo "$url" | sed -E 's#^https?://[^/]+/##; s#\.git$##; s#/+$##')
