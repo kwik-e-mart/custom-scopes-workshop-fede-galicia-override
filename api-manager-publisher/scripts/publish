@@ -17,8 +17,9 @@ publish() {
   action_id=$(notification_field '.id')
   require_action_ids "$service_id" "$action_id"
 
-  local legajo window hits rate_limit
-  legajo=$(echo "$params" | jq -r '.legajo // empty')
+  require_legajo
+
+  local window hits rate_limit
   window=$(echo "$params" | jq -r '.window // empty')
   hits=$(echo "$params" | jq -r '.hits_per_window // empty')
   rate_limit=$(echo "$params" | jq -r '.rate_limit_enabled | if . == null then empty else tostring end')
@@ -30,9 +31,6 @@ publish() {
     fail "publisher: el rate limit global está habilitado pero faltan las llamadas permitidas y el período."
   fi
 
-  if [ -n "$legajo" ] && [[ ! "$legajo" =~ $LEGAJO_PATTERN ]]; then
-    fail "publisher: el legajo tiene que tener el formato l#######."
-  fi
   if [ -n "$window$hits" ]; then
     if [[ ! "$window" =~ $WINDOW_PATTERN ]] || [[ ! "$hits" =~ ^[1-9][0-9]*$ ]]; then
       fail "publisher: el rate limit necesita window (por ejemplo 10s) y hits_per_window mayor a 0, los dos juntos."
@@ -59,7 +57,7 @@ publish() {
     --arg cluster "$CLUSTER_NAME" \
     --arg sigla "$PUBLISH_SIGLA" \
     --arg project "$PUBLISH_PROJECT" \
-    --arg legajo "$legajo" \
+    --arg legajo "$LEGAJO" \
     --arg window "$window" \
     --arg hits "$hits" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
@@ -68,10 +66,9 @@ publish() {
     --arg destination "$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
     '{organization: $organization, repository: $repository, tag: $tag, environment: $environment,
-      tenant: $tenant, origen: "nullplatform", sigla: $sigla, project: $project, cluster: $cluster, callbackUrl: $callback,
+      tenant: $tenant, origen: "nullplatform", sigla: $sigla, project: $project, cluster: $cluster, callbackUrl: $callback, legajo: $legajo,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
                  backend: ($backend + {destinationFqdn: $destination})}}
-     + (if $legajo == "" then {} else {legajo: $legajo} end)
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
   log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release $DEPLOYED_RELEASE) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."

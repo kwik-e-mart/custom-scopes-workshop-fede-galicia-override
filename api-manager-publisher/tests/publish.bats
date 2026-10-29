@@ -7,13 +7,13 @@ setup() {
   setup_publisher
   STEP="$PUBLISHER_SCRIPTS/publish"
   export NP_ACTION_CONTEXT CONTEXT
-  set_request '{}' '{"scope":"main","legajo":"l0510541"}' qas
+  set_request '{}' '{"scope":"main"}' qas
   set_context https://github.com/zosc-zosconnect/test-kuadrant
 }
 
 set_request() {
   NP_ACTION_CONTEXT=$(jq -nc --argjson a "$1" --argjson p "$2" --arg env "$3" --arg project "${4-zosc-pagos}" \
-    '{notification:({id:"act-1",type:"create",
+    '{notification:({id:"act-1",type:"create",user:{email:"l0510541@bancogalicia.com.ar"},
       service:({id:"svc-1",attributes:$a} + (if $env == "" then {} else {dimensions:{environment:$env}} end)),parameters:$p}
       + (if $project == "" then {} else {tags:{namespace:$project}} end))}')
   export NP_MOCK_SCOPES
@@ -136,18 +136,48 @@ JSON
   [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
-@test "sin legajo no lo manda" {
-  set_request '{}' '{"scope":"main"}' qas
+@test "el legajo es el mail de quien ejecuta la accion sin el dominio" {
+  set_user_email l1015317@bancogalicia.com.ar
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq 'has("legajo")' "$CURL_BODIES_DIR/0.json")" = "false" ]
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
 }
 
-@test "un legajo con otro formato falla sin llamar a APIM" {
-  set_request '{}' '{"scope":"main","legajo":"510541"}' qas
+@test "un mail con el legajo en mayuscula lo manda en minuscula" {
+  set_user_email L1015317@BancoGalicia.com.ar
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
+}
+
+@test "un mail que no es de legajo falla sin llamar a APIM y nombra LEGAJO_OVERRIDE" {
+  set_user_email alejandro.durante@bancogalicia.com.ar
   run_step
   [ ! -s "$CURL_CALLS_LOG" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *legajo* ]]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"alejandro.durante"*"LEGAJO_OVERRIDE"* ]] || false
+}
+
+@test "sin usuario en la notificacion falla sin llamar a APIM" {
+  NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq -c 'del(.notification.user)')
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}
+
+@test "LEGAJO_OVERRIDE reemplaza el legajo del mail" {
+  set_user_email alejandro.durante@bancogalicia.com.ar
+  export LEGAJO_OVERRIDE=l0000002
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
+}
+
+@test "un LEGAJO_OVERRIDE con otro formato falla sin llamar a APIM" {
+  export LEGAJO_OVERRIDE=510541
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
 }
 
 @test "canceled cierra failed con el mensaje de APIM" {
@@ -337,7 +367,7 @@ JSON
 }
 
 @test "republicar toma los atributos guardados y la version desplegada aunque el service tenga una referencia vieja" {
-  set_request '{"scope":"main","ref_type":"branch","ref":"main","legajo":"l0510541"}' '{"ref_type":"commit","ref":"a1b2c3d"}' qas
+  set_request '{"scope":"main","ref_type":"branch","ref":"main","legajo":"l0000001"}' '{"ref_type":"commit","ref":"a1b2c3d"}' qas
   queue_response 200 "$(pushed)"
   run_step
   [ "$(jq -c '{branch, tag, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"0.2.5","commit":null,"legajo":"l0510541"}' ]
