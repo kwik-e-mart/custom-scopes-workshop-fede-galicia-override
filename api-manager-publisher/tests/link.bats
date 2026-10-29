@@ -97,3 +97,89 @@ link_context() {
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "success" ]
 }
+
+update_context() {
+  link_context "{\"subscription_id\":\"sub-api-0866152--ledger\",\"owns_subscription\":$1,\"approval_ref\":\"UR0866152\",\"plan_id\":\"bronze\"}" "$2"
+}
+
+@test "el update cambia el plan con el ticket y deja la accion abierta hasta el callback" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context true '{"approval_ref":"UR0900001","plan_id":"gold"}'
+  queue_response 200 '{"id":"sub-api-0866152--ledger","consumerNamespace":"ledger"}'
+  queue_response 202 '{"id":"op-3"}'
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  grep -q '^GET https://apisub.test/v1/subscriptions/sub-api-0866152--ledger ' "$CURL_CALLS_LOG"
+  grep -q '^PATCH https://apisub.test/v1/subscriptions/sub-api-0866152--ledger idem=act-l auth=Bearer tok-123 ' "$CURL_CALLS_LOG"
+  [ "$(jq -cS . "$CURL_BODIES_DIR/1.json")" = '{"approvalRef":"UR0900001","callbackUrl":"https://api.nullplatform.com/link/l-1/action/act-l","planId":"gold"}' ]
+  [ "$(np_updates | tail -n1 | jq -c '.[0:3]')" = '["link","action","update"]' ]
+  [ "$(np_last_update_flag --results | jq -c .)" = '{"subscription_id":"sub-api-0866152--ledger","operation_id":"op-3","consumer_namespace":"ledger","owns_subscription":true}' ]
+}
+
+@test "el update conserva lo que el link sabe de su suscripcion aunque el formulario mande otros valores" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context true '{"approval_ref":"UR0900001","plan_id":"gold","owns_subscription":false,"subscription_id":"sub-api-9999999--otro","consumer_namespace":"otro"}'
+  queue_response 200 '{"id":"sub-api-0866152--ledger","consumerNamespace":"ledger"}'
+  queue_response 202 '{"id":"op-3"}'
+  run_step
+  [ "$status" -eq 0 ]
+  grep -q '^PATCH https://apisub.test/v1/subscriptions/sub-api-0866152--ledger ' "$CURL_CALLS_LOG"
+  [ "$(np_last_update_flag --results | jq -c '{subscription_id, owns_subscription, consumer_namespace}')" = '{"subscription_id":"sub-api-0866152--ledger","owns_subscription":true,"consumer_namespace":"ledger"}' ]
+}
+
+@test "el update cambia el plan aunque el link no haya creado la suscripcion" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context false '{"approval_ref":"UR0900001","plan_id":"gold"}'
+  queue_response 200 '{"id":"sub-api-0866152--ledger","consumerNamespace":"ledger"}'
+  queue_response 202 '{"id":"op-3"}'
+  run_step
+  [ "$status" -eq 0 ]
+  grep -q '^PATCH https://apisub.test/v1/subscriptions/sub-api-0866152--ledger ' "$CURL_CALLS_LOG"
+}
+
+@test "el update sin suscripcion falla sin llamar al API Subscriber" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  link_context '{"owns_subscription":false}' '{"approval_ref":"UR0900001","plan_id":"gold"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"no tiene una suscripción"* ]] || false
+  [ ! -s "$CURL_CALLS_LOG" ]
+}
+
+@test "el update sin ticket falla sin llamar al API Subscriber" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  link_context '{"subscription_id":"sub-api-0866152--ledger"}' '{"plan_id":"gold"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [ ! -s "$CURL_CALLS_LOG" ]
+}
+
+@test "el update no toca una suscripcion de otro namespace" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context true '{"approval_ref":"UR0900001","plan_id":"gold"}'
+  queue_response 200 '{"id":"sub-api-0866152--ledger","consumerNamespace":"otro"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  ! grep -q '^PATCH ' "$CURL_CALLS_LOG"
+}
+
+@test "el update de una suscripcion que ya no existe falla" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context true '{"approval_ref":"UR0900001","plan_id":"gold"}'
+  queue_response 404 '{"detail":"not found"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"ya no existe"* ]] || false
+  ! grep -q '^PATCH ' "$CURL_CALLS_LOG"
+}
+
+@test "si APIM rechaza el cambio de plan el update falla con su detalle" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  update_context true '{"approval_ref":"UR0900001","plan_id":"gold"}'
+  queue_response 200 '{"id":"sub-api-0866152--ledger","consumerNamespace":"ledger"}'
+  queue_response 422 '{"detail":"ticket no aprobado"}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 422"*"ticket no aprobado"* ]] || false
+}

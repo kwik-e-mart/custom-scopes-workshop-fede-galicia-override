@@ -17,8 +17,13 @@ setup() {
   [ ! -d "$SPECS/actions" ]
 }
 
-@test "publicar pide solo el scope: la version es la que tiene desplegada" {
-  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope"]' ]
+@test "el FAQ dice que borrar el servicio da de baja la API" {
+  [[ "$(jq -r '.attributes.schema.uiSchema.elements[0].text' "$SERVICE")" == *"Borrar el servicio da de baja la API en APIM"* ]] || false
+  ! grep -q "pedí la baja" "$SERVICE"
+}
+
+@test "publicar pide el scope y el legajo: la version es la que tiene desplegada" {
+  [ "$(jq -c '.attributes.schema.required' "$SERVICE")" = '["scope","legajo"]' ]
   [ "$(jq -c '.attributes.schema.properties | [has("ref"), has("ref_type")]' "$SERVICE")" = '[false,false]' ]
   [ "$(jq -c '[.. | objects | select(has("scope") and (.scope | type == "string")) | .scope | split("/") | last] | map(select(. == "ref" or . == "ref_type"))' "$SERVICE")" = '[]' ]
 }
@@ -86,6 +91,7 @@ setup() {
   [ "$(jq -c '[.attributes.schema.properties.plan_id.oneOf[].const]' "$CONNECT")" = '["bronze","gold","no-limits"]' ]
   [ "$(jq -c '.attributes.schema.properties.owns_subscription | {type, visibleOn}' "$CONNECT")" = '{"type":"boolean","visibleOn":[]}' ]
   [ "$(jq -c '.attributes.schema.properties.approval_ref | has("pattern")' "$CONNECT")" = "false" ]
+  [ "$(jq -c '[.attributes.schema.properties.approval_ref.editableOn, .attributes.schema.properties.plan_id.editableOn]' "$CONNECT")" = '[["create","update"],["create","update"]]' ]
 }
 
 @test "el link explica el ticket de suscripcion y que tiene que estar aprobado" {

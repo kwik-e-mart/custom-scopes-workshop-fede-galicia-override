@@ -252,6 +252,45 @@ request_subscription() {
   esac
 }
 
+request_plan_change() {
+  local subscription_id="$1" approval_ref="$2" plan_id="$3" callback="$4" key="$5" owns="${6-false}"
+  if [ -z "$subscription_id" ]; then
+    fail "subscriber: el link no tiene una suscripción en APIM; no hay plan para cambiar."
+  fi
+  if [ -z "$approval_ref" ] || [ -z "$plan_id" ]; then
+    fail "subscriber: faltan approval_ref o plan_id en el pedido."
+  fi
+  require_subscription_id_format "$subscription_id"
+  require_plan_id_format "$plan_id"
+
+  lookup_subscription_owner "$subscription_id"
+  if [ -z "$SUBSCRIPTION_OWNER" ]; then
+    fail "subscriber: la suscripción $subscription_id ya no existe en APIM; no hay plan para cambiar."
+  fi
+  require_owned_by_namespace "$subscription_id" "$CONSUMER_NAMESPACE"
+
+  local body
+  body=$(jq -nc --arg approval_ref "$approval_ref" --arg plan_id "$plan_id" --arg callback "$callback" \
+    '{planId: $plan_id, approvalRef: $approval_ref, callbackUrl: $callback}')
+
+  log info "subscriber: cambiando el plan de $subscription_id a $plan_id con $approval_ref."
+  apim_request PATCH "/v1/subscriptions/$subscription_id" "$body" "$key"
+
+  local operation_id
+  case "$APIM_HTTP_CODE" in
+    202)
+      operation_id=$(echo "$APIM_BODY" | jq -r '.id // empty')
+      report_progress "Cambio de plan en curso (operación $operation_id). APIM avisa cuando quede aplicado." \
+        "$(jq -nc --arg sub "$subscription_id" --arg op "$operation_id" --arg ns "$CONSUMER_NAMESPACE" --argjson owns "$owns" \
+          '{subscription_id: $sub, operation_id: $op, consumer_namespace: $ns, owns_subscription: $owns}')" \
+        || log error "subscriber: no se pudo guardar el avance; la acción la cierra APIM igual."
+      ;;
+    *)
+      fail "subscriber: APIM rechazó el cambio de plan (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "$APIM_BODY")"
+      ;;
+  esac
+}
+
 request_unsubscription() {
   local subscription_id="$1" owns="$2" key="$3"
   if [ "$owns" != "true" ] || [ -z "$subscription_id" ]; then
