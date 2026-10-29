@@ -143,6 +143,13 @@ JSON
   [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
 }
 
+@test "un mail con el legajo en mayuscula lo manda en minuscula" {
+  set_user_email L1015317@BancoGalicia.com.ar
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
+}
+
 @test "un mail que no es de legajo falla sin llamar a APIM y nombra LEGAJO_OVERRIDE" {
   set_user_email alejandro.durante@bancogalicia.com.ar
   run_step

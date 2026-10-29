@@ -23,7 +23,7 @@ require_publish_environment() {
 require_legajo() {
   local email
   email=$(notification_field '.user.email')
-  LEGAJO="${email%%@*}"
+  LEGAJO=$(echo "${email%%@*}" | tr '[:upper:]' '[:lower:]')
   if [ -n "${LEGAJO_OVERRIDE-}" ]; then
     LEGAJO="$LEGAJO_OVERRIDE"
   fi
