@@ -33,8 +33,8 @@ ctx() {
   done
 }
 
-@test "el handler link rutea alta y baja a sus workflows" {
-  for pair in create:link delete:unlink; do
+@test "el handler link rutea alta, cambio y baja a sus workflows" {
+  for pair in create:link update:link_update delete:unlink; do
     : >"$NP_CALLS_LOG"
     SERVICE_ACTION_TYPE=${pair%%:*} SERVICE_PATH="${BATS_TEST_DIRNAME}/.." run bash "$LINK_HANDLER"
     [ "$status" -eq 0 ]
@@ -43,7 +43,7 @@ ctx() {
 }
 
 @test "un type de link desconocido cierra la accion del link failed" {
-  SERVICE_ACTION_TYPE=update SERVICE_PATH="${BATS_TEST_DIRNAME}/.." run bash "$LINK_HANDLER"
+  SERVICE_ACTION_TYPE=custom SERVICE_PATH="${BATS_TEST_DIRNAME}/.." run bash "$LINK_HANDLER"
   [ "$status" -ne 0 ]
   [ "$(np_updates | tail -n1 | jq -c '.[0:3]')" = '["link","action","update"]' ]
   [ "$(np_last_update_flag --status)" = "failed" ]

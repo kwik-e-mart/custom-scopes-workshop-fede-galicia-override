@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LINK_UPDATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$LINK_UPDATE_DIR/publisher_lib"
+
+ACTION_ENTITY=link
+ACTION_SETTLED=0
+trap close_on_unexpected_exit EXIT
+
+link_update() {
+  require_agent_config
+  load_notification
+
+  local params link_id action_id
+  params=$(echo "$NOTIFICATION" | jq -c '(.link.attributes // {}) * (.parameters // {})')
+  link_id=$(notification_field '.link.id')
+  action_id=$(notification_field '.id')
+  require_action_ids "$link_id" "$action_id"
+  require_consumer_namespace
+
+  request_plan_change \
+    "$(notification_field '.link.attributes.subscription_id')" \
+    "$(echo "$params" | jq -r '.approval_ref // empty')" \
+    "$(echo "$params" | jq -r '.plan_id // empty')" \
+    "$(callback_url "$link_id" "$action_id")" \
+    "$action_id" \
+    "$(echo "$NOTIFICATION" | jq -r '.link.attributes.owns_subscription // false')"
+}
+
+link_update
