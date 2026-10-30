@@ -66,6 +66,7 @@ steps:
       - { name: NETWORKING_VAULT_SPIFFE_ROLE, type: environment }
       - { name: NETWORKING_VAULT_TOKEN_SECRET, type: environment }
       - { name: PEER_CA_SECRET, type: environment }
+      - { name: PEER_TLS_MODE, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
       - { name: LOCAL_INGRESS_TLS_MODE, type: environment }

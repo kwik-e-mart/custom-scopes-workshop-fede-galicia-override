@@ -30,10 +30,10 @@ spec:
       mode: SIMPLE
       # El Gateway no puede montar volúmenes (su podTemplate lo genera Istio), así que
       # caCertificates con una ruta de archivo no es opción.
-{{- if eq .peer_tls_mode "certificate" }}
-      credentialName: {{ .peer_ca_secret | quote }}
-{{- else }}
+{{- if eq .peer_tls_mode "skip-verify" }}
       insecureSkipVerify: true
+{{- else }}
+      credentialName: {{ .peer_ca_secret | quote }}
 {{- end }}
       sni: {{ .peer_gateway_host | quote }}
 {{- end }}
