@@ -35,7 +35,7 @@ make_render() {  # <site>
     namespace: "payments", gateway_name: "egress-gw", gateway_class: "istio",
     listen_port: 8080, token_duration: 60, wristband_secret: "wristband-key-payments-g0",
     egress_issuer: "https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret: "s2s-remote-ca", peer_gateway_host: "peer.example.io",
+    peer_ca_secret: "s2s-remote-ca", peer_tls_mode: "certificate", peer_gateway_host: "peer.example.io",
     local_ingress_host: "s2s-ingress-istio.gateways.svc.cluster.local",
     local_ingress_service: "s2s-ingress-istio", local_ingress_service_namespace: "gateways",
     local_ingress_tls_mode: "skip-verify",

@@ -12,7 +12,6 @@ configuration:
   VAULT_APPROLE_SECRET: vault-approle-creds
   VAULT_SECRET_STORE: vault-eks-plataforma
   LOCAL_JWKS_URL: ""
-  PEER_JWKS_URL: ""
   INGRESS_GATEWAY_NAME: s2s-ingress
   VAULT_KV_MOUNT: ""
   VAULT_KV_CLUSTER: ""
@@ -20,8 +19,6 @@ configuration:
   JWKS_IMAGE: "registry.access.redhat.com/ubi9/httpd-24:latest"
   WRISTBAND_SECRET_NAME: ""
   EGRESS_ISSUER_URL: ""
-  PEER_CA_SECRET: s2s-remote-ca
-  PEER_GATEWAY_HOST: s2s-remote-gateway.tailscale.svc.cluster.local
   LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
   LOCAL_INGRESS_TLS_MODE: skip-verify
   GATEWAY_NAMESPACE: gateways
@@ -69,6 +66,7 @@ steps:
       - { name: NETWORKING_VAULT_SPIFFE_ROLE, type: environment }
       - { name: NETWORKING_VAULT_TOKEN_SECRET, type: environment }
       - { name: PEER_CA_SECRET, type: environment }
+      - { name: PEER_TLS_MODE, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
       - { name: LOCAL_INGRESS_TLS_MODE, type: environment }

@@ -23,16 +23,17 @@ setup() {
   LOCAL_IN_SVC=s2s-ingress-istio
   GW_NS=gateways
   INGRESS_GW=s2s-ingress
+  PEER_TLS=certificate
   FQDN=gal-poc-reports-dev-cvbdn.galicia-poc.nullapps.io
 }
 
 # render <platform> <interceptions-json>
 render() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" '{
+  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" --arg ptls "$PEER_TLS" '{
     namespace:"payments", gateway_name:"egress-gw", gateway_class:"istio",
     listen_port:8080, token_duration:60, wristband_secret:"wristband-key-payments-g0",
     egress_issuer:"https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -60,11 +61,11 @@ render() {
 
 # Los archivos rendeados con contenido, en orden de aplicación (sólo el basename).
 rendered_files() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" '{
+  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" --arg ptls "$PEER_TLS" '{
     namespace:"payments", gateway_name:"egress-gw", gateway_class:"istio",
     listen_port:8080, token_duration:60, wristband_secret:"wristband-key-payments-g0",
     egress_issuer:"https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret:"s2s-remote-ca", peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -1003,4 +1004,46 @@ sin_sigla() {
   local rec="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile" usos
   usos=$(grep -n 'kubectl -n "\$GATEWAY_NAMESPACE"' "$rec" || true)
   [ -z "$usos" ] || { echo "$usos" >&2; false; }
+}
+
+@test "el workflow no fija los valores del peer: esos los trae el agente" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" n declaradas
+  declaradas=""
+  for n in PEER_GATEWAY_HOST PEER_CA_SECRET PEER_JWKS_URL; do
+    declaradas="${declaradas}$(grep -lE "^  ${n}: " "$dir/create.yaml" "$dir/delete.yaml" 2>/dev/null | sed "s/\$/ -> ${n}/")"
+  done
+  [ -z "$declaradas" ] || { echo "$declaradas" >&2; false; }
+}
+
+@test "por defecto el TLS hacia el peer valida el certificado contra la CA" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "null" ]
+}
+
+@test "con skip-verify el TLS hacia el peer cifra pero no nombra ninguna CA" {
+  PEER_TLS=skip-verify run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "true" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "null" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
+}
+
+@test "un peer_tls_mode inesperado valida el certificado: el modo inseguro se pide explícito" {
+  PEER_TLS=cualquier-cosa run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "null" ]
+}
+
+@test "PEER_TLS_MODE viaja del build_context al reconcile" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" f
+  for f in create.yaml delete.yaml; do
+    grep -q '{ name: PEER_TLS_MODE, type: environment }' "$dir/$f" \
+      || { echo "falta PEER_TLS_MODE en el output de $f" >&2; false; }
+  done
 }

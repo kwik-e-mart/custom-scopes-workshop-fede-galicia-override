@@ -22,6 +22,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/si
 SIGLA=$(resolve_sigla "$CONTEXT")
 
 PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
+PEER_TLS_MODE="${PEER_TLS_MODE-certificate}"
+case "$PEER_TLS_MODE" in
+  certificate|skip-verify) ;;
+  *)
+    log error "egress-interceptor: PEER_TLS_MODE='${PEER_TLS_MODE}' no es válido. Valores: certificate | skip-verify"
+    log error "  'certificate' valida el cert del ingreso del peer contra PEER_CA_SECRET; 'skip-verify' cifra sin autenticarlo."
+    exit 1 ;;
+esac
 LISTEN_PORT="${LISTEN_PORT:-8080}"
 TOKEN_DURATION="${TOKEN_DURATION:-60}"
 GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
@@ -341,7 +349,7 @@ fi
 
 if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   if [ -z "$PEER_GATEWAY_HOST" ]; then
-    log error "egress-interceptor: falta PEER_GATEWAY_HOST en la configuración del workflow."
+    log error "egress-interceptor: falta PEER_GATEWAY_HOST en el entorno del agente."
     log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
     exit 1
   fi
@@ -472,7 +480,7 @@ if [ "$PLATFORM" = "eks" ]; then
 fi
 
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PEER_CA_SECRET LISTEN_PORT
-export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST
+export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST PEER_TLS_MODE
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_MOUNT VAULT_KV_CLUSTER
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
