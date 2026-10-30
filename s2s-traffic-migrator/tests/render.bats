@@ -1031,3 +1031,19 @@ sin_sigla() {
   [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "null" ] || false
   [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
 }
+
+@test "un peer_tls_mode inesperado valida el certificado: el modo inseguro se pide explícito" {
+  PEER_TLS=cualquier-cosa run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "null" ]
+}
+
+@test "PEER_TLS_MODE viaja del build_context al reconcile" {
+  local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" f
+  for f in create.yaml delete.yaml; do
+    grep -q '{ name: PEER_TLS_MODE, type: environment }' "$dir/$f" \
+      || { echo "falta PEER_TLS_MODE en el output de $f" >&2; false; }
+  done
+}
