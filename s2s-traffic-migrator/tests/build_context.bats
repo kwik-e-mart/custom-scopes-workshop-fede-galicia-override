@@ -747,7 +747,7 @@ leer_vars() {  # <nombres...>
   [ "$status" -eq 0 ]
   [[ "$output" == *"GATEWAY_NAMESPACE=gateways"* ]] || false
   [[ "$output" == *"INGRESS_GATEWAY_NAME=s2s-ingress"* ]] || false
-  [[ "$output" == *"LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_HOST=gateway-private-istio.gateways.svc.cluster.local"* ]] || false
   [[ "$output" == *"LOCAL_INGRESS_SERVICE_NAMESPACE=gateways"* ]]
 }
 
