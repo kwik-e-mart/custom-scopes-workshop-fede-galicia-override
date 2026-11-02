@@ -110,7 +110,7 @@ correr() {
   ARGS=apply \
   NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
-  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca \
+  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
@@ -146,7 +146,7 @@ correr_openshift() {  # [interceptions-json]
   ARGS=apply \
   NAMESPACE=payments SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
-  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca \
+  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
@@ -176,7 +176,7 @@ correr_delete() {
   ARGS=delete \
   NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
-  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca \
+  WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example LOCAL_INGRESS_HOST=li.example \
   LOCAL_INGRESS_SERVICE=li LOCAL_INGRESS_SERVICE_NAMESPACE=example LOCAL_INGRESS_TLS_MODE=skip-verify \
   KEYGEN_IMAGE=alpine/k8s:1.30.3 VAULT_APPROLE_ROLE_ID=role-id VAULT_APPROLE_SECRET=vault-approle-creds \
