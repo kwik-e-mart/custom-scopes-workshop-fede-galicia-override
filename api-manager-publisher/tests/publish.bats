@@ -424,6 +424,54 @@ applied() {
     '{"when":[{"predicate":"has(request.headers.app_key)"}],"patternMatching":{"patterns":[{"predicate":"auth.identity.metadata.labels['"'"'app-id'"'"'] == request.headers.app_id"}]}}' ]
 }
 
+set_application_type() {
+  CONTEXT=$(echo "$CONTEXT" | jq -c --arg type "$1" '.application.metadata = {scaffolding: {application_type: $type}}')
+}
+
+@test "una aplicacion BFF no cuelga AuthPolicies y borra las que la API ya tuviera" {
+  set_application_type BFF
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
+  grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,api-id=payments-test-kuadrant-b2c-1 --ignore-not-found" "$KUBECTL_CALLS_LOG"
+  [ -z "$(np_last_update_flag --status)" ]
+  [ "$(np_last_update_flag --results | jq -r .api_id)" = "payments-test-kuadrant-b2c-1" ]
+}
+
+@test "una aplicacion SPA tampoco cuelga AuthPolicies" {
+  set_application_type SPA
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
+}
+
+@test "una aplicacion API cuelga sus AuthPolicies" {
+  set_application_type API
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "1" ]
+  ! grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
+}
+
+@test "APPLICATION_TYPES_WITH_NO_AUTH_POLICY elige que tipos quedan sin AuthPolicy" {
+  export APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API
+  set_application_type API
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
+}
+
+@test "si no puede borrar las AuthPolicies de una aplicacion sin auth cierra failed" {
+  export KUBECTL_MOCK_DELETE_FAIL=1
+  set_application_type BFF
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"AuthPolicies"* ]]
+}
+
 @test "si APIM rechaza la publicacion no cuelga ninguna AuthPolicy" {
   queue_response 400 '{"status":"error","message":"firma invalida"}'
   run_step

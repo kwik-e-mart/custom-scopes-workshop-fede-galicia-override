@@ -18,7 +18,9 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 - **Después del 200 del publish**, cuelga en cada route del scope (`nullplatform=true,scope_id=<id>`) una
   AuthPolicy `<apiId>-<route>` que acepta las credenciales de esa API (`app_key` con label `api-id`, `app_id`
   igual al label `app-id`). Es la que deja pasar el reingreso de APIM por el gateway privado; se combina en
-  `merge` con el validador del s2s, que también tiene que estar en `merge`.
+  `merge` con el validador del s2s, que también tiene que estar en `merge`. Si el `application_type` de la
+  metadata de la aplicación está en `APPLICATION_TYPES_WITH_NO_AUTH_POLICY`, no cuelga ninguna y borra las
+  que la API ya tuviera: la route queda abierta y la autenticación queda en la aplicación.
 - **Borrar**: pide la baja a APIM (`/v1/kuadrant/manifests/delete`, con el legajo de quien borra) y, cuando
   APIM la acepta, borra las AuthPolicies del servicio (label `service-id`), también si el publish había fallado. La acción queda abierta hasta el callback de APIM.
 - **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato, y lo pide al API Subscriber
@@ -59,6 +61,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `LEGAJO_OVERRIDE` | opcional: reemplaza el legajo que sale del mail del usuario en el publish y la baja. Para probar con usuarios que no tienen mail de legajo |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
+| `APPLICATION_TYPES_WITH_NO_AUTH_POLICY` | opcional: `application_type` de la metadata de la aplicación, separados por coma, cuyas routes quedan sin AuthPolicy (default `BFF,SPA`; vacía, todas la llevan) |
 | `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |
 | `APIM_PUBLISHER_TOKEN`, `API_SUBSCRIBER_TOKEN` | opcionales: si están, van como `Authorization: Bearer` a cada API (dev no lleva token) |
 | `APIM_TLS_INSECURE` | opcional, `false` por default: en `true` las llamadas a APIM no validan el certificado (`curl -k`). Solo para ambientes de prueba con CA privada |

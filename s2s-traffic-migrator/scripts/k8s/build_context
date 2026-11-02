@@ -21,6 +21,14 @@ NAMESPACE="${NAMESPACE:-nullplatform}"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/sigla"
 SIGLA=$(resolve_sigla "$CONTEXT")
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/application_type"
+APPLICATION_TYPE=$(resolve_application_type "$CONTEXT")
+INGRESS_AUTH_POLICY_ENABLED=true
+if application_type_skips_auth_policy "$APPLICATION_TYPE"; then
+  INGRESS_AUTH_POLICY_ENABLED=false
+  log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE; sus routes de ingreso quedan sin validador y la autenticación queda en la aplicación."
+fi
+
 PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
 PEER_TLS_MODE="${PEER_TLS_MODE-certificate}"
 case "$PEER_TLS_MODE" in
@@ -491,7 +499,7 @@ export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_M
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_MOUNT VAULT_KV_CLUSTER
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
 export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME JWKS_IMAGE
-export EGRESS_AUTHPOLICY ISSUER_DOMAIN NAMESPACE_SETUP_ENABLED SIGLA
+export EGRESS_AUTHPOLICY ISSUER_DOMAIN NAMESPACE_SETUP_ENABLED SIGLA INGRESS_AUTH_POLICY_ENABLED
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
 if [ -n "$OVERRIDES_ACTIVOS" ]; then
   log info "egress-interceptor: el entorno del agente pisa la configuración del workflow en:$OVERRIDES_ACTIVOS"

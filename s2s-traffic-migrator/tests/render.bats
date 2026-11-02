@@ -44,6 +44,7 @@ render() {
     egress_authpolicy:"sign", issuer_domain:"bancogalicia.com.ar", namespace_setup_enabled:"false",
     authpolicy_api_version:"kuadrant.io/v1",
     sigla:(env.SIGLA_CTX // ""),
+    ingress_auth_policy_enabled:(env.INGRESS_AUTH_POLICY_CTX // "true"),
     managed_label:"egress-interceptor/managed",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
   # Como en producción: se rendea el directorio entero y se concatena. Las aserciones siguen
@@ -408,6 +409,20 @@ rule() {  # <percent> [service]
   [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -cx sign)" -eq 1 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -c '^s2s-validator-')" -eq 2 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .metadata.name' | grep -c '^egress-gw-')" -eq 2 ]
+}
+
+@test "una aplicacion sin auth policy no emite validadores de ingreso" {
+  INGRESS_AUTH_POLICY_CTX=false run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -cx sign)" -eq 1 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .metadata.name' | grep -cx s2s-ingress-reports)" -eq 1 ]
+}
+
+@test "un contexto sin ingress_auth_policy_enabled sigue emitiendo el validador" {
+  run rendered_files openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"25-authpolicy-validator.yaml"* ]]
 }
 
 @test "cada regla usa el FQDN de SU scope, no el de la primera" {
