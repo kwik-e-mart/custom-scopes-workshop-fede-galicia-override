@@ -19,7 +19,7 @@ configuration:
   JWKS_IMAGE: "registry.access.redhat.com/ubi9/httpd-24:latest"
   WRISTBAND_SECRET_NAME: ""
   EGRESS_ISSUER_URL: ""
-  LOCAL_INGRESS_HOST: s2s-ingress-istio.gateways.svc.cluster.local
+  LOCAL_INGRESS_HOST: gateway-private-istio.gateways.svc.cluster.local
   LOCAL_INGRESS_TLS_MODE: skip-verify
   GATEWAY_NAMESPACE: gateways
   INGRESS_AUTHPOLICY: s2s-validator
