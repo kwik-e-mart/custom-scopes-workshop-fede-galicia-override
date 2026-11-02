@@ -39,7 +39,7 @@ OVERRIDES_ACTIVOS=""
 PEER_GATEWAY_HOST="${PEER_GATEWAY_HOST:-}"
 PEER_INGRESS_HOST="${PEER_INGRESS_HOST:-}"
 # El ingreso de ESTE cluster. Con origen EKS la rama no migrada también entra por un Gateway.
-LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
+LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-gateway-private-istio.gateways.svc.cluster.local}"
 if [ -n "${LOCAL_INGRESS_HOST_OVERRIDE:-}" ]; then
   LOCAL_INGRESS_HOST="$LOCAL_INGRESS_HOST_OVERRIDE"
   OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} LOCAL_INGRESS_HOST=${LOCAL_INGRESS_HOST}"
