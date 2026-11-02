@@ -640,4 +640,6 @@ for svc in $STALE_SERVICES; do
     "httproute.gateway.networking.k8s.io/s2s-ingress-${svc}" --ignore-not-found
 done
 
+kubectl -n "$NAMESPACE" delete "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer" --ignore-not-found
+
 log info "reconcile apply OK en ns $NAMESPACE (gateway $GATEWAY_NAME, $(echo "$DECLARED_SERVICES" | grep -c .) servicio(s))"

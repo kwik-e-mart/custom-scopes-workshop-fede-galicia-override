@@ -1,3 +1,4 @@
+{{- if eq .platform "eks" }}
 {{- if .interceptions }}
 # Cómo se origina el TLS hacia el ingreso del sustrato OPUESTO. Sólo hace falta si hay alguna
 # regla: sin intercepciones no sale tráfico por acá.
@@ -36,4 +37,43 @@ spec:
       credentialName: {{ .peer_ca_secret | quote }}
 {{- end }}
       sni: {{ .peer_gateway_host | quote }}
+{{- end }}
+{{- else }}
+{{- $destinos := dict }}
+{{- range .interceptions }}
+{{- $destinos = merge (dict .scope_fqdn .service_name) $destinos }}
+{{- end }}
+{{- range $fqdn, $svc := $destinos }}
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: {{ printf "%s-peer-%s" $.gateway_name $svc | quote }}
+  namespace: {{ $.namespace | quote }}
+  labels:
+    {{ $.managed_label }}: "true"
+    nullplatform: "true"
+spec:
+  host: {{ $fqdn | quote }}
+  exportTo:
+    - "."
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 64
+      http:
+        http1MaxPendingRequests: 64
+        idleTimeout: 300s
+    portLevelSettings:
+      - port:
+          number: 443
+        tls:
+          mode: SIMPLE
+          sni: {{ $fqdn | quote }}
+{{- if eq $.peer_tls_mode "skip-verify" }}
+          insecureSkipVerify: true
+{{- else }}
+          credentialName: {{ $.peer_ca_secret | quote }}
+{{- end }}
+{{- end }}
 {{- end }}

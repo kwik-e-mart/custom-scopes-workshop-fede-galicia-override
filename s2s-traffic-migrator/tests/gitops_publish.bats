@@ -249,7 +249,6 @@ HOOK
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/10-gateway.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/20-authpolicy.yaml" ]
-  [ -f "$BATS_TEST_TMPDIR/tree/30-destinationrule-peer.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/40-destinationrule-local-ingress.yaml" ]
 }
 
@@ -274,7 +273,7 @@ HOOK
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ ! -f "$BATS_TEST_TMPDIR/tree/reports/10-gateway.yaml" ]
   [ ! -f "$BATS_TEST_TMPDIR/tree/reports/20-authpolicy.yaml" ]
-  [ ! -f "$BATS_TEST_TMPDIR/tree/reports/30-destinationrule-peer.yaml" ]
+  [ ! -f "$BATS_TEST_TMPDIR/tree/reports/40-destinationrule-local-ingress.yaml" ]
 }
 
 @test "desde OpenShift la hoja trae además la route de ingreso" {
@@ -354,9 +353,9 @@ HOOK
     if [ -f "$SDIR/70-service-local.yaml" ]; then
       aplicados=$(printf '%s\n%s' "$aplicados" "$(objetos "$SDIR/70-service-local.yaml")")
     fi
-    esperados=$(printf '%s\n%s' "$aplicados" "$(objetos "$SDIR/90-service-capture.yaml")" | sort)
+    esperados=$(printf '%s\n%s' "$aplicados" "$(objetos "$SDIR/90-service-capture.yaml")" | sort -u)
     publicados=$(find "$BATS_TEST_TMPDIR/tree" -name '*.yaml' -print0 \
-      | xargs -0 -n1 yq -r '[.kind, (.metadata.namespace // ""), .metadata.name] | join("/")' | sort)
+      | xargs -0 -n1 yq -r '[.kind, (.metadata.namespace // ""), .metadata.name] | join("/")' | sort -u)
     [ "$esperados" = "$publicados" ] || {
       echo "site $platform:" >&2; diff <(echo "$esperados") <(echo "$publicados") >&2; return 1
     }

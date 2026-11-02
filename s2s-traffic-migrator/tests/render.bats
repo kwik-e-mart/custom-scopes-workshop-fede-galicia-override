@@ -173,7 +173,8 @@ rule() {  # <percent> [service]
     run render "$platform" "$(rule $pct)"
     local r; r=$(named "$output" HTTPRoute egress-gw-reports)
     [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].kind')" = "Hostname" ]
-    [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "$PEER" ]
+    [ "$platform" = "eks" ] && [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "$PEER" ]
+    [ "$platform" = "openshift" ] && [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].name')" = "$FQDN" ]
     [ "$(echo "$r" | yq '.spec.rules[0].backendRefs[0].port')" -eq 443 ]
   done
 }
@@ -192,7 +193,7 @@ rule() {  # <percent> [service]
     # Desde OpenShift: lo que va a EKS es el backendRef al peer.
     run render openshift "$(rule $pct)"
     r=$(named "$output" HTTPRoute egress-gw-reports)
-    peso_eks=$(echo "$r" | yq ".spec.rules[0].backendRefs[] | select(.name == \"$PEER\") | .weight // 0")
+    peso_eks=$(echo "$r" | yq ".spec.rules[0].backendRefs[] | select(.kind == \"Hostname\") | .weight // 0")
     [ "${peso_eks:-0}" -eq "$pct" ]
 
     # Desde EKS: lo que va a EKS es el backendRef al ingreso local.
@@ -247,14 +248,23 @@ rule() {  # <percent> [service]
   done
 }
 
-@test "ningún backendRef apunta al FQDN del scope" {
-  # El invariante que costó un 500 en los dos lados: el FQDN de un scope nunca es destino de una
-  # conexión, sólo el Host con el que se entra al Gateway.
-  for origin in OS EKS; do
-    for p in 0 50 100; do
-      run render "$origin" "$(rule $p)"
-      [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .spec.rules[0].backendRefs[].name' | grep -cx "$FQDN")" -eq 0 ]
-    done
+@test "con origen EKS ningún backendRef apunta al FQDN del scope" {
+  # El invariante que costó un 500: allá el FQDN del scope es un nombre LOCAL y no puede ser
+  # destino de una conexión, sólo el Host con el que se entra al Gateway.
+  for p in 0 50 100; do
+    run render eks "$(rule $p)"
+    [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .spec.rules[0].backendRefs[].name' | grep -cx "$FQDN")" -eq 0 ]
+  done
+}
+
+@test "un backendRef al FQDN del scope SIEMPRE viene con su ServiceEntry" {
+  local p apunta declarados
+  for p in 50 100; do
+    run render openshift "$(rule $p)"
+    apunta=$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .spec.rules[0].backendRefs[] | select(.kind == "Hostname") | .name')
+    declarados=$(echo "$output" | yq -N 'select(.kind == "ServiceEntry") | .spec.hosts[]')
+    [ "$apunta" = "$FQDN" ] || false
+    printf '%s\n' "$declarados" | grep -qx "$apunta" || { echo "backendRef a $apunta sin ServiceEntry" >&2; false; }
   done
 }
 
@@ -336,11 +346,11 @@ rule() {  # <percent> [service]
 
 @test "el hop al peer valida su cert contra la CA propia" {
   run render openshift "$(rule 100)"
-  local dr; dr=$(named "$output" DestinationRule egress-gw-peer)
-  [ "$(echo "$dr" | yq '.spec.host')" = "$PEER" ]
-  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
-  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ]
-  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "$PEER" ]
+  local dr; dr=$(named "$output" DestinationRule egress-gw-peer-reports)
+  [ "$(echo "$dr" | yq '.spec.host')" = "$FQDN" ]
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.mode')" = "SIMPLE" ]
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.credentialName')" = "s2s-remote-ca" ]
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.sni')" = "$FQDN" ]
   [[ "$dr" != *"insecureSkipVerify"* ]]
 }
 
@@ -376,7 +386,7 @@ rule() {  # <percent> [service]
   # Sin pool, con RTT real y concurrencia, Envoy abre y cierra una conexión por request:
   # aparecen 503 URX,UF y el p99 se va a 3 RTT. Contra un destino de RTT cero es invisible.
   run render openshift "$(rule 100)"
-  local dr; dr=$(named "$output" DestinationRule egress-gw-peer)
+  local dr; dr=$(named "$output" DestinationRule egress-gw-peer-reports)
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.connectionPool.http.idleTimeout')" = "300s" ]
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.connectionPool.tcp.maxConnections')" -eq 64 ]
 }
@@ -408,11 +418,11 @@ rule() {  # <percent> [service]
 @test "todo lo que emite el render queda marcado como propio" {
   # El `delete` borra por egress-interceptor/managed. Los alias `<svc>-local` que provisiona
   # Terraform NO la llevan, y por eso sobreviven al delete de la instancia.
-  # Con origen OS son seis: Gateway, AuthPolicy, DestinationRule del peer, la route de egreso,
-  # la de ingreso —que vive en OTRO namespace y por eso el delete la borra aparte— y el validador
-  # que cuelga de esa route.
+  # Con origen OS son siete: Gateway, AuthPolicy, ServiceEntry y DestinationRule del peer, la
+  # route de egreso, la de ingreso —que vive en OTRO namespace y por eso el delete la borra
+  # aparte— y el validador que cuelga de esa route.
   run render openshift "$(rule 100)"
-  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 6 ]
+  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 7 ]
   [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 
   # Con origen EKS y rama local hay un DestinationRule más, y también tiene que quedar marcado o
@@ -1018,26 +1028,26 @@ sin_sigla() {
 @test "por defecto el TLS hacia el peer valida el certificado contra la CA" {
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  local r; r=$(named "$output" DestinationRule egress-gw-peer)
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ] || false
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "null" ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer-reports)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.credentialName')" = "s2s-remote-ca" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.insecureSkipVerify')" = "null" ]
 }
 
 @test "con skip-verify el TLS hacia el peer cifra pero no nombra ninguna CA" {
   PEER_TLS=skip-verify run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  local r; r=$(named "$output" DestinationRule egress-gw-peer)
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "true" ] || false
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "null" ] || false
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer-reports)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.insecureSkipVerify')" = "true" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.credentialName')" = "null" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.mode')" = "SIMPLE" ]
 }
 
 @test "un peer_tls_mode inesperado valida el certificado: el modo inseguro se pide explícito" {
   PEER_TLS=cualquier-cosa run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
-  local r; r=$(named "$output" DestinationRule egress-gw-peer)
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ] || false
-  [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "null" ]
+  local r; r=$(named "$output" DestinationRule egress-gw-peer-reports)
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.credentialName')" = "s2s-remote-ca" ] || false
+  [ "$(echo "$r" | yq '.spec.trafficPolicy.portLevelSettings[0].tls.insecureSkipVerify')" = "null" ]
 }
 
 @test "PEER_TLS_MODE viaja del build_context al reconcile" {
@@ -1046,4 +1056,51 @@ sin_sigla() {
     grep -q '{ name: PEER_TLS_MODE, type: environment }' "$dir/$f" \
       || { echo "falta PEER_TLS_MODE en el output de $f" >&2; false; }
   done
+}
+
+@test "cada destino tiene su propio ServiceEntry que lo mapea a la dirección del peer" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local se; se=$(named "$output" ServiceEntry egress-gw-peer-reports)
+  [ "$(echo "$se" | yq '.spec.hosts[0]')" = "$FQDN" ] || false
+  [ "$(echo "$se" | yq '.spec.endpoints[0].address')" = "$PEER" ] || false
+  [ "$(echo "$se" | yq '.spec.resolution')" = "DNS" ] || false
+  [ "$(echo "$se" | yq '.spec.ports[0].protocol')" = "HTTP" ] || false
+  [ "$(echo "$se" | yq '.spec.exportTo[0]')" = "." ]
+}
+
+@test "la rama migrada entrega al FQDN del scope, no a la dirección del peer" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" HTTPRoute egress-gw-reports)
+  local b; b=$(echo "$r" | yq -o=json -I=0 '[.spec.rules[0].backendRefs[] | select(.kind == "Hostname")][0]')
+  [ "$(echo "$b" | jq -r '.name')" = "$FQDN" ] || false
+  [ "$(echo "$b" | jq -r '.port')" = "443" ]
+}
+
+@test "con dos reglas hay dos ServiceEntry y dos DestinationRule, uno por destino" {
+  local dos; dos=$(jq -nc --arg f "$FQDN" \
+    '[{service_name:"reports", scope:"dev", scope_fqdn:$f, percent:100, ingress_route:"a"},
+      {service_name:"checkout", scope:"dev", scope_fqdn:"otro.galicia-poc.nullapps.io", percent:100, ingress_route:"b"}]')
+  run render openshift "$dos"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "ServiceEntry") | .metadata.name' | sort | tr '\n' ' ')" = "egress-gw-peer-checkout egress-gw-peer-reports " ] || false
+  [ "$(echo "$output" | yq -N 'select(.kind == "DestinationRule" and (.metadata.name | test("-peer-"))) | .spec.trafficPolicy.portLevelSettings[0].tls.sni' | sort | tr '\n' ' ')" = "gal-poc-reports-dev-cvbdn.galicia-poc.nullapps.io otro.galicia-poc.nullapps.io " ]
+}
+
+@test "ningún objeto del peer nombra la dirección del gateway como SNI" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local snis; snis=$(echo "$output" | yq -N 'select(.kind == "DestinationRule" and (.metadata.name | test("-peer-"))) | .spec.trafficPolicy.portLevelSettings[0].tls.sni')
+  [ -n "$snis" ] || false
+  [[ "$snis" != *"$PEER"* ]]
+}
+
+@test "con origen EKS no se emite ningún ServiceEntry" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | yq -N 'select(.kind == "ServiceEntry") | .metadata.name' | grep -c .)" -eq 0 ] || false
+  [ "$(echo "$output" | yq -N 'select(.kind == "DestinationRule" and (.metadata.name | test("-peer"))) | .metadata.name' | grep -c .)" -eq 1 ] || false
+  local dr; dr=$(named "$output" DestinationRule egress-gw-peer)
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
 }

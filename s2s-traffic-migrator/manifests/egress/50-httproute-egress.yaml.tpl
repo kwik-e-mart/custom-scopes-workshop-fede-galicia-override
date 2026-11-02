@@ -81,7 +81,11 @@ spec:
         # ReferenceGrant en el namespace del destino.
         - group: networking.istio.io
           kind: Hostname
+{{- if eq $.platform "eks" }}
           name: {{ $.peer_gateway_host | quote }}
+{{- else }}
+          name: {{ $fqdn | quote }}
+{{- end }}
           port: 443
           weight: {{ $to_peer }}
 {{- end }}
