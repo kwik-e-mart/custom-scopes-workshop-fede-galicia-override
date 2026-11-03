@@ -10,7 +10,7 @@ GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
-MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io"
+MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,serviceentry.networking.istio.io,authpolicy.kuadrant.io"
 [ "${NAMESPACE_SETUP_ENABLED:-false}" = "true" ] && MANAGED_KINDS="${MANAGED_KINDS},gateway.gateway.networking.k8s.io"
 GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
 
@@ -635,11 +635,15 @@ for svc in $STALE_SERVICES; do
     --field-selector "metadata.name=${svc}-local" --ignore-not-found
   kubectl -n "$NAMESPACE" delete \
     "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${svc}" \
-    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${svc}-scope" --ignore-not-found
+    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${svc}-scope" \
+    "serviceentry.networking.istio.io/${GATEWAY_NAME}-peer-${svc}" \
+    "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer-${svc}" --ignore-not-found
   kubectl -n "$NAMESPACE" delete \
     "httproute.gateway.networking.k8s.io/s2s-ingress-${svc}" --ignore-not-found
 done
 
-kubectl -n "$NAMESPACE" delete "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer" --ignore-not-found
+if [ "$PLATFORM" != "eks" ]; then
+  kubectl -n "$NAMESPACE" delete "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer" --ignore-not-found
+fi
 
 log info "reconcile apply OK en ns $NAMESPACE (gateway $GATEWAY_NAME, $(echo "$DECLARED_SERVICES" | grep -c .) servicio(s))"

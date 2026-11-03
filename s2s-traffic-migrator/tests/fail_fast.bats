@@ -21,6 +21,7 @@ setup() {
   # El ReferenceGrant lo administra el equipo del cluster: el default es que exista, y el test que
   # prueba su ausencia lo reemplaza.
   export FALLA_GRANTS=""   # simula no tener RBAC para listarlos
+  export SVC_HUERFANO=""   # un Service interceptado que ya no está declarado
   export FAKE_GRANTS="$BATS_TEST_TMPDIR/grants.json"
   printf '%s' '{"items":[{"metadata":{"name":"payments-to-li","namespace":"example"},"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service","name":"li"}]}}]}' >"$FAKE_GRANTS"
 
@@ -68,7 +69,12 @@ case "$*" in
   *"get svc reports -o jsonpath"*"annotations"*)    : ;;   # todavía sin anotar
   *"get svc reports -o json"*)
     echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080,"targetPort":8080,"protocol":"TCP"}]}}' ;;
-  *"get svc -o json"*)   echo '{"items":[]}' ;;
+  *"get svc -o json"*)
+    if [ -n "${SVC_HUERFANO:-}" ]; then
+      printf '{"items":[{"metadata":{"name":"%s","annotations":{"egress-interceptor/original-selector":""}}}]}' "$SVC_HUERFANO"
+    else
+      echo '{"items":[]}'
+    fi ;;
   *"get authpolicy.kuadrant.io -l egress-interceptor/managed=true"*)
     # El reconcile espera Enforced en cada validador que emitió; el mock lista el de esta route.
     printf 's2s-validator-k-8-s-reports-internal' ;;
@@ -526,4 +532,31 @@ correr_delete() {
   [ "$status" -ne 0 ]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
+}
+
+@test "con origen EKS el reconcile NO borra el DestinationRule del peer que acaba de aplicar" {
+  run correr
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  run grep -c "delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found" "$KUBECTL_CALLS"
+  [ "$output" = "0" ]
+}
+
+@test "con origen OpenShift el reconcile sí borra el DestinationRule del peer de la forma vieja" {
+  run correr_openshift ""
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q "delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found" "$KUBECTL_CALLS"
+}
+
+@test "un servicio que deja de estar declarado no deja ServiceEntry ni DestinationRule del peer" {
+  export SVC_HUERFANO=viejo
+  run correr_openshift ""
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q "serviceentry.networking.istio.io/egress-gw-peer-viejo" "$KUBECTL_CALLS" || { cat "$KUBECTL_CALLS"; false; }
+  grep -q "destinationrule.networking.istio.io/egress-gw-peer-viejo" "$KUBECTL_CALLS"
+}
+
+@test "el borrado completo poda los ServiceEntry por label" {
+  run correr_delete
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q "delete .*serviceentry.networking.istio.io.* -l egress-interceptor/managed=true" "$KUBECTL_CALLS"
 }
