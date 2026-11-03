@@ -37,6 +37,7 @@ OVERRIDES_ACTIVOS=""
 # El ingreso del sustrato opuesto. Es configuración del service y NO un campo del form: el dev
 # declara identidades de nullplatform, nunca direcciones de transporte.
 PEER_GATEWAY_HOST="${PEER_GATEWAY_HOST:-}"
+PEER_INGRESS_HOST="${PEER_INGRESS_HOST:-}"
 # El ingreso de ESTE cluster. Con origen EKS la rama no migrada también entra por un Gateway.
 LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-s2s-ingress-istio.gateways.svc.cluster.local}"
 if [ -n "${LOCAL_INGRESS_HOST_OVERRIDE:-}" ]; then
@@ -353,6 +354,9 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
     log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
     exit 1
   fi
+  if [ -z "$PEER_INGRESS_HOST" ]; then
+    PEER_INGRESS_HOST="$PEER_GATEWAY_HOST"
+  fi
   if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
     if [ -z "$NETWORKING_VAULT_ADDR" ]; then
       log error "egress-interceptor: falta NETWORKING_VAULT_ADDR en la configuración del workflow."
@@ -391,6 +395,7 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
     exit 1
   fi
   require_match "$PEER_GATEWAY_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "peer_gateway_host"
+  require_match "$PEER_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "peer_ingress_host"
 
   APPLICATION_ID=$(printf %s "$CONTEXT" | jq -r '.application.id // empty')
   if [ -z "$APPLICATION_ID" ]; then
@@ -480,7 +485,7 @@ if [ "$PLATFORM" = "eks" ]; then
 fi
 
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PEER_CA_SECRET LISTEN_PORT
-export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST LOCAL_INGRESS_HOST PEER_TLS_MODE
+export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST PEER_INGRESS_HOST LOCAL_INGRESS_HOST PEER_TLS_MODE
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_MOUNT VAULT_KV_CLUSTER
 export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
