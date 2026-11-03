@@ -68,6 +68,7 @@ steps:
       - { name: PEER_CA_SECRET, type: environment }
       - { name: PEER_TLS_MODE, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }
+      - { name: PEER_INGRESS_HOST, type: environment }
       - { name: LOCAL_INGRESS_HOST, type: environment }
       - { name: LOCAL_INGRESS_TLS_MODE, type: environment }
       - { name: LOCAL_INGRESS_SERVICE, type: environment }

@@ -533,6 +533,19 @@ rule() {  # <service_name tal cual lo escribe el dev>
   [ ! -s "$NP_CALLS_LOG" ]
 }
 
+@test "sin PEER_INGRESS_HOST el SNI cae en la dirección del gateway, como antes" {
+  unset PEER_INGRESS_HOST
+  leer_vars PEER_INGRESS_HOST
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"PEER_INGRESS_HOST=kuadrant.peer.example.io"* ]]
+}
+
+@test "RECHAZA un PEER_INGRESS_HOST con inyección" {
+  export PEER_INGRESS_HOST='ok.example.io" evil: si'
+  run_bc
+  [ "$status" -ne 0 ]
+}
+
 @test "sin interceptions NO se exige PEER_GATEWAY_HOST: no hay a dónde salir" {
   unset PEER_GATEWAY_HOST
   run_bc create '{"cluster":"crc"}' '{}'

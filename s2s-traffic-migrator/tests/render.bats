@@ -19,6 +19,7 @@ setup() {
   source "${BATS_TEST_DIRNAME}/../logging"
   source "${BATS_TEST_DIRNAME}/../scripts/k8s/manifests_lib"
   PEER=kuadrant.peer.example.io
+  PEER_IN=s2s.peer.example.io
   LOCAL_IN=s2s-ingress-istio.gateways.svc.cluster.local
   LOCAL_IN_SVC=s2s-ingress-istio
   GW_NS=gateways
@@ -29,11 +30,11 @@ setup() {
 
 # render <platform> <interceptions-json>
 render() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" --arg ptls "$PEER_TLS" '{
+  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg pin "$PEER_IN" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" --arg ptls "$PEER_TLS" '{
     namespace:"payments", gateway_name:"egress-gw", gateway_class:"istio",
     listen_port:8080, token_duration:60, wristband_secret:"wristband-key-payments-g0",
     egress_issuer:"https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, peer_ingress_host:$pin, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -61,11 +62,11 @@ render() {
 
 # Los archivos rendeados con contenido, en orden de aplicación (sólo el basename).
 rendered_files() {
-  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" --arg ptls "$PEER_TLS" '{
+  jq -n --arg platform "$1" --argjson interceptions "$2" --arg peer "$PEER" --arg pin "$PEER_IN" --arg li "$LOCAL_IN" --arg gwns "$GW_NS" --arg igw "$INGRESS_GW" --arg ptls "$PEER_TLS" '{
     namespace:"payments", gateway_name:"egress-gw", gateway_class:"istio",
     listen_port:8080, token_duration:60, wristband_secret:"wristband-key-payments-g0",
     egress_issuer:"https://egress.gal-poc.bancogalicia.com.ar",
-    peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
+    peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, peer_ingress_host:$pin, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
     vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
@@ -340,8 +341,22 @@ rule() {  # <percent> [service]
   [ "$(echo "$dr" | yq '.spec.host')" = "$PEER" ]
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.mode')" = "SIMPLE" ]
   [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ]
-  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "$PEER" ]
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "$PEER_IN" ]
   [[ "$dr" != *"insecureSkipVerify"* ]]
+}
+
+@test "el SNI que se anuncia al peer es el de su ingreso, no la dirección a la que se conecta" {
+  run render openshift "$(rule 100)"
+  local dr; dr=$(named "$output" DestinationRule egress-gw-peer)
+  [ "$(echo "$dr" | yq '.spec.host')" = "$PEER" ] || false
+  [ "$(echo "$dr" | yq '.spec.trafficPolicy.tls.sni')" = "$PEER_IN" ] || false
+  [ "$PEER" != "$PEER_IN" ]
+}
+
+@test "ningún objeto del peer anuncia la dirección del gateway como SNI" {
+  run render openshift "$(rule 50)"
+  local snis; snis=$(echo "$output" | yq -N '.. | select(has("sni")) | .sni' | sort -u)
+  [[ "$snis" != *"$PEER"* ]]
 }
 
 @test "el DestinationRule del peer es UNO solo, aunque haya varias reglas" {
@@ -1009,7 +1024,7 @@ sin_sigla() {
 @test "el workflow no fija los valores del peer: esos los trae el agente" {
   local dir="${BATS_TEST_DIRNAME}/../workflows/openshift" n declaradas
   declaradas=""
-  for n in PEER_GATEWAY_HOST PEER_CA_SECRET PEER_JWKS_URL; do
+  for n in PEER_GATEWAY_HOST PEER_INGRESS_HOST PEER_CA_SECRET PEER_JWKS_URL; do
     declaradas="${declaradas}$(grep -lE "^  ${n}: " "$dir/create.yaml" "$dir/delete.yaml" 2>/dev/null | sed "s/\$/ -> ${n}/")"
   done
   [ -z "$declaradas" ] || { echo "$declaradas" >&2; false; }
@@ -1038,6 +1053,16 @@ sin_sigla() {
   local r; r=$(named "$output" DestinationRule egress-gw-peer)
   [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.credentialName')" = "s2s-remote-ca" ] || false
   [ "$(echo "$r" | yq '.spec.trafficPolicy.tls.insecureSkipVerify')" = "null" ]
+}
+
+@test "PEER_INGRESS_HOST viaja del build_context al reconcile" {
+  local rec="${BATS_TEST_DIRNAME}/../scripts/k8s/reconcile" dir="${BATS_TEST_DIRNAME}/../workflows/openshift" f
+  grep -q 'arg peer_ingress_host "\$PEER_INGRESS_HOST"' "$rec" \
+    || { echo "el reconcile no pasa peer_ingress_host al contexto del render" >&2; false; }
+  for f in create.yaml delete.yaml; do
+    grep -q '{ name: PEER_INGRESS_HOST, type: environment }' "$dir/$f" \
+      || { echo "falta PEER_INGRESS_HOST en el output de $f" >&2; false; }
+  done
 }
 
 @test "PEER_TLS_MODE viaja del build_context al reconcile" {

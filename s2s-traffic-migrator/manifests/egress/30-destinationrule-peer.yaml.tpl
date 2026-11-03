@@ -35,5 +35,5 @@ spec:
 {{- else }}
       credentialName: {{ .peer_ca_secret | quote }}
 {{- end }}
-      sni: {{ .peer_gateway_host | quote }}
+      sni: {{ .peer_ingress_host | quote }}
 {{- end }}
