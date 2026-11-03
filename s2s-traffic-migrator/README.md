@@ -340,7 +340,7 @@ un cluster y ninguna es un secreto:
 
 | clave | qué es |
 |---|---|
-| `PEER_GATEWAY_HOST` | ingreso del sustrato **opuesto**, por donde sale todo lo que cruza. |
+| `PEER_GATEWAY_HOST` | host del registro de Istio que alcanza al ingreso del sustrato **opuesto**. Lo publica el `ServiceEntry` del chart del namespace y los dos valores tienen que coincidir. |
 | `LOCAL_INGRESS_HOST` | ingreso de **este** cluster. Con un `site` `aws-*` la rama que atiende EKS también entra por acá. |
 | `LOCAL_INGRESS_TLS_MODE` | `skip-verify` (default) o `certificate`. Con `certificate` el egreso valida el cert del ingreso contra `PEER_CA_SECRET`; con `skip-verify` cifra pero **no autentica al servidor**, que es lo que hace falta cuando el cert del ingreso no cubre su nombre interno de Service. Cualquier otro valor aborta. |
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
