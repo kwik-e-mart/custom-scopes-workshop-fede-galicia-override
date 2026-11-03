@@ -488,6 +488,28 @@ correr_delete() {
   done
 }
 
+@test "con el flag en false el DestinationRule del peer lo trae el chart, no el service" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  run grep -c '30-destinationrule-peer.yaml' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "con el flag en false se saca el DestinationRule del peer que hubiera quedado" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q 'delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found' "$KUBECTL_CALLS"
+}
+
+@test "con el flag en true el DestinationRule del peer se aplica y NO se borra" {
+  SIGNING_STRATEGY=cluster-keys NAMESPACE_SETUP_ENABLED=true run correr
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  run grep -c '30-destinationrule-peer.yaml' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ] || false
+  run grep -c 'delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
 @test "con el flag en false el validador y las routes SI se siguen aplicando" {
   SIGNING_STRATEGY=cluster-keys run correr
   run grep -c '25-authpolicy-validator.yaml' "$KUBECTL_CALLS"
