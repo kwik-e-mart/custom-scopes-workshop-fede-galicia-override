@@ -43,17 +43,13 @@ unpublish() {
 
   case "$APIM_HTTP_CODE" in
     202)
-      if [ -n "$api_id" ]; then
-        detach_scope_auth_policies "$api_id" "$PROVIDER_NAMESPACE"
-      fi
+      detach_scope_auth_policies "$service_id" "$PROVIDER_NAMESPACE" "$api_id"
       report_progress "Baja en curso en APIM. APIM avisa cuando la API quede dada de baja." \
         "$(echo "$APIM_BODY" | jq -c '{deletion_id: .deletionId}')" \
         || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
       ;;
     404)
-      if [ -n "$api_id" ]; then
-        detach_scope_auth_policies "$api_id" "$PROVIDER_NAMESPACE"
-      fi
+      detach_scope_auth_policies "$service_id" "$PROVIDER_NAMESPACE" "$api_id"
       close_action success "La API no tiene manifests publicados en APIM: no hay nada que dar de baja."
       ;;
     *)

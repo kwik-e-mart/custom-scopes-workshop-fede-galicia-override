@@ -40,6 +40,7 @@ JSON
   queue_response 202 "$(deleting)"
   run_step
   [ "$status" -eq 0 ]
+  grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,service-id=svc-1 --ignore-not-found" "$KUBECTL_CALLS_LOG"
   grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,api-id=payments-test-kuadrant-b2c-1 --ignore-not-found" "$KUBECTL_CALLS_LOG"
 }
 
@@ -85,13 +86,21 @@ JSON
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
-@test "sin apiId guardado pide la baja igual y no toca el cluster" {
+@test "un servicio fallido sin apiId borra las AuthPolicies por service-id con la baja aceptada" {
+  set_request '{"scope":"main"}'
+  queue_response 202 "$(deleting)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$KUBECTL_CALLS_LOG")" = "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,service-id=svc-1 --ignore-not-found" ]
+}
+
+@test "un servicio fallido sin manifests en APIM cierra success y borra las AuthPolicies por service-id" {
   set_request '{"scope":"main"}'
   queue_response 404 '{}'
   run_step
   [ "$status" -eq 0 ]
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/delete ' "$CURL_CALLS_LOG"
-  [ ! -s "$KUBECTL_CALLS_LOG" ]
+  [ "$(cat "$KUBECTL_CALLS_LOG")" = "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,service-id=svc-1 --ignore-not-found" ]
   [ "$(np_last_update_flag --status)" = "success" ]
 }
 
