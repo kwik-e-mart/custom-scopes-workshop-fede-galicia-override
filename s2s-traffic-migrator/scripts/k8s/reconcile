@@ -451,6 +451,23 @@ if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "
   MANIFESTS=("${KEEP[@]}")
 fi
 
+# El par ServiceEntry + DestinationRule que alcanza al peer es del chart: uno mete el host en el
+# registro de Istio y el otro define el SNI con el que se le habla. Separarlos entre dos dueños es
+# cómo se fabrica un BackendNotFound silencioso.
+if [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
+  KEEP=()
+  for f in "${MANIFESTS[@]}"; do
+    case "$(basename "$f")" in
+      30-destinationrule-peer.yaml) ;;
+      *) KEEP+=("$f") ;;
+    esac
+  done
+  MANIFESTS=("${KEEP[@]}")
+  kubectl -n "$NAMESPACE" delete \
+    "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer" --ignore-not-found \
+    || die "no se pudo sacar el DestinationRule del peer que ahora administra el chart."
+fi
+
 if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && keygen_jobs_present; then
   log info "egress-interceptor: el keygen de $NAMESPACE ya existe, no se reaplica el Job ni el CronJob."
   KEEP=()
