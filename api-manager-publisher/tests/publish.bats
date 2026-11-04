@@ -415,7 +415,7 @@ applied() {
   run_step
   local policy
   policy=$(applied | jq -c '.[0]')
-  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"payments-test-kuadrant-b2c-1","scope_id":"1049050904"}' ]
+  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"payments-test-kuadrant-b2c-1","scope_id":"1049050904","service-id":"svc-1"}' ]
   [ "$(jq -c .spec.targetRef <<<"$policy")" = '{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","name":"k-8-s-main-1049050904-internal"}' ]
   [ "$(jq -r .spec.defaults.strategy <<<"$policy")" = "merge" ]
   [ "$(jq -c '.spec.defaults.rules.authentication."payments-test-kuadrant-b2c-1"' <<<"$policy")" = \
