@@ -351,7 +351,8 @@ fi
 if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   if [ -z "$PEER_GATEWAY_HOST" ]; then
     log error "egress-interceptor: falta PEER_GATEWAY_HOST en el entorno del agente."
-    log error "  Es la dirección del ingreso del sustrato opuesto, por donde sale todo lo migrado."
+    log error "  Es el host del registro de Istio que alcanza al ingreso del sustrato opuesto."
+    log error "  Tiene que ser el mismo que publica el ServiceEntry del chart del namespace."
     exit 1
   fi
   if [ -z "$PEER_INGRESS_HOST" ]; then
