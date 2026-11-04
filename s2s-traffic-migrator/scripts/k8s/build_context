@@ -27,6 +27,10 @@ INGRESS_AUTH_POLICY_ENABLED=true
 if application_type_skips_auth_policy "$APPLICATION_TYPE"; then
   INGRESS_AUTH_POLICY_ENABLED=false
   log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE; sus routes de ingreso quedan sin validador y la autenticación queda en la aplicación."
+elif [ -z "$APPLICATION_TYPE" ]; then
+  log info "egress-interceptor: la aplicación no declara application_type en su metadata; sus routes de ingreso llevan el validador."
+else
+  log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE; sus routes de ingreso llevan el validador."
 fi
 
 PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"

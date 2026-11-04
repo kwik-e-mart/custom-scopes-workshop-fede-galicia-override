@@ -709,6 +709,19 @@ auth_policy_enabled_for() {  # <application_type>
   [[ "$output" == *"BFF"*"sin validador"* ]]
 }
 
+@test "la traza dice que una aplicacion API lleva validador" {
+  CONTEXT="$(ctx | jq -c '.application.metadata = {scaffolding: {application_type: "API"}}')" \
+  NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tipo API"*"llevan el validador"* ]]
+}
+
+@test "sin metadata no aborta y la traza dice que no hay application_type" {
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no declara application_type"*"llevan el validador"* ]]
+}
+
 @test "entre dos routes con el mismo hostname gana la del Gateway de ingreso configurado" {
   # Caso real: la route de un scope `internet-facing` queda colgada de un Gateway que no existe y
   # comparte hostname con la que sí atiende. Elegir por hostname solo deja el validador en

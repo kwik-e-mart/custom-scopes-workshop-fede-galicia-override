@@ -191,6 +191,11 @@ reconcile_scope_auth_policies() {
     detach_scope_auth_policies "$service_id" "$namespace" "$api_id"
     return 0
   fi
+  if [ -z "$application_type" ]; then
+    log info "publisher: la aplicación no declara application_type en su metadata; las routes del scope '$scope_slug' llevan AuthPolicy."
+  else
+    log info "publisher: la aplicación es de tipo $application_type; las routes del scope '$scope_slug' llevan AuthPolicy."
+  fi
   attach_scope_auth_policies "$api_id" "$namespace" "$scope_id" "$scope_slug" "$service_id"
 }
 

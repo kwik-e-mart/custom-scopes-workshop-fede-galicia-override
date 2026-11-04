@@ -455,6 +455,26 @@ set_application_type() {
   ! grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
 }
 
+@test "la traza dice el tipo de la aplicacion y si lleva AuthPolicy" {
+  set_application_type BFF
+  queue_response 200 "$(pushed)"
+  run_step
+  [[ "$output" == *"tipo BFF"*"sin AuthPolicy"* ]] || false
+  set_application_type API
+  queue_response 200 "$(pushed)"
+  run_step
+  [[ "$output" == *"tipo API"*"llevan AuthPolicy"* ]]
+}
+
+@test "sin metadata publica con AuthPolicies y la traza dice que no hay application_type" {
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  [[ "$output" == *"no declara application_type"*"llevan AuthPolicy"* ]] || false
+  [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "1" ]
+}
+
 @test "APPLICATION_TYPES_WITH_NO_AUTH_POLICY elige que tipos quedan sin AuthPolicy" {
   export APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API
   set_application_type API
