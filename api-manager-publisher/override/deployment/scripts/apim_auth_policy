@@ -1,0 +1,67 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../scripts/auth_policy"
+source "$SCRIPT_DIR/../../../../shared/scripts/application_type"
+
+rendered_routes() {
+  local route_file
+  for route_file in "$OUTPUT_DIR"/ingress-*.yaml; do
+    [ -f "$route_file" ] || continue
+    yq -o=json -I=0 'select(.kind == "HTTPRoute") | {"name": .metadata.name, "namespace": .metadata.namespace}' "$route_file"
+  done
+}
+
+published_api_id() {
+  local application_nrn="$1" scope_slug="$2" services
+  if ! services=$(np service list --nrn "$application_nrn" --status:ne archived --all --format json); then
+    echo "❌ Failed to list the services of $application_nrn: cannot resolve the $APIM_PUBLISHER_PROVIDER apiId of scope '$scope_slug'" >&2
+    return 1
+  fi
+  echo "$services" | jq -r --arg provider "$APIM_PUBLISHER_PROVIDER" --arg scope "$scope_slug" '
+    [(.results? // .)[] | select(.selectors.provider == $provider and .attributes.scope == $scope) | .attributes.api_id // empty | strings]
+    | first // empty'
+}
+
+write_apim_auth_policy() {
+  local application_type routes namespace scope_slug application_nrn api_id repository_url policy_file route
+  application_type=$(resolve_application_type "$CONTEXT")
+  if application_type_skips_auth_policy "$application_type"; then
+    echo "ℹ️ $application_type applications have no $APIM_PUBLISHER_PROVIDER AuthPolicy — their routes authenticate in the application"
+    return 0
+  fi
+
+  routes=$(rendered_routes)
+  if [ -z "$routes" ]; then
+    echo "ℹ️ No HTTPRoute rendered in $OUTPUT_DIR — no $APIM_PUBLISHER_PROVIDER AuthPolicy to add"
+    return 0
+  fi
+
+  scope_slug=$(echo "$CONTEXT" | jq -r '.scope.slug')
+  application_nrn=$(echo "$CONTEXT" | jq -r '.scope.nrn | sub(":scope=.*$"; "")')
+  api_id=$(published_api_id "$application_nrn" "$scope_slug") || exit 1
+  if [ -z "$api_id" ]; then
+    repository_url=$(echo "$CONTEXT" | jq -r '.application.repository_url // empty')
+    if [ -z "$repository_url" ]; then
+      echo "❌ The application has no repository_url: cannot build the default $APIM_PUBLISHER_PROVIDER apiId of scope '$scope_slug'" >&2
+      exit 1
+    fi
+    namespace=$(echo "$routes" | jq -rs 'first.namespace')
+    api_id=$(default_api_id "$namespace" "${repository_url##*/}")
+  fi
+  if ! api_id_is_valid "$api_id"; then
+    echo "❌ The $APIM_PUBLISHER_PROVIDER apiId '$api_id' of scope '$scope_slug' is not a valid Kubernetes name" >&2
+    exit 1
+  fi
+
+  policy_file="$OUTPUT_DIR/authpolicy-apim-$SCOPE_ID-$DEPLOYMENT_ID.yaml"
+  : >"$policy_file"
+  while IFS= read -r route; do
+    echo "---" >>"$policy_file"
+    scope_auth_policy "$api_id" "$(echo "$route" | jq -r .namespace)" "$SCOPE_ID" "$(echo "$route" | jq -r .name)" | yq -P >>"$policy_file"
+  done <<<"$routes"
+  echo "🔒 Routes of scope '$scope_slug' only accept $APIM_PUBLISHER_PROVIDER credentials of $api_id"
+}
+
+write_apim_auth_policy

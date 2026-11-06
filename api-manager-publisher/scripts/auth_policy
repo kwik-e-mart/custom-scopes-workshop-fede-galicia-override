@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+PUBLISH_TENANT="b2c"
+AUTH_POLICY_MANAGED_BY="app.kubernetes.io/managed-by=api-manager-publisher"
+
+if ! type -t default_api_id >/dev/null 2>&1; then
+default_api_id() {
+  local namespace="$1" repository="$2"
+  repository=$(echo "${repository%.git}" | tr '[:upper:]' '[:lower:]')
+  echo "$namespace-$repository-$PUBLISH_TENANT-1"
+}
+fi
+
+if ! type -t api_id_is_valid >/dev/null 2>&1; then
+api_id_is_valid() {
+  [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
+}
+fi
+
+if ! type -t scope_auth_policy >/dev/null 2>&1; then
+scope_auth_policy() {
+  local api_id="$1" namespace="$2" scope_id="$3" route="$4"
+  jq -nc --arg api "$api_id" --arg ns "$namespace" --arg scope "$scope_id" --arg route "$route" \
+    --arg app_id_check "auth.identity.metadata.labels['app-id'] == request.headers.app_id" '{
+    apiVersion: "kuadrant.io/v1", kind: "AuthPolicy",
+    metadata: {name: "\($api)-\($route)", namespace: $ns,
+               labels: {"app.kubernetes.io/managed-by": "api-manager-publisher", "api-id": $api, scope_id: $scope}},
+    spec: {
+      targetRef: {group: "gateway.networking.k8s.io", kind: "HTTPRoute", name: $route},
+      defaults: {strategy: "merge", rules: {
+        authentication: {($api): {
+          apiKey: {selector: {matchLabels: {"api-id": $api}}, allNamespaces: true},
+          credentials: {customHeader: {name: "app_key"}}}},
+        authorization: {"\($api)-app-id": {
+          when: [{predicate: "has(request.headers.app_key)"}],
+          patternMatching: {patterns: [{predicate: $app_id_check}]}}}}}}}'
+}
+fi

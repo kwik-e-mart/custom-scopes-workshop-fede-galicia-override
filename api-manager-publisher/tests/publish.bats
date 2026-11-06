@@ -424,7 +424,7 @@ applied() {
   run_step
   local policy
   policy=$(applied | jq -c '.[0]')
-  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"payments-test-kuadrant-b2c-1","scope_id":"1049050904","service-id":"svc-1"}' ]
+  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"payments-test-kuadrant-b2c-1","scope_id":"1049050904"}' ]
   [ "$(jq -c .spec.targetRef <<<"$policy")" = '{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","name":"k-8-s-main-1049050904-internal"}' ]
   [ "$(jq -r .spec.defaults.strategy <<<"$policy")" = "merge" ]
   [ "$(jq -c '.spec.defaults.rules.authentication."payments-test-kuadrant-b2c-1"' <<<"$policy")" = \
@@ -437,14 +437,14 @@ set_application_type() {
   CONTEXT=$(echo "$CONTEXT" | jq -c --arg type "$1" '.application.metadata = {scaffolding: {application_type: $type}}')
 }
 
-@test "una aplicacion BFF no cuelga AuthPolicies y borra las que la API ya tuviera" {
+@test "una aplicacion BFF no cuelga AuthPolicies y borra las que el scope ya tuviera" {
   set_application_type BFF
   queue_response 200 "$(pushed)"
   run_step
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "0" ]
-  grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,api-id=payments-test-kuadrant-b2c-1 --ignore-not-found" "$KUBECTL_CALLS_LOG"
+  grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,scope_id=1049050904 --ignore-not-found" "$KUBECTL_CALLS_LOG"
   [ -z "$(np_last_update_flag --status)" ]
   [ "$(np_last_update_flag --results | jq -r .api_id)" = "payments-test-kuadrant-b2c-1" ]
 }
@@ -461,7 +461,22 @@ set_application_type() {
   queue_response 200 "$(pushed)"
   run_step
   [ "$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')" = "1" ]
-  ! grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
+}
+
+@test "despues de colgar las AuthPolicies con el apiId de APIM borra las del scope con otro apiId" {
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'delete authpolicy' "$KUBECTL_CALLS_LOG")" = "1" ]
+  [ "$(tail -1 "$KUBECTL_CALLS_LOG")" = "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,scope_id=1049050904,api-id!=payments-test-kuadrant-b2c-1 --ignore-not-found" ]
+}
+
+@test "si no puede borrar las AuthPolicies con otro apiId cierra failed" {
+  export KUBECTL_MOCK_DELETE_FAIL=1
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"AuthPolicies"* ]]
 }
 
 @test "la traza dice el tipo de la aplicacion y si lleva AuthPolicy" {
