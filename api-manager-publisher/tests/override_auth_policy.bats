@@ -161,6 +161,14 @@ set_application_type() {
   [ ! -e "$OUTPUT_DIR/authpolicy-apim-5-6.yaml" ]
 }
 
+@test "un archivo de routes que no se puede leer frena el deploy aunque haya otro valido" {
+  printf 'kind: HTTPRoute\nmetadata: [roto\n' >"$OUTPUT_DIR/ingress-5-1.yaml"
+  run_step
+  [ "$status" -ne 0 ]
+  [[ "$output" != *NEXT_STEP_RAN* ]] || false
+  [ ! -e "$OUTPUT_DIR/authpolicy-apim-5-6.yaml" ]
+}
+
 @test "sin routes rendeadas sigue el deploy sin generar la AuthPolicy" {
   rm "$OUTPUT_DIR/ingress-5-6.yaml"
   run_step

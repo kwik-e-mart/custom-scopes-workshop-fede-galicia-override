@@ -9,7 +9,7 @@ rendered_routes() {
   local route_file
   for route_file in "$OUTPUT_DIR"/ingress-*.yaml; do
     [ -f "$route_file" ] || continue
-    yq -o=json -I=0 'select(.kind == "HTTPRoute") | {"name": .metadata.name, "namespace": .metadata.namespace}' "$route_file"
+    yq -o=json -I=0 'select(.kind == "HTTPRoute") | {"name": .metadata.name, "namespace": .metadata.namespace}' "$route_file" || return 1
   done
 }
 
@@ -32,7 +32,7 @@ write_apim_auth_policy() {
     return 0
   fi
 
-  routes=$(rendered_routes)
+  routes=$(rendered_routes) || exit 1
   if [ -z "$routes" ]; then
     echo "ℹ️ No HTTPRoute rendered in $OUTPUT_DIR — no $APIM_PUBLISHER_PROVIDER AuthPolicy to add"
     return 0
