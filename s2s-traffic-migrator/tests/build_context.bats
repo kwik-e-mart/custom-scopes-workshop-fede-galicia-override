@@ -755,13 +755,96 @@ leer_vars() {  # <nombres...>
   [[ "$output" == *"LOCAL_INGRESS_SERVICE_NAMESPACE=ingress-ocp"* ]]
 }
 
-@test "sin ningún override el resultado es el mismo que antes: EKS no se entera" {
+leer_vars_en() {  # <site> <environment> <nombres...>
+  local site="$1" entorno="$2" expr="" n nf
+  shift 2
+  for n in "$@"; do expr="${expr}echo ${n}=\$${n}; "; done
+  nf=$(jq -nc --argjson a "$ATTRS" --argjson p "$PARAMS" --arg s "$site" --arg e "$entorno" \
+    '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:{site:$s, environment:$e}}, parameters:$p}}')
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$nf" run bash -c 'source "$1" >/dev/null; bash -c "$2"' _ "$BC" "$expr"
+}
+
+@test "en OpenShift los valores salen de la tabla, sin configurar nada en el agente" {
+  unset PEER_GATEWAY_HOST
+  leer_vars_en openshift dev INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE LOCAL_INGRESS_HOST PEER_GATEWAY_HOST PEER_INGRESS_HOST PEER_TLS_MODE
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=gw-mesh"* ]] || false
+  [[ "$output" == *"GATEWAY_NAMESPACE=apim-gateways"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_HOST=gw-mesh-istio.apim-gateways.svc.cluster.local"* ]] || false
+  [[ "$output" == *"PEER_GATEWAY_HOST=eks-backend.external"* ]] || false
+  [[ "$output" == *"PEER_INGRESS_HOST=s2s.ms.wd.bancogalicia.com.ar"* ]]
+}
+
+@test "la tabla NO apaga la verificación de TLS: eso se declara a mano" {
+  unset PEER_GATEWAY_HOST
+  leer_vars_en openshift dev PEER_TLS_MODE
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"PEER_TLS_MODE=certificate"* ]] || false
+  grep -q 'PEER_TLS_MODE' "${BATS_TEST_DIRNAME}/../scripts/k8s/defaults" && { echo "la tabla no debe fijar PEER_TLS_MODE" >&2; false; }
+  true
+}
+
+@test "en EKS los valores salen de la tabla, sin configurar nada en el agente" {
+  unset PEER_GATEWAY_HOST
+  leer_vars_en aws-us-east-1 dev INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE LOCAL_INGRESS_HOST PEER_GATEWAY_HOST PEER_TLS_MODE
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=gateway-private"* ]] || false
+  [[ "$output" == *"GATEWAY_NAMESPACE=gateways"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_HOST=gateway-private-istio.gateways.svc.cluster.local"* ]] || false
+  [[ "$output" == *"PEER_GATEWAY_HOST=shard1.paas-dev.mesh-noprod.bancogalicia.com.ar"* ]] || false
+  [[ "$output" == *"PEER_TLS_MODE=certificate"* ]]
+}
+
+@test "el JWKS del peer se arma con el cluster de la tabla y el namespace de la instancia" {
+  leer_vars_en openshift dev PEER_JWKS_URL
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"PEER_JWKS_URL=http://jwks-egress.payments.svc.cluster.local:8080/arqc-delta-136/payments/jwks.json"* ]]
+}
+
+@test "cada sustrato apunta al JWKS del OTRO: los dos sentidos no se pisan" {
+  leer_vars_en openshift dev PEER_JWKS_URL
+  [[ "$output" == *"/arqc-delta-136/"* ]] || false
+  leer_vars_en aws-us-east-1 dev PEER_JWKS_URL
+  [[ "$output" == *"/paas-dev/"* ]]
+}
+
+@test "un valor declarado le gana a la tabla" {
+  export INGRESS_GATEWAY_NAME=puesto-a-mano
+  leer_vars_en openshift dev INGRESS_GATEWAY_NAME
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=puesto-a-mano"* ]]
+}
+
+@test "un *_OVERRIDE le gana a la tabla y al valor declarado" {
+  export INGRESS_GATEWAY_NAME=del-workflow INGRESS_GATEWAY_NAME_OVERRIDE=del-agente
+  leer_vars_en openshift dev INGRESS_GATEWAY_NAME
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"INGRESS_GATEWAY_NAME=del-agente"* ]]
+}
+
+@test "un PEER_TLS_MODE declarado vacío sigue abortando: la tabla no lo tapa" {
+  export PEER_TLS_MODE=""
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(jq -nc --argjson a "$ATTRS" --argjson p "$PARAMS" '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:{site:"openshift", environment:"dev"}}, parameters:$p}}')" run bash "$BC"
+  [ "$status" -ne 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"PEER_TLS_MODE"* ]]
+}
+
+@test "un sitio que la tabla no conoce cae en los defaults genéricos" {
   leer_vars GATEWAY_NAMESPACE INGRESS_GATEWAY_NAME LOCAL_INGRESS_HOST LOCAL_INGRESS_SERVICE_NAMESPACE
   [ "$status" -eq 0 ]
   [[ "$output" == *"GATEWAY_NAMESPACE=gateways"* ]] || false
   [[ "$output" == *"INGRESS_GATEWAY_NAME=s2s-ingress"* ]] || false
-  [[ "$output" == *"LOCAL_INGRESS_HOST=gateway-private-istio.gateways.svc.cluster.local"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_HOST=s2s-ingress-istio.gateways.svc.cluster.local"* ]] || false
   [[ "$output" == *"LOCAL_INGRESS_SERVICE_NAMESPACE=gateways"* ]]
+}
+
+@test "el ingreso local se deriva del Gateway, no se declara aparte" {
+  export INGRESS_GATEWAY_NAME_OVERRIDE=gw-mesh GATEWAY_NAMESPACE_OVERRIDE=apim-gateways
+  leer_vars LOCAL_INGRESS_HOST LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"LOCAL_INGRESS_HOST=gw-mesh-istio.apim-gateways.svc.cluster.local"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_SERVICE=gw-mesh-istio"* ]] || false
+  [[ "$output" == *"LOCAL_INGRESS_SERVICE_NAMESPACE=apim-gateways"* ]]
 }
 
 @test "un override con un valor inválido aborta, igual que uno del workflow" {

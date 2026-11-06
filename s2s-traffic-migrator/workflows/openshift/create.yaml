@@ -12,16 +12,16 @@ configuration:
   VAULT_APPROLE_SECRET: vault-approle-creds
   VAULT_SECRET_STORE: vault-eks-plataforma
   LOCAL_JWKS_URL: ""
-  INGRESS_GATEWAY_NAME: s2s-ingress
+  INGRESS_GATEWAY_NAME: ""
   VAULT_KV_MOUNT: ""
   VAULT_KV_CLUSTER: ""
   JWKS_SERVICE_NAME: jwks-egress
   JWKS_IMAGE: "registry.access.redhat.com/ubi9/httpd-24:latest"
   WRISTBAND_SECRET_NAME: ""
   EGRESS_ISSUER_URL: ""
-  LOCAL_INGRESS_HOST: gateway-private-istio.gateways.svc.cluster.local
+  LOCAL_INGRESS_HOST: ""
   LOCAL_INGRESS_TLS_MODE: skip-verify
-  GATEWAY_NAMESPACE: gateways
+  GATEWAY_NAMESPACE: ""
   INGRESS_AUTHPOLICY: s2s-validator
   TOKEN_DURATION: "60"
   GATEWAY_CLASS: istio
