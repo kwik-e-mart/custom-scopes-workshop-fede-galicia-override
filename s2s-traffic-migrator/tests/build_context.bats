@@ -772,8 +772,16 @@ leer_vars_en() {  # <site> <environment> <nombres...>
   [[ "$output" == *"GATEWAY_NAMESPACE=apim-gateways"* ]] || false
   [[ "$output" == *"LOCAL_INGRESS_HOST=gw-mesh-istio.apim-gateways.svc.cluster.local"* ]] || false
   [[ "$output" == *"PEER_GATEWAY_HOST=eks-backend.external"* ]] || false
-  [[ "$output" == *"PEER_INGRESS_HOST=s2s.ms.wd.bancogalicia.com.ar"* ]] || false
-  [[ "$output" == *"PEER_TLS_MODE=skip-verify"* ]]
+  [[ "$output" == *"PEER_INGRESS_HOST=s2s.ms.wd.bancogalicia.com.ar"* ]]
+}
+
+@test "la tabla NO apaga la verificación de TLS: eso se declara a mano" {
+  unset PEER_GATEWAY_HOST
+  leer_vars_en openshift dev PEER_TLS_MODE
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"PEER_TLS_MODE=certificate"* ]] || false
+  grep -q 'PEER_TLS_MODE' "${BATS_TEST_DIRNAME}/../scripts/k8s/defaults" && { echo "la tabla no debe fijar PEER_TLS_MODE" >&2; false; }
+  true
 }
 
 @test "en EKS los valores salen de la tabla, sin configurar nada en el agente" {

@@ -23,8 +23,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/si
 SIGLA=$(resolve_sigla "$CONTEXT")
 
 PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
-PEER_TLS_MODE_DECLARADO="${PEER_TLS_MODE+si}"
-PEER_TLS_MODE="${PEER_TLS_MODE-}"
+PEER_TLS_MODE="${PEER_TLS_MODE-certificate}"
+case "$PEER_TLS_MODE" in
+  certificate|skip-verify) ;;
+  *)
+    log error "egress-interceptor: PEER_TLS_MODE='${PEER_TLS_MODE}' no es válido. Valores: certificate | skip-verify"
+    log error "  'certificate' valida el cert del ingreso del peer contra PEER_CA_SECRET; 'skip-verify' cifra sin autenticarlo."
+    exit 1 ;;
+esac
 LISTEN_PORT="${LISTEN_PORT:-8080}"
 TOKEN_DURATION="${TOKEN_DURATION:-60}"
 GATEWAY_CLASS="${GATEWAY_CLASS:-istio}"
@@ -151,17 +157,6 @@ LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-${INGRESS_GATEWAY_NAME}-istio.${GATEWA
 LOCAL_INGRESS_SERVICE="${LOCAL_INGRESS_HOST%%.*}"
 LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_HOST#*.}"
 LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_SERVICE_NAMESPACE%%.*}"
-if [ -z "$PEER_TLS_MODE_DECLARADO" ]; then
-  aplicar_defaults "$SITE" "$ENVIRONMENT" PEER_TLS_MODE
-  PEER_TLS_MODE="${PEER_TLS_MODE:-certificate}"
-fi
-case "$PEER_TLS_MODE" in
-  certificate|skip-verify) ;;
-  *)
-    log error "egress-interceptor: PEER_TLS_MODE='${PEER_TLS_MODE}' no es válido. Valores: certificate | skip-verify"
-    log error "  'certificate' valida el cert del ingreso del peer contra PEER_CA_SECRET; 'skip-verify' cifra sin autenticarlo."
-    exit 1 ;;
-esac
 
 VAULT_KV_CLUSTER="${VAULT_KV_CLUSTER:-}"
 if [ -z "$VAULT_KV_CLUSTER" ]; then
