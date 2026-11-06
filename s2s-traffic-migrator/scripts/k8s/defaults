@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+DEFAULTS_POR_SUSTRATO=$(cat <<'TABLA'
+openshift     | *   | INGRESS_GATEWAY_NAME | gw-mesh
+openshift     | *   | GATEWAY_NAMESPACE    | apim-gateways
+openshift     | *   | PEER_TLS_MODE        | skip-verify
+openshift     | dev | PEER_GATEWAY_HOST    | eks-backend.external
+openshift     | dev | PEER_INGRESS_HOST    | s2s.ms.wd.bancogalicia.com.ar
+openshift     | dev | PEER_CLUSTER         | arqc-delta-136
+aws-us-east-1 | *   | INGRESS_GATEWAY_NAME | gateway-private
+aws-us-east-1 | *   | GATEWAY_NAMESPACE    | gateways
+aws-us-east-1 | dev | PEER_GATEWAY_HOST    | shard1.paas-dev.mesh-noprod.bancogalicia.com.ar
+aws-us-east-1 | dev | PEER_CLUSTER         | paas-dev
+TABLA
+)
+
+if ! type -t recortar >/dev/null 2>&1; then
+recortar() {  # <texto>
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+fi
+
+if ! type -t default_del_sustrato >/dev/null 2>&1; then
+default_del_sustrato() {  # <site> <environment> <clave>
+  local site="$1" entorno="$2" clave="$3" linea s e c v
+  while IFS= read -r linea; do
+    [ -n "$linea" ] || continue
+    IFS='|' read -r s e c v <<<"$linea"
+    s=$(recortar "$s"); e=$(recortar "$e")
+    c=$(recortar "$c"); v=$(recortar "$v")
+    [ "$s" = "$site" ] || continue
+    [ "$c" = "$clave" ] || continue
+    [ "$e" = "$entorno" ] || [ "$e" = "*" ] || continue
+    printf '%s' "$v"
+    return 0
+  done <<<"$DEFAULTS_POR_SUSTRATO"
+  return 0
+}
+fi
+
+if ! type -t aplicar_defaults >/dev/null 2>&1; then
+aplicar_defaults() {  # <site> <environment> <clave...>
+  local site="$1" entorno="$2" clave valor
+  shift 2
+  for clave in "$@"; do
+    [ -z "${!clave:-}" ] || continue
+    valor=$(default_del_sustrato "$site" "$entorno" "$clave")
+    [ -n "$valor" ] || continue
+    printf -v "$clave" '%s' "$valor"
+    DEFAULTS_APLICADOS="${DEFAULTS_APLICADOS:-} ${clave}=${valor}"
+  done
+}
+fi
