@@ -28,6 +28,26 @@ link_context() {
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM_APP_ID y APIM_APP_KEY"*"próximo deploy"* ]] || false
 }
 
+@test "el link sin API_SUBSCRIBER_URL toma el entorno de la notificacion" {
+  STEP="$PUBLISHER_SCRIPTS/link_subscribe"
+  unset API_SUBSCRIBER_URL
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-l",type:"create",service:{id:"svc-1",dimensions:{environment:"sandbox"}},link:{id:"l-1",attributes:{}},parameters:{approval_ref:"RITM0012345",plan_id:"gold"}}}')
+  run_step
+  [ "$status" -ne 0 ]
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *sandbox* ]] || false
+}
+
+@test "el update sin API_SUBSCRIBER_URL toma el entorno de la notificacion" {
+  STEP="$PUBLISHER_SCRIPTS/link_update"
+  unset API_SUBSCRIBER_URL
+  NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-l",type:"update",service:{id:"svc-1",dimensions:{environment:"sandbox"}},link:{id:"l-1",attributes:{subscription_id:"sub-api-0012345--ledger"}},parameters:{approval_ref:"RITM0012345",plan_id:"gold"}}}')
+  run_step
+  [ "$status" -ne 0 ]
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *sandbox* ]] || false
+}
+
 @test "el link manda el ticket tal cual lo cargaron, sin validar su formato" {
   STEP="$PUBLISHER_SCRIPTS/link_subscribe"
   link_context '{}' '{"approval_ref":"UR0866152","plan_id":"gold"}'
