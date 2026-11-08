@@ -198,6 +198,15 @@ delete_ingress_validator_rules() {
     -l "${MANAGED_LABEL}=true" --ignore-not-found
 }
 
+delete_route_validators() {
+  local routes route
+  routes=$(printf %s "$INTERCEPTIONS_JSON" | jq -r '.[].ingress_route // empty') || return 1
+  for route in $routes; do
+    kubectl -n "$NAMESPACE" delete authpolicy.kuadrant.io "${INGRESS_AUTHPOLICY}-${route}" --ignore-not-found \
+      || { log error "no se pudo borrar el validador ${INGRESS_AUTHPOLICY}-${route}."; return 1; }
+  done
+}
+
 if [ "$ACTION" = "delete" ]; then
   gitops_publish_removal \
     || die "falló la publicación del borrado al repo gitops. No se borró nada del cluster."
@@ -352,6 +361,7 @@ jq -n \
   --arg egress_authpolicy "$EGRESS_AUTHPOLICY" \
   --arg issuer_domain "$ISSUER_DOMAIN" \
   --arg namespace_setup_enabled "$NAMESPACE_SETUP_ENABLED" \
+  --arg ingress_auth_policy_enabled "$INGRESS_AUTH_POLICY_ENABLED" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
   --argjson interceptions "$INTERCEPTIONS_JSON" \
@@ -501,6 +511,10 @@ apply_manifests "${MANIFESTS[@]}" \
 if [ -n "$VALIDATOR_FILE" ]; then
   reconcile_ingress_validator "$VALIDATOR_FILE" \
     || die "falló el alta de las reglas de $NAMESPACE en el validador de ingreso $INGRESS_AUTHPOLICY."
+fi
+if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$INGRESS_AUTH_POLICY_ENABLED" = "false" ]; then
+  delete_route_validators \
+    || die "no se pudieron sacar los validadores de las routes de una aplicación sin auth policy. El tráfico NO se desvió."
 fi
 
 # El data plane tiene que estar arriba ANTES de desviarle el tráfico, o el Service queda

@@ -326,6 +326,7 @@ Son de la instalación, no del formulario, así que las pasa quien levanta el ag
 | `CLUSTER_LABEL` | cómo se identifica este cluster en el header `X-S2S-Cluster` de las respuestas. |
 | `KUBECONFIG` | dedicado, no el `~/.kube/config` del usuario: los scripts invocan `kubectl` sin `--context`, así que dependen del `current-context`. Un `use-context` en otra terminal redirigiría el reconcile a otro cluster sin avisar. |
 | `PATH` | tiene que resolver `bash` **>= 4**, `kubectl`, `jq`, `gomplate` y `git`. En macOS el `/bin/bash` 3.2 rompe el `logging` con *bad substitution*. |
+| `APPLICATION_TYPES_WITH_NO_AUTH_POLICY` | opcional: `application_type` de la metadata de la aplicación, separados por coma, cuyas routes de ingreso quedan sin validador (default `BFF,SPA`; vacía, todas lo llevan). Con `cluster-keys` el apply borra el validador que la route ya tuviera. |
 
 Y las del publisher GitOps, opcionales — ver **Configuración** más arriba:
 `GITOPS_REPO_URL`, `GITOPS_BRANCH`, `GITOPS_PATH_PREFIX`, `GITOPS_PUSH_RETRIES`.

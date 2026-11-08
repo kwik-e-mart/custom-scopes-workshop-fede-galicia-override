@@ -14,6 +14,7 @@ setup() {
   BC="${BATS_TEST_DIRNAME}/../scripts/k8s/build_context"
   source "${BATS_TEST_DIRNAME}/../logging"
   export -f log
+  unset APPLICATION_TYPES_WITH_NO_AUTH_POLICY
   NS_PROVIDER=payments
   APP_ID=142495574
   ATTRS='{"cluster":"crc","interceptions":[{"service_name":"reports","scope":"prod","percent":100}]}'
@@ -665,6 +666,60 @@ exportado() {  # <variable>
   v=$(CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" KEYS_NAMESPACE=payments \
     bash -c "source '$BC' >/dev/null 2>&1; printf '%s' \"\$KEYS_NAMESPACE\"")
   [ "$v" = "kuadrant-system" ]
+}
+
+auth_policy_enabled_for() {  # <application_type>
+  CONTEXT="$(ctx | jq -c --arg type "$1" '.application.metadata = {scaffolding: {application_type: $type}}')" \
+  NP_ACTION_CONTEXT="$(notif)" \
+    run bash -c 'source "$1" >/dev/null; bash -c "echo INGRESS_AUTH_POLICY_ENABLED=\$INGRESS_AUTH_POLICY_ENABLED"' _ "$BC"
+}
+
+@test "una aplicacion API lleva el validador de ingreso" {
+  auth_policy_enabled_for API
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=true"* ]]
+}
+
+@test "una aplicacion BFF o SPA queda sin validador de ingreso" {
+  for type in BFF SPA; do
+    auth_policy_enabled_for "$type"
+    [ "$status" -eq 0 ] || false
+    [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=false"* ]] || false
+  done
+}
+
+@test "una aplicacion sin application_type lleva el validador de ingreso" {
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" \
+    run bash -c 'source "$1" >/dev/null; bash -c "echo INGRESS_AUTH_POLICY_ENABLED=\$INGRESS_AUTH_POLICY_ENABLED"' _ "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=true"* ]]
+}
+
+@test "APPLICATION_TYPES_WITH_NO_AUTH_POLICY elige que tipos quedan sin validador" {
+  APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API auth_policy_enabled_for API
+  [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=false"* ]] || false
+  APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API auth_policy_enabled_for BFF
+  [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=true"* ]]
+}
+
+@test "la traza dice que la aplicacion queda sin validador y por que tipo" {
+  CONTEXT="$(ctx | jq -c '.application.metadata = {scaffolding: {application_type: "BFF"}}')" \
+  NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"BFF"*"sin validador"* ]]
+}
+
+@test "la traza dice que una aplicacion API lleva validador" {
+  CONTEXT="$(ctx | jq -c '.application.metadata = {scaffolding: {application_type: "API"}}')" \
+  NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tipo API"*"llevan el validador"* ]]
+}
+
+@test "sin metadata no aborta y la traza dice que no hay application_type" {
+  CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no declara application_type"*"llevan el validador"* ]]
 }
 
 @test "entre dos routes con el mismo hostname gana la del Gateway de ingreso configurado" {
