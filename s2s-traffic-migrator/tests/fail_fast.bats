@@ -32,6 +32,10 @@ if [ -n "${FALLA_WAIT:-}" ] && [[ "$*" == *wait* && "$*" == *"$FALLA_WAIT"* ]]; 
   echo "error: timed out waiting for the condition" >&2
   exit 1
 fi
+if [ -n "${FALLA_DELETE_VALIDATOR:-}" ] && [[ "$*" == *"delete authpolicy.kuadrant.io s2s-validator-"* ]]; then
+  echo "Error from server (Forbidden): authpolicies.kuadrant.io is forbidden" >&2
+  exit 1
+fi
 if [ -n "${FALLA_GET_SVC:-}" ] && [[ "$*" == *"get svc"*"-o json"* ]]; then
   echo "error: Unable to connect to the server: dial tcp: i/o timeout" >&2
   exit 1
@@ -122,6 +126,7 @@ correr() {
   EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
   NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
+  INGRESS_AUTH_POLICY_ENABLED="${INGRESS_AUTH_POLICY_ENABLED:-true}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
@@ -158,6 +163,7 @@ correr_openshift() {  # [interceptions-json]
   EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
   NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
   SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
+  INGRESS_AUTH_POLICY_ENABLED="${INGRESS_AUTH_POLICY_ENABLED:-true}" \
   NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
   NETWORKING_VAULT_NAMESPACE=admin/spiffe \
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
@@ -466,6 +472,36 @@ correr_delete() {
   SIGNING_STRATEGY=cluster-keys run correr
   run grep -c -- '-n payments wait --for=condition=Enforced authpolicy/s2s-validator-' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
+}
+
+@test "una aplicacion sin auth policy desvia el trafico sin colgar ni esperar el validador" {
+  SIGNING_STRATEGY=cluster-keys INGRESS_AUTH_POLICY_ENABLED=false run correr
+  [ "$status" -eq 0 ]
+  run grep -c '25-authpolicy-validator.yaml' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ] || false
+  run grep -c 'wait --for=condition=Enforced authpolicy/s2s-validator-' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ] || false
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -ge 1 ]
+}
+
+@test "una aplicacion sin auth policy borra el validador que su route tuviera de antes" {
+  SIGNING_STRATEGY=cluster-keys INGRESS_AUTH_POLICY_ENABLED=false run correr
+  grep -qx -- '-n payments delete authpolicy.kuadrant.io s2s-validator-k-8-s-reports-internal --ignore-not-found' "$KUBECTL_CALLS"
+}
+
+@test "una aplicacion con auth policy no borra su validador" {
+  SIGNING_STRATEGY=cluster-keys run correr
+  run grep -c 'delete authpolicy' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
+}
+
+@test "si no puede borrar el validador viejo NO desvia el trafico" {
+  SIGNING_STRATEGY=cluster-keys INGRESS_AUTH_POLICY_ENABLED=false FALLA_DELETE_VALIDATOR=1 run correr
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"s2s-validator-k-8-s-reports-internal"* ]] || false
+  run grep -c ' patch svc ' "$KUBECTL_CALLS"
+  [ "$output" -eq 0 ]
 }
 
 @test "la primera vez el endpoint de JWKS SI se aplica" {

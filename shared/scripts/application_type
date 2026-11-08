@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+if ! type -t resolve_application_type >/dev/null 2>&1; then
+resolve_application_type() {
+  jq -r '.application.metadata.scaffolding.application_type? // empty | strings' <<< "$1" 2>/dev/null || true
+}
+fi
+
+if ! type -t application_type_skips_auth_policy >/dev/null 2>&1; then
+application_type_skips_auth_policy() {
+  [ -n "$1" ] || return 1
+  jq -en --arg type "$1" --arg types "${APPLICATION_TYPES_WITH_NO_AUTH_POLICY-BFF,SPA}" \
+    '$types | split(",") | map(gsub("^\\s+|\\s+$"; "") | ascii_upcase) | index($type | ascii_upcase) != null' >/dev/null
+}
+fi
