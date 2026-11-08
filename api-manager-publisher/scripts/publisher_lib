@@ -8,19 +8,6 @@ PUBLISH_TENANT="b2c"
 LEGAJO_PATTERN='^l[0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
 
-require_publish_environment() {
-  local dimension
-  dimension=$(echo "$1" | tr '[:upper:]' '[:lower:]')
-  case "$dimension" in
-    dev|development|desarrollo) PUBLISH_ENVIRONMENT=dev ;;
-    int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
-    qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
-    prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
-    "") fail "publisher: el service no tiene la dimensión environment." ;;
-    *) fail "publisher: la dimensión environment '$1' del service no corresponde a dev, int, qas ni prd." ;;
-  esac
-}
-
 require_legajo() {
   local email
   email=$(notification_field '.user.email')

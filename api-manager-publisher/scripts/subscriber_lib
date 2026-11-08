@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+APIM_URLS_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../apim-urls.json"
 NP_API_BASE_URL="https://api.nullplatform.com"
 SUBSCRIPTION_ID_PATTERN='sub-[a-z0-9]([a-z0-9.-]*[a-z0-9])?--[a-z0-9]([a-z0-9.-]*[a-z0-9])?'
 PLAN_ID_PATTERN='^[A-Za-z0-9._-]+$'
@@ -53,25 +54,41 @@ close_on_unexpected_exit() {
   fi
 }
 
+require_publish_environment() {
+  local dimension
+  dimension=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+  case "$dimension" in
+    dev|development|desarrollo) PUBLISH_ENVIRONMENT=dev ;;
+    int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
+    qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
+    prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
+    "") fail "apim: el service no tiene la dimensión environment." ;;
+    *) fail "apim: la dimensión environment '$1' no corresponde a dev, int, qas ni prd." ;;
+  esac
+}
+
+resolve_apim_url() {
+  local variable="$1" api="$2"
+  APIM_URL="${!variable-}"
+  if [ -z "$APIM_URL" ]; then
+    require_publish_environment "$(notification_field '.service.dimensions.environment')"
+    APIM_URL=$(jq -r --arg environment "$PUBLISH_ENVIRONMENT" --arg api "$api" '.[$environment][$api] // empty' "$APIM_URLS_FILE")
+  fi
+  if [ -z "$APIM_URL" ]; then
+    fail "$api: no hay URL para $PUBLISH_ENVIRONMENT en apim-urls.json ni en la variable $variable del agente."
+  fi
+  if [[ "$APIM_URL" != https://* ]]; then
+    fail "$api: la URL $APIM_URL tiene que ser https; no se manda el token por un canal sin cifrar."
+  fi
+}
+
 require_agent_config() {
-  if [ -z "${API_SUBSCRIBER_URL-}" ]; then
-    fail "subscriber: el agente no tiene configurada la variable API_SUBSCRIBER_URL."
-  fi
-  if [[ "$API_SUBSCRIBER_URL" != https://* ]]; then
-    fail "subscriber: API_SUBSCRIBER_URL tiene que ser https; no se manda el token por un canal sin cifrar."
-  fi
-  APIM_URL="$API_SUBSCRIBER_URL"
+  resolve_apim_url API_SUBSCRIBER_URL subscriber
   APIM_TOKEN="${API_SUBSCRIBER_TOKEN-}"
 }
 
 require_publisher_config() {
-  if [ -z "${APIM_PUBLISHER_URL-}" ]; then
-    fail "publisher: el agente no tiene configurada la variable APIM_PUBLISHER_URL."
-  fi
-  if [[ "$APIM_PUBLISHER_URL" != https://* ]]; then
-    fail "publisher: APIM_PUBLISHER_URL tiene que ser https; no se manda el token por un canal sin cifrar."
-  fi
-  APIM_URL="$APIM_PUBLISHER_URL"
+  resolve_apim_url APIM_PUBLISHER_URL publisher
   APIM_TOKEN="${APIM_PUBLISHER_TOKEN-}"
 }
 

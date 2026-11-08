@@ -9,8 +9,8 @@ ACTION_SETTLED=0
 trap close_on_unexpected_exit EXIT
 
 link_subscribe() {
-  require_agent_config
   load_notification
+  require_agent_config
 
   local params link_id action_id
   params=$(echo "$NOTIFICATION" | jq -c '(.link.attributes // {}) * (.parameters // {})')

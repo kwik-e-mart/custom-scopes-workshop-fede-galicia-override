@@ -9,6 +9,18 @@ setup() {
   NP_ACTION_CONTEXT=$(jq -nc '{notification:{id:"act-1",service:{id:"svc-1"}}}')
 }
 
+apim_urls_fixture() {
+  APIM_URLS_FILE="$BATS_TEST_TMPDIR/apim-urls.json"
+  jq -n '{dev: {publisher: "https://pub-dev.test", subscriber: "https://sub-dev.test"},
+          prd: {publisher: "https://pub-prd.test", subscriber: ""},
+          qas: {publisher: "http://pub-qas.test", subscriber: "https://sub-qas.test"}}' >"$APIM_URLS_FILE"
+}
+
+notification_with() {
+  NP_ACTION_CONTEXT=$(jq -nc "{notification: ({id: \"act-1\"} + ($1))}")
+  load_notification
+}
+
 @test "callback_url arma la URL de la accion del service" {
   run callback_url svc-1 act-1
   [ "$output" = "https://api.nullplatform.com/service/svc-1/action/act-1" ]
@@ -85,13 +97,76 @@ setup() {
   [ "$(apim_problem_detail "$(printf 'a\033[31mb\nc')")" = "$(printf 'a[31mb\nc')" ]
 }
 
-@test "require_agent_config falla nombrando la variable vacia sin llamar a curl" {
-  API_SUBSCRIBER_URL=""
+@test "require_agent_config sin variable usa la URL del subscriber del entorno del service aunque el link diga otro" {
+  apim_urls_fixture
+  unset API_SUBSCRIBER_URL
+  notification_with '{link: {id: "l-1", dimensions: {environment: "qas"}}, service: {id: "svc-1", dimensions: {environment: "development"}}}'
+  require_agent_config
+  [ "$APIM_URL" = "https://sub-dev.test" ]
+  [ "$APIM_TOKEN" = "tok-123" ]
+}
+
+@test "require_agent_config con un service sin dimensiones falla aunque el link tenga entorno" {
+  apim_urls_fixture
+  unset API_SUBSCRIBER_URL
+  notification_with '{link: {id: "l-1", dimensions: {environment: "qas"}}, service: {id: "svc-1"}}'
   run require_agent_config
   [ "$status" -ne 0 ]
-  [[ "$output" == *"API_SUBSCRIBER_URL"* ]] || false
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *environment* ]]
+}
+
+@test "require_publisher_config sin variable usa la URL del publisher del entorno del service" {
+  apim_urls_fixture
+  unset APIM_PUBLISHER_URL
+  notification_with '{service: {id: "svc-1", dimensions: {environment: "production"}}}'
+  require_publisher_config
+  [ "$APIM_URL" = "https://pub-prd.test" ]
+}
+
+@test "la variable del agente gana sobre el archivo y no exige la dimension" {
+  apim_urls_fixture
+  export APIM_PUBLISHER_URL="https://publisher.test"
+  notification_with '{service: {id: "svc-1"}}'
+  require_agent_config
+  [ "$APIM_URL" = "https://apisub.test" ]
+  require_publisher_config
+  [ "$APIM_URL" = "https://publisher.test" ]
+}
+
+@test "un entorno sin URL en el archivo falla nombrando el entorno y la variable sin llamar a curl" {
+  apim_urls_fixture
+  API_SUBSCRIBER_URL=""
+  notification_with '{service: {id: "svc-1", dimensions: {environment: "prd"}}}'
+  run require_agent_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *prd*API_SUBSCRIBER_URL* ]] || false
   [ ! -s "$CURL_CALLS_LOG" ]
   [ "$(np_last_update_flag --status)" = "failed" ]
+}
+
+@test "sin variable ni dimension environment falla pidiendo la dimension" {
+  apim_urls_fixture
+  unset APIM_PUBLISHER_URL
+  notification_with '{service: {id: "svc-1"}}'
+  run require_publisher_config
+  [ "$status" -ne 0 ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *environment* ]]
+}
+
+@test "una URL http del archivo se rechaza igual que la de la variable" {
+  apim_urls_fixture
+  unset APIM_PUBLISHER_URL
+  notification_with '{service: {id: "svc-1", dimensions: {environment: "qas"}}}'
+  run require_publisher_config
+  [ "$status" -ne 0 ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *https* ]]
+}
+
+@test "apim-urls.json del repo define publisher y subscriber https o vacios para los cuatro entornos" {
+  run jq -e '(keys == ["dev", "int", "prd", "qas"])
+    and all(.[]; (keys == ["publisher", "subscriber"]) and all(.[]; . == "" or startswith("https://")))' "$APIM_URLS_FILE"
+  [ "$status" -eq 0 ]
 }
 
 @test "require_agent_config sin token llama al API Subscriber sin header de autorizacion" {
@@ -199,14 +274,6 @@ setup() {
   queue_response 200 '{}'
   apim_request POST /v1/kuadrant/manifests/publish '{}' ""
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
-}
-
-@test "require_publisher_config falla nombrando la variable que falta" {
-  unset APIM_PUBLISHER_URL
-  export APIM_PUBLISHER_TOKEN="pub-tok"
-  run require_publisher_config
-  [ "$status" -ne 0 ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *APIM_PUBLISHER_URL* ]]
 }
 
 @test "require_publisher_config sin token llama a APIM sin header de autorizacion" {

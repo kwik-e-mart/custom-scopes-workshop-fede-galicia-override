@@ -260,6 +260,15 @@ JSON
   [ "$(jq -r .environment "$CURL_BODIES_DIR/0.json")" = "dev" ]
 }
 
+@test "sin APIM_PUBLISHER_URL publica en la URL de apim-urls.json del entorno del service" {
+  unset APIM_PUBLISHER_URL
+  set_request '{}' '{"scope":"main"}' development
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  grep -q "^POST $(jq -r .dev.publisher "$PUBLISHER_SCRIPTS/../apim-urls.json")/v1/kuadrant/manifests/publish " "$CURL_CALLS_LOG"
+}
+
 @test "production se publica como prd" {
   set_request '{}' '{"scope":"main"}' production
   queue_response 200 "$(pushed)"
