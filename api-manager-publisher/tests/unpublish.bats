@@ -36,6 +36,15 @@ JSON
   [ "$(np_last_update_flag --results | jq -c .)" = '{"deletion_id":"del-1"}' ]
 }
 
+@test "la baja sin APIM_PUBLISHER_URL toma el entorno de la notificacion" {
+  unset APIM_PUBLISHER_URL
+  NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq -c '.notification.service.dimensions.environment = "sandbox"')
+  run_step
+  [ "$status" -ne 0 ]
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *sandbox* ]] || false
+}
+
 @test "con la baja aceptada borra las AuthPolicies que la API colgo en las routes del scope" {
   queue_response 202 "$(deleting)"
   run_step

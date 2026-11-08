@@ -8,8 +8,8 @@ ACTION_SETTLED=0
 trap close_on_unexpected_exit EXIT
 
 unpublish() {
-  require_publisher_config
   load_notification
+  require_publisher_config
 
   local service_id action_id api_id message
   service_id=$(notification_field '.service.id')

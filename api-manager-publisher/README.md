@@ -49,9 +49,13 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 
 ## Configuración del agente
 
+Las URLs del API Publisher y del API Subscriber salen de `apim-urls.json` según la dimensión `environment`
+(`dev`, `int`, `qas`, `prd`) del service, también en los links.
+`APIM_PUBLISHER_URL` y `API_SUBSCRIBER_URL` en el agente reemplazan esas URLs.
+
 | Variable | Uso |
 |---|---|
-| `APIM_PUBLISHER_URL` | API Publisher (https) |
+| `APIM_PUBLISHER_URL` | opcional: reemplaza la URL del API Publisher de `apim-urls.json` (https) |
 | `INGRESS_GATEWAY_NAME`, `GATEWAY_NAMESPACE` | opcionales: el Gateway donde APIM cuelga su ruta, las mismas que usa `s2s-traffic-migrator` (`s2s-ingress` en `gateways`) |
 | `APIM_CLUSTER_NAME` | opcional: reemplaza el `cluster.id` del provider |
 | `APIM_SIGLA`, `APIM_PROJECT` | opcionales: reemplazan la `sigla` y el `project` que salen del namespace |
@@ -59,7 +63,7 @@ despliegue activo del scope (también durante un blue-green) sin republicar.
 | `LEGAJO_OVERRIDE` | opcional: reemplaza el legajo que sale del mail del usuario en el publish y la baja. Para probar con usuarios que no tienen mail de legajo |
 | `LOCAL_INGRESS_HOST` | Service del ingreso del cluster como `<service>.<namespace>[.svc.cluster.local]` (default `s2s-ingress-istio.gateways.svc.cluster.local`); va como backend de la API |
 | `APIM_GATEWAY_PORT` | opcional: puerto de ese Service (`443`) |
-| `API_SUBSCRIBER_URL` | API Subscriber, para los links (https) |
+| `API_SUBSCRIBER_URL` | opcional: reemplaza la URL del API Subscriber de `apim-urls.json`, para los links (https) |
 | `APIM_PUBLISHER_TOKEN`, `API_SUBSCRIBER_TOKEN` | opcionales: si están, van como `Authorization: Bearer` a cada API (dev no lleva token) |
 | `APIM_TLS_INSECURE` | opcional, `false` por default: en `true` las llamadas a APIM no validan el certificado (`curl -k`). Solo para ambientes de prueba con CA privada |
 
