@@ -1,0 +1,18 @@
+{
+  "dev": {
+    "publisher": "https://api-publisher-kuad-kuadrantorqs-dev.apps.paas-dev.bancogalicia.com.ar",
+    "subscriber": "https://api-subscriber-kuad-kuadrantorqs-dev.apps.paas-dev.bancogalicia.com.ar"
+  },
+  "int": {
+    "publisher": "https://api-publisher-kuad-kuadrantorqs-int.apps.paas-int.bancogalicia.com.ar",
+    "subscriber": "https://api-subscriber-kuad-kuadrantorqs-int.apps.paas-int.bancogalicia.com.ar"
+  },
+  "qas": {
+    "publisher": "https://api-publisher-kuad-kuadrantorqs-qas.apps.paas-qas.bancogalicia.com.ar",
+    "subscriber": "https://api-subscriber-kuad-kuadrantorqs-qas.apps.paas-qas.bancogalicia.com.ar"
+  },
+  "prd": {
+    "publisher": "https://api-publisher-kuad-kuadrantorqs-prd.apps.paas-prd.bancogalicia.com.ar",
+    "subscriber": "https://api-subscriber-kuad-kuadrantorqs-prd.apps.paas-prd.bancogalicia.com.ar"
+  }
+}
