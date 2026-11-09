@@ -9,7 +9,7 @@
     "dev": {
       "PEER_CLUSTER": "arqc-delta-136"
     },
-    "stg": {
+    "int": {
       "PEER_CLUSTER": ""
     },
     "qas": {
@@ -28,7 +28,7 @@
       "PEER_GATEWAY_HOST": "shard1.paas-dev.mesh-noprod.bancogalicia.com.ar",
       "PEER_CLUSTER": "paas-dev"
     },
-    "stg": {
+    "int": {
       "PEER_GATEWAY_HOST": "shard1.paas-stg.mesh-noprod.bancogalicia.com.ar",
       "PEER_CLUSTER": ""
     },

@@ -810,7 +810,7 @@ leer_vars_en() {  # <site> <environment> <nombres...>
 @test "los cuatro entornos estan declarados en los dos sustratos" {
   local f="${BATS_TEST_DIRNAME}/../defaults.json" s e
   for s in openshift aws-us-east-1; do
-    for e in dev stg qas prd; do
+    for e in dev int qas prd; do
       [ "$(jq -r --arg s "$s" --arg e "$e" '.[$s] | has($e)' "$f")" = "true" ] \
         || { echo "falta $s/$e en defaults.json" >&2; false; }
     done
@@ -819,7 +819,7 @@ leer_vars_en() {  # <site> <environment> <nombres...>
 
 @test "un placeholder vacio se comporta como no configurado y NO tapa el valor global" {
   unset PEER_GATEWAY_HOST
-  leer_vars_en openshift stg PEER_JWKS_URL PEER_INGRESS_HOST
+  leer_vars_en openshift int PEER_JWKS_URL PEER_INGRESS_HOST
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"PEER_JWKS_URL=http"* ]] || false
   [[ "$output" == *"PEER_INGRESS_HOST=s2s.ms.wd.bancogalicia.com.ar"* ]]
