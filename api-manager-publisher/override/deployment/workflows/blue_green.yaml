@@ -3,3 +3,7 @@ steps:
     type: script
     after: create deployment
     file: "$OVERRIDES_PATH/deployment/scripts/inject_apim_credentials"
+  - name: apim_auth_policy
+    type: script
+    after: create deployment
+    file: "$OVERRIDES_PATH/deployment/scripts/apim_auth_policy"

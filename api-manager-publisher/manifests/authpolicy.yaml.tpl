@@ -1,7 +1,7 @@
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
-  name: {{ printf "%s-%s" .api_id .route | quote }}
+  name: {{ .route | quote }}
   namespace: {{ .namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: api-manager-publisher

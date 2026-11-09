@@ -14,7 +14,7 @@ setup() {
   export SCOPE_ID=5 DEPLOYMENT_ID=6
   export KUBECTL_CALLS_LOG="$BATS_TEST_TMPDIR/kubectl-calls.log"
   : >"$KUBECTL_CALLS_LOG"
-  export KUBECTL_MOCK_POLICIES='{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"kuadrant.io/v1","kind":"AuthPolicy","metadata":{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-5-internal","namespace":"payments"}}]}'
+  export KUBECTL_MOCK_POLICIES='{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"kuadrant.io/v1","kind":"AuthPolicy","metadata":{"name":"k-8-s-main-5-internal","namespace":"payments"}}]}'
   unset KUBECTL_MOCK_FAIL
 
   cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
@@ -41,7 +41,7 @@ run_step() {
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -qx -- "get authpolicy -A -l app.kubernetes.io/managed-by=api-manager-publisher,scope_id=5 -o json" "$KUBECTL_CALLS_LOG"
-  [ "$(yq -o=json -I=0 '.items[] | [.kind, .metadata.namespace, .metadata.name] | join("/")' "$OUTPUT_DIR/authpolicy-apim-5-6.yaml")" = '"AuthPolicy/payments/payments-test-kuadrant-b2c-1-k-8-s-main-5-internal"' ]
+  [ "$(yq -o=json -I=0 '.items[] | [.kind, .metadata.namespace, .metadata.name] | join("/")' "$OUTPUT_DIR/authpolicy-apim-5-6.yaml")" = '"AuthPolicy/payments/k-8-s-main-5-internal"' ]
 }
 
 @test "sin AuthPolicies del scope no deja archivo" {

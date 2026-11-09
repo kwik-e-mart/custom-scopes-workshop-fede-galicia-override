@@ -415,7 +415,7 @@ applied() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q -- "-n payments get httproute -l nullplatform=true,scope_id=1049050904 -o json" "$KUBECTL_CALLS_LOG"
   [ "$(applied | jq -c '[.[] | {name: .metadata.name, namespace: .metadata.namespace, route: .spec.targetRef.name}]')" = \
-    '[{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-1049050904-grpc","namespace":"payments","route":"k-8-s-main-1049050904-grpc"},{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-1049050904-internal","namespace":"payments","route":"k-8-s-main-1049050904-internal"}]' ]
+    '[{"name":"k-8-s-main-1049050904-grpc","namespace":"payments","route":"k-8-s-main-1049050904-grpc"},{"name":"k-8-s-main-1049050904-internal","namespace":"payments","route":"k-8-s-main-1049050904-internal"}]' ]
   [ -z "$(np_last_update_flag --status)" ]
 }
 

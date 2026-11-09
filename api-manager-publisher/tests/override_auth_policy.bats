@@ -69,8 +69,8 @@ set_application_type() {
   [ "$(yq -o=json -I=0 '.steps[] | select(.name == "apim_auth_policy") | pick(["type", "after", "file"])' "$OVERRIDE/deployment/workflows/initial.yaml")" = '{"type":"script","after":"create deployment","file":"$OVERRIDES_PATH/deployment/scripts/apim_auth_policy"}' ]
 }
 
-@test "el blue green no toca la AuthPolicy" {
-  [ -z "$(yq '.steps[] | select(.name == "apim_auth_policy")' "$OVERRIDE/deployment/workflows/blue_green.yaml")" ]
+@test "el blue green vuelve a generar la AuthPolicy" {
+  [ "$(yq -o=json -I=0 '.steps[] | select(.name == "apim_auth_policy") | pick(["type", "after", "file"])' "$OVERRIDE/deployment/workflows/blue_green.yaml")" = '{"type":"script","after":"create deployment","file":"$OVERRIDES_PATH/deployment/scripts/apim_auth_policy"}' ]
 }
 
 @test "sin API publicada cuelga en cada route una AuthPolicy con el apiId por default" {
@@ -78,7 +78,7 @@ set_application_type() {
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   [ "$(policies | jq -c '[.[] | {name: .metadata.name, namespace: .metadata.namespace, route: .spec.targetRef.name}]')" = \
-    '[{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-5-grpc","namespace":"payments","route":"k-8-s-main-5-grpc"},{"name":"payments-test-kuadrant-b2c-1-k-8-s-main-5-internal","namespace":"payments","route":"k-8-s-main-5-internal"}]' ]
+    '[{"name":"k-8-s-main-5-grpc","namespace":"payments","route":"k-8-s-main-5-grpc"},{"name":"k-8-s-main-5-internal","namespace":"payments","route":"k-8-s-main-5-internal"}]' ]
 }
 
 @test "la AuthPolicy acepta solo las credenciales de la API y se combina con el validador del s2s" {
@@ -97,6 +97,16 @@ set_application_type() {
   run_step
   [ "$status" -eq 0 ]
   [ "$(policies | jq -r '[.[].metadata.labels."api-id"] | unique | join(",")')" = "apim-otro-id" ]
+}
+
+@test "un apiId distinto reemplaza la AuthPolicy de la route en vez de sumar otra" {
+  run_step
+  local default_names
+  default_names=$(policies | jq -c '[.[].metadata.name]')
+  NP_MOCK_SERVICES="[$(service "$APIM_PUBLISHER_PROVIDER" main apim-otro-id)]"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(policies | jq -c '[.[].metadata.name]')" = "$default_names" ]
 }
 
 @test "busca la API entre los services de la aplicacion del scope sin los archivados" {

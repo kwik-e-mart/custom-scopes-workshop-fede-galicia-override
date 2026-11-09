@@ -15,8 +15,8 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 - **Se publica la versión desplegada en el scope**: el release del deployment activo, como tag de git. Sin deployment activo
   la acción falla. Desplegar no republica: hay que ejecutar la acción de actualizar después de cada deploy.
 - **Actualizar = republicar** con la versión desplegada en ese momento o con otro rate limit (APIM sobrescribe la misma ruta).
-- **Las routes del scope nacen cerradas.** El override (ver abajo) cuelga en el primer deploy una AuthPolicy
-  `<apiId>-<route>` en cada route, que solo acepta las credenciales de la API (`app_key` con label `api-id`,
+- **Las routes del scope nacen cerradas.** El override (ver abajo) cuelga en cada deploy una AuthPolicy
+  con el mismo nombre que cada route, que solo acepta las credenciales de la API (`app_key` con label `api-id`,
   `app_id` igual al label `app-id`). Sin suscripciones no entra nadie por la route; el s2s entra con su token
   porque su validador se combina en `merge` con esta. Si el `application_type` de la metadata de la aplicación
   está en `APPLICATION_TYPES_WITH_NO_AUTH_POLICY`, la route queda abierta y la autenticación queda en la aplicación.
@@ -92,9 +92,10 @@ delete falla avisando que no se puede borrar ni pausar el scope mientras la API 
 scope primero borra su deployment: en el delete del scope ya sería tarde. El finalize del blue-green y el rollback no
 pasan por ese workflow.
 
-El initial del deployment también deja en `$OUTPUT_DIR` la AuthPolicy de cada HTTPRoute rendeada, así el `apply` del
-scope la crea antes que la route. El `apiId` sale del service de `APIM_PUBLISHER_PROVIDER` publicado sobre el scope y,
-si no hay, es `<namespace>-<repo>-b2c-1`. El blue-green no la toca. El delete del deployment la borra junto con la route.
+El initial y el blue-green del deployment también dejan en `$OUTPUT_DIR` la AuthPolicy de cada HTTPRoute rendeada,
+así el `apply` del scope la crea antes que la route. El `apiId` sale del service de `APIM_PUBLISHER_PROVIDER` publicado
+sobre el scope y, si no hay, es `<namespace>-<repo>-b2c-1`; si la API se publica después con otro `apiId`, el siguiente
+deploy la corrige. El delete del deployment la borra junto con la route.
 
 ## Instalación
 
