@@ -45,21 +45,20 @@ JSON
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *sandbox* ]] || false
 }
 
-@test "con la baja aceptada borra las AuthPolicies que la API colgo en las routes del scope" {
+@test "con la baja aceptada no toca las AuthPolicies: las routes del scope siguen cerradas" {
   queue_response 202 "$(deleting)"
   run_step
   [ "$status" -eq 0 ]
-  grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,service-id=svc-1 --ignore-not-found" "$KUBECTL_CALLS_LOG"
-  grep -qx -- "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,api-id=payments-test-kuadrant-b2c-1 --ignore-not-found" "$KUBECTL_CALLS_LOG"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
-@test "si la API no tiene manifests publicados cierra success y borra las AuthPolicies" {
+@test "si la API no tiene manifests publicados cierra success sin tocar las AuthPolicies" {
   queue_response 404 '{}'
   run_step
   [ "$status" -eq 0 ]
   [ "$(np_last_update_flag --status)" = "success" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"no tiene manifests publicados"* ]] || false
-  grep -q "delete authpolicy" "$KUBECTL_CALLS_LOG"
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
 @test "si APIM rechaza la baja falla con su detalle y no toca las AuthPolicies" {
@@ -93,30 +92,4 @@ JSON
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"legajo"* ]] || false
   [ ! -s "$CURL_CALLS_LOG" ]
   [ ! -s "$KUBECTL_CALLS_LOG" ]
-}
-
-@test "un servicio fallido sin apiId borra las AuthPolicies por service-id con la baja aceptada" {
-  set_request '{"scope":"main"}'
-  queue_response 202 "$(deleting)"
-  run_step
-  [ "$status" -eq 0 ]
-  [ "$(cat "$KUBECTL_CALLS_LOG")" = "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,service-id=svc-1 --ignore-not-found" ]
-}
-
-@test "un servicio fallido sin manifests en APIM cierra success y borra las AuthPolicies por service-id" {
-  set_request '{"scope":"main"}'
-  queue_response 404 '{}'
-  run_step
-  [ "$status" -eq 0 ]
-  grep -q '^POST https://publisher.test/v1/kuadrant/manifests/delete ' "$CURL_CALLS_LOG"
-  [ "$(cat "$KUBECTL_CALLS_LOG")" = "-n payments delete authpolicy -l app.kubernetes.io/managed-by=api-manager-publisher,service-id=svc-1 --ignore-not-found" ]
-  [ "$(np_last_update_flag --status)" = "success" ]
-}
-
-@test "si no puede borrar las AuthPolicies cierra failed para que se reintente" {
-  export KUBECTL_MOCK_DELETE_FAIL=1
-  queue_response 202 "$(deleting)"
-  run_step
-  [ "$(np_last_update_flag --status)" = "failed" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"AuthPolic"* ]] || false
 }

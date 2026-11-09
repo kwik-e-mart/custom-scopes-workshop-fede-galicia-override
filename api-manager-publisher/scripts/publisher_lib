@@ -2,9 +2,9 @@
 
 PUBLISHER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$PUBLISHER_LIB_DIR/subscriber_lib"
+source "$PUBLISHER_LIB_DIR/auth_policy"
 source "$PUBLISHER_LIB_DIR/../../shared/scripts/application_type"
 
-PUBLISH_TENANT="b2c"
 LEGAJO_PATTERN='^l[0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
 
@@ -131,31 +131,13 @@ require_gateway_backend() {
 }
 
 require_api_id_format() {
-  if [[ ! "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+  if ! api_id_is_valid "$1"; then
     fail "publisher: APIM devolvió un apiId que no sirve como nombre de Kubernetes: '$1'."
   fi
 }
 
-scope_auth_policy() {
-  local api_id="$1" namespace="$2" scope_id="$3" route="$4" service_id="$5"
-  jq -nc --arg api "$api_id" --arg ns "$namespace" --arg scope "$scope_id" --arg route "$route" --arg service "$service_id" \
-    --arg app_id_check "auth.identity.metadata.labels['app-id'] == request.headers.app_id" '{
-    apiVersion: "kuadrant.io/v1", kind: "AuthPolicy",
-    metadata: {name: "\($api)-\($route)", namespace: $ns,
-               labels: {"app.kubernetes.io/managed-by": "api-manager-publisher", "api-id": $api, scope_id: $scope, "service-id": $service}},
-    spec: {
-      targetRef: {group: "gateway.networking.k8s.io", kind: "HTTPRoute", name: $route},
-      defaults: {strategy: "merge", rules: {
-        authentication: {($api): {
-          apiKey: {selector: {matchLabels: {"api-id": $api}}, allNamespaces: true},
-          credentials: {customHeader: {name: "app_key"}}}},
-        authorization: {"\($api)-app-id": {
-          when: [{predicate: "has(request.headers.app_key)"}],
-          patternMatching: {patterns: [{predicate: $app_id_check}]}}}}}}}'
-}
-
 attach_scope_auth_policies() {
-  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" service_id="$5" routes route
+  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" routes route
   require_api_id_format "$api_id"
   routes=$(kubectl -n "$namespace" get httproute -l "nullplatform=true,scope_id=$scope_id" -o json) \
     || fail "publisher: no se pudieron leer las routes del scope '$scope_slug' en el namespace $namespace."
@@ -164,18 +146,19 @@ attach_scope_auth_policies() {
     fail "publisher: el scope '$scope_slug' no tiene routes en el cluster; desplegalo y volvé a publicar."
   fi
   while IFS= read -r route; do
-    scope_auth_policy "$api_id" "$namespace" "$scope_id" "$route" "$service_id" | kubectl apply -f - >/dev/null \
+    scope_auth_policy "$api_id" "$namespace" "$scope_id" "$route" | kubectl apply -f - >/dev/null \
       || fail "publisher: no se pudo colgar la AuthPolicy de $api_id en la route $route."
     log info "publisher: la route $route acepta las credenciales de $api_id."
   done <<<"$routes"
+  delete_scope_auth_policies "$namespace" "scope_id=$scope_id,api-id!=$api_id"
 }
 
 reconcile_scope_auth_policies() {
-  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" service_id="$5" application_type
+  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" application_type
   application_type=$(resolve_application_type "${CONTEXT-}")
   if application_type_skips_auth_policy "$application_type"; then
     log info "publisher: la aplicación es de tipo $application_type; las routes del scope '$scope_slug' quedan sin AuthPolicy y la autenticación queda en la aplicación."
-    detach_scope_auth_policies "$service_id" "$namespace" "$api_id"
+    delete_scope_auth_policies "$namespace" "scope_id=$scope_id"
     return 0
   fi
   if [ -z "$application_type" ]; then
@@ -183,18 +166,11 @@ reconcile_scope_auth_policies() {
   else
     log info "publisher: la aplicación es de tipo $application_type; las routes del scope '$scope_slug' llevan AuthPolicy."
   fi
-  attach_scope_auth_policies "$api_id" "$namespace" "$scope_id" "$scope_slug" "$service_id"
+  attach_scope_auth_policies "$api_id" "$namespace" "$scope_id" "$scope_slug"
 }
 
-detach_scope_auth_policies() {
-  local service_id="$1" namespace="$2" api_id="${3-}" selector
-  local selectors=("service-id=$service_id")
-  if [ -n "$api_id" ]; then
-    require_api_id_format "$api_id"
-    selectors+=("api-id=$api_id")
-  fi
-  for selector in "${selectors[@]}"; do
-    kubectl -n "$namespace" delete authpolicy -l "app.kubernetes.io/managed-by=api-manager-publisher,$selector" --ignore-not-found >/dev/null \
-      || fail "publisher: no se pudieron borrar las AuthPolicies del servicio $service_id en el namespace $namespace; reintentá la acción."
-  done
+delete_scope_auth_policies() {
+  local namespace="$1" selector="$2"
+  kubectl -n "$namespace" delete authpolicy -l "$AUTH_POLICY_MANAGED_BY,$selector" --ignore-not-found >/dev/null \
+    || fail "publisher: no se pudieron borrar las AuthPolicies ($selector) del namespace $namespace; reintentá la acción."
 }
