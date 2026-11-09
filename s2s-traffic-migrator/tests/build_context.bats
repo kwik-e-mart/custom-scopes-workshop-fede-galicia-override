@@ -780,8 +780,7 @@ leer_vars_en() {  # <site> <environment> <nombres...>
   leer_vars_en openshift dev PEER_TLS_MODE
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"PEER_TLS_MODE=certificate"* ]] || false
-  grep -q 'PEER_TLS_MODE' "${BATS_TEST_DIRNAME}/../scripts/k8s/defaults" && { echo "la tabla no debe fijar PEER_TLS_MODE" >&2; false; }
-  true
+  [ "$(jq -r '[.. | objects | keys[]] | map(select(. == "PEER_TLS_MODE")) | length' "${BATS_TEST_DIRNAME}/../defaults.json")" -eq 0 ]
 }
 
 @test "en EKS los valores salen de la tabla, sin configurar nada en el agente" {
@@ -806,6 +805,24 @@ leer_vars_en() {  # <site> <environment> <nombres...>
   [[ "$output" == *"/arqc-delta-136/"* ]] || false
   leer_vars_en aws-us-east-1 dev PEER_JWKS_URL
   [[ "$output" == *"/paas-dev/"* ]]
+}
+
+@test "los cuatro entornos estan declarados en los dos sustratos" {
+  local f="${BATS_TEST_DIRNAME}/../defaults.json" s e
+  for s in openshift aws-us-east-1; do
+    for e in dev stg qas prd; do
+      [ "$(jq -r --arg s "$s" --arg e "$e" '.[$s] | has($e)' "$f")" = "true" ] \
+        || { echo "falta $s/$e en defaults.json" >&2; false; }
+    done
+  done
+}
+
+@test "un placeholder vacio se comporta como no configurado y NO tapa el valor global" {
+  unset PEER_GATEWAY_HOST
+  leer_vars_en openshift stg PEER_JWKS_URL PEER_INGRESS_HOST
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"PEER_JWKS_URL=http"* ]] || false
+  [[ "$output" == *"PEER_INGRESS_HOST=s2s.ms.wd.bancogalicia.com.ar"* ]]
 }
 
 @test "un valor declarado le gana a la tabla" {

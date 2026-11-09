@@ -338,7 +338,7 @@ que está versionado. Va sólo por el env del agente.
 Esas sí están versionadas, en `workflows/openshift/*.yaml`. Son iguales para todas las instancias de
 un cluster y ninguna es un secreto:
 
-La mayoría no hace falta declararlas: `scripts/k8s/defaults` tiene una tabla con el valor que
+La mayoría no hace falta declararlas: `defaults.json` tiene el valor que
 corresponde a cada **sustrato** y **entorno**, y de ahí salen el Gateway de ingreso, su namespace,
 la dirección del peer y el cluster del que se arma `PEER_JWKS_URL`. Declarar una la saca de la
 tabla, y un `*_OVERRIDE` le gana a todo. El ingreso local y la URL del JWKS del peer no están en
