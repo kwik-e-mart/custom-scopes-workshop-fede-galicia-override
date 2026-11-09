@@ -23,7 +23,7 @@ case "$*" in
   *"apply -f -"*)
     if [ "${KUBECTL_MOCK_APPLY_FAIL:-0}" = "1" ]; then cat >/dev/null; echo "kubectl: admission webhook denied" >&2; exit 1; fi
     n=$(find "$KUBECTL_APPLIED_DIR" -type f | wc -l | tr -d ' ')
-    cat >"$KUBECTL_APPLIED_DIR/$n.json"
+    yq -o=json >"$KUBECTL_APPLIED_DIR/$n.json"
     jq -r '"\(.kind | ascii_downcase).kuadrant.io/\(.metadata.name) configured"' "$KUBECTL_APPLIED_DIR/$n.json" ;;
   *"delete authpolicy"*)
     if [ "${KUBECTL_MOCK_DELETE_FAIL:-0}" = "1" ]; then echo "kubectl: forbidden" >&2; exit 1; fi

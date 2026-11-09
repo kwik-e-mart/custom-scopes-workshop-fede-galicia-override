@@ -59,7 +59,7 @@ write_apim_auth_policy() {
   : >"$policy_file"
   while IFS= read -r route; do
     echo "---" >>"$policy_file"
-    scope_auth_policy "$api_id" "$(echo "$route" | jq -r .namespace)" "$SCOPE_ID" "$(echo "$route" | jq -r .name)" | yq -P >>"$policy_file"
+    scope_auth_policy "$api_id" "$(echo "$route" | jq -r .namespace)" "$SCOPE_ID" "$(echo "$route" | jq -r .name)" >>"$policy_file"
   done <<<"$routes"
   echo "🔒 Routes of scope '$scope_slug' only accept $APIM_PUBLISHER_PROVIDER credentials of $api_id"
 }

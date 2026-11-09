@@ -5,7 +5,7 @@ setup() {
     echo "bats necesita bash >= 4 (tenés ${BASH_VERSION}). Corré: PATH=/opt/homebrew/bin:\$PATH bats tests/" >&2
     return 1
   }
-  command -v yq >/dev/null || { echo "bats necesita yq." >&2; return 1; }
+  command -v yq >/dev/null && command -v gomplate >/dev/null || { echo "bats necesita yq y gomplate." >&2; return 1; }
   OVERRIDE="${BATS_TEST_DIRNAME}/../override"
   STEP="$OVERRIDE/deployment/scripts/apim_auth_policy"
   mkdir -p "$BATS_TEST_TMPDIR/bin" "$BATS_TEST_TMPDIR/out"
