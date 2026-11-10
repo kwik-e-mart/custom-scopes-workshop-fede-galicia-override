@@ -316,18 +316,6 @@ doc() {  # <render> <kind> [nombre]
      == *"kuadrant.peer.example.io"* ]]
 }
 
-@test "cluster-keys sigue rindiendo el wristband firmado con la clave del namespace" {
-  run render cluster-keys
-  [ "$status" -eq 0 ]
-  local ap; ap=$(doc "$output" AuthPolicy sign)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" = \
-    "wristband-key-payments-g0" ]
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.customClaims.src_namespace.value')" = \
-    "payments" ]
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.issuer')" = \
-    "https://egress.gal-poc.bancogalicia.com.ar" ]
-}
-
 @test "con cluster-keys la AuthPolicy firma local: no llama a Vault para mintear" {
   # La clave SÍ viene de Vault (la trae el keygen), pero el wristband lo firma Authorino con esa
   # clave. Si la AuthPolicy tuviera un metadata.http, estaríamos minteando por HTTP como spiffe.
@@ -338,24 +326,19 @@ doc() {  # <render> <kind> [nombre]
   [ -n "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" ]
 }
 
-@test "las dos estrategias cuelgan la AuthPolicy del mismo Gateway" {
+@test "la AuthPolicy de firma cuelga del Gateway de egreso" {
   run render spiffe
-  local ap_spiffe; ap_spiffe=$(doc "$output" AuthPolicy sign)
-  run render cluster-keys
-  local ap_keys; ap_keys=$(doc "$output" AuthPolicy sign)
-  [ "$(echo "$ap_spiffe" | yq '.spec.targetRef.kind')" = "Gateway" ]
-  [ "$(echo "$ap_spiffe" | yq '.spec.targetRef.name')" = \
-    "$(echo "$ap_keys" | yq '.spec.targetRef.name')" ]
+  local ap; ap=$(doc "$output" AuthPolicy sign)
+  [ "$(echo "$ap" | yq '.spec.targetRef.kind')" = "Gateway" ] || false
+  [ "$(echo "$ap" | yq '.spec.targetRef.name')" = "egress-gw" ]
 }
 
-@test "las dos estrategias emiten el mismo nombre de header" {
+@test "la AuthPolicy de firma emite el header x-egress-token" {
   run render spiffe
-  [[ "$(doc "$output" AuthPolicy sign)" == *"x-egress-token"* ]]
-  run render cluster-keys
   [[ "$(doc "$output" AuthPolicy sign)" == *"x-egress-token"* ]]
 }
 
-@test "las dos estrategias llevan la label de managed" {
+@test "la AuthPolicy de firma lleva la label de managed" {
   run render spiffe
   [ "$status" -eq 0 ]
   [ "$(doc "$output" AuthPolicy sign | yq '.metadata.labels."egress-interceptor/managed"')" = "true" ]
@@ -370,14 +353,14 @@ doc() {  # <render> <kind> [nombre]
     "$(echo "$output" | grep -n '20-authpolicy.yaml' | cut -d: -f1)" ]
 }
 
-@test "con cluster-keys el service emite TAMBIEN el validador de ingreso; con spiffe no" {
+@test "cluster-keys emite el validador de ingreso y NO la AuthPolicy de firma; spiffe al reves" {
   run render cluster-keys
-  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 2 ]
-  [ -n "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ]
+  [ -n "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ] || false
+  [ -z "$(doc "$output" AuthPolicy sign)" ] || false
 
   run render spiffe
-  [ "$(echo "$output" | yq -N '.kind' | grep -cx AuthPolicy)" -eq 1 ]
-  [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ]
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ] || false
+  [ -n "$(doc "$output" AuthPolicy sign)" ]
 }
 
 @test "una estrategia sin directorio de manifiestos ABORTA en vez de aplicar el resto" {
