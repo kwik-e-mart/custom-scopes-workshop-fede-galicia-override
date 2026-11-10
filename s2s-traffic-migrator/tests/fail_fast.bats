@@ -84,8 +84,6 @@ case "$*" in
       exit 1
     fi
     cat "$FAKE_GRANTS" ;;
-  *"get job rotar-"*|*"get cronjob rotar-"*)
-    [ -n "${KEYGEN_PRESENTE:-}" ] || exit 1 ;;
   *"exec deploy/jwks-egress"*)
     # El mock devuelve el JWKS que pida el test; sin JWKS_KIDS no publica nada y el chequeo se saltea.
     # Por default el endpoint está sano y publica la clave vigente: un JWKS roto es lo excepcional
@@ -94,8 +92,6 @@ case "$*" in
     if [ -n "$KIDS" ]; then
       printf '%s' "$KIDS" | tr ' ' '\n' | jq -R '{kid: .}' | jq -s '{keys: .}'
     fi ;;
-  *"get secret wristband-key-"*)
-    [ -z "${FALTA_CLAVE:-}" ] || exit 1 ;;
   *"get deploy jwks-egress"*|*"get svc jwks-egress"*|*"get externalsecret jwks-egress"*)
     [ -z "${JWKS_AUSENTE:-}" ] || exit 1 ;;
   *"get svc -l"*)        : ;;
@@ -408,54 +404,6 @@ correr_delete() {
   [[ "$output" == *"from HTTPRoute/payments, to Service/li"* ]]
 }
 
-@test "con cluster-keys espera al Job de la clave ANTES de exigir Enforced" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
-  local job pol
-  job=$(grep -n 'wait --for=condition=Complete job/rotar-payments-init' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
-  pol=$(grep -n 'wait --for=condition=Enforced authpolicy/sign' "$KUBECTL_CALLS" | head -1 | cut -d: -f1)
-  [ -n "$job" ]
-  [ -n "$pol" ]
-  [ "$job" -lt "$pol" ]
-}
-
-@test "si el Job de la clave no termina, ABORTA y no toca el selector" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys FALLA_WAIT="job/rotar-" run correr
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"rotar-payments-init"* ]]
-  run grep -c ' patch svc ' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "con spiffe no espera ningún Job de clave" {
-  run correr
-  run grep -c "job/rotar-" "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "la primera vez el Job y el CronJob del keygen SÍ se aplican" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys run correr
-  run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
-  [ "$output" -ge 1 ]
-}
-
-@test "si el Job y el CronJob ya existen, no se vuelven a aplicar" {
-  SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
-  run grep -c '16-keygen-jobs.yaml' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "el ConfigMap con los scripts se reaplica aunque el keygen ya exista" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys KEYGEN_PRESENTE=1 run correr
-  run grep -c '15-keygen-rbac.yaml' "$KUBECTL_CALLS"
-  [ "$output" -ge 1 ]
-}
-
-@test "con spiffe no se consulta si el keygen existe" {
-  run correr
-  run grep -c "get job rotar-" "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
 @test "con origen EKS tambien se exige que el validador de ingreso quede Enforced" {
   # Era el agujero: el wait vivia dentro del if de plataforma, asi que con origen EKS el service
   # desviaba el trafico sin haber verificado nunca que el ingreso valide el token.
@@ -504,19 +452,8 @@ correr_delete() {
   [ "$output" -eq 0 ]
 }
 
-@test "la primera vez el endpoint de JWKS SI se aplica" {
-  NAMESPACE_SETUP_ENABLED=true SIGNING_STRATEGY=cluster-keys JWKS_AUSENTE=1 run correr
-  run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
-  [ "$output" -ge 1 ]
-}
+@test "el alta del namespace NO se aplica: la hace el chart" {
 
-@test "si el endpoint de JWKS ya existe, no se vuelve a aplicar" {
-  SIGNING_STRATEGY=cluster-keys run correr
-  run grep -c '17-jwks-endpoint.yaml' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "con el flag en false el alta del namespace NO se aplica: la hace el chart" {
   SIGNING_STRATEGY=cluster-keys run correr
   for m in 15-keygen-rbac.yaml 16-keygen-jobs.yaml 17-jwks-endpoint.yaml 20-authpolicy.yaml; do
     run grep -c "$m" "$KUBECTL_CALLS"
@@ -524,29 +461,20 @@ correr_delete() {
   done
 }
 
-@test "con el flag en false el DestinationRule del peer lo trae el chart, no el service" {
+@test "el DestinationRule del peer lo trae el chart, no el service" {
   SIGNING_STRATEGY=cluster-keys run correr
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   run grep -c '30-destinationrule-peer.yaml' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
-@test "con el flag en false se saca el DestinationRule del peer que hubiera quedado" {
+@test "se saca el DestinationRule del peer que hubiera quedado" {
   SIGNING_STRATEGY=cluster-keys run correr
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q 'delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found' "$KUBECTL_CALLS"
 }
 
-@test "con el flag en true el DestinationRule del peer se aplica y NO se borra" {
-  SIGNING_STRATEGY=cluster-keys NAMESPACE_SETUP_ENABLED=true run correr
-  [ "$status" -eq 0 ] || { echo "$output"; false; }
-  run grep -c '30-destinationrule-peer.yaml' "$KUBECTL_CALLS"
-  [ "$output" -ge 1 ] || false
-  run grep -c 'delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "con el flag en false el validador y las routes SI se siguen aplicando" {
+@test "el validador y las routes SI se siguen aplicando" {
   SIGNING_STRATEGY=cluster-keys run correr
   run grep -c '25-authpolicy-validator.yaml' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ] || false
@@ -554,7 +482,7 @@ correr_delete() {
   [ "$output" -ge 1 ]
 }
 
-@test "con el flag en false, si no esta el endpoint de JWKS el apply ABORTA" {
+@test "si no esta el endpoint de JWKS el apply ABORTA" {
   SIGNING_STRATEGY=cluster-keys JWKS_AUSENTE=1 run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"no existe el endpoint de JWKS"* ]] || false
