@@ -248,7 +248,6 @@ HOOK
   make_render aws-us-east-1 "$(dos_reglas)"
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/10-gateway.yaml" ]
-  [ -f "$BATS_TEST_TMPDIR/tree/20-authpolicy.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/30-destinationrule-peer.yaml" ]
   [ -f "$BATS_TEST_TMPDIR/tree/40-destinationrule-local-ingress.yaml" ]
 }
@@ -310,11 +309,10 @@ HOOK
   [ -f "$BATS_TEST_TMPDIR/tree/reports/90-service-capture.yaml" ]
 }
 
-@test "sin ninguna regla quedan el Gateway y su AuthPolicy, y ninguna hoja" {
+@test "sin ninguna regla queda el Gateway y ninguna hoja" {
   make_render aws-us-east-1 '[]'
   gitops_render_tree "$CTX" "$MDIR" "$BATS_TEST_TMPDIR/tree"
   [ -f "$BATS_TEST_TMPDIR/tree/10-gateway.yaml" ]
-  [ -f "$BATS_TEST_TMPDIR/tree/20-authpolicy.yaml" ]
   [ ! -d "$BATS_TEST_TMPDIR/tree/reports" ]
 }
 
