@@ -12,7 +12,6 @@ ServiceAccount. Por eso el RBAC es uno solo: la unión de lo que hacen los dos.
 | Archivo | Cuándo |
 |---|---|
 | `np-agent-rbac.yaml.tpl` | El agente aplica los manifiestos en el cluster con `kubectl apply`. |
-| `np-agent-rbac-gitops.yaml.tpl` | El agente sólo publica los manifiestos a un repo git; el `apply` lo hace un reconciler (Argo/Flux). El agente lee para verificar convergencia. |
 
 El segundo es **subconjunto estricto** del primero: se puede migrar de uno a otro sin agregar nada.
 
@@ -63,27 +62,6 @@ cualquier Secret de cualquier namespace del cluster.
   sus propios privilegios.
 - **Escritura sobre `deployments`, `endpoints` o `pods`.** Son sólo lectura: el agente no toca
   cargas de trabajo de las aplicaciones.
-
-## Modo GitOps
-
-Con el `apply` delegado a un reconciler, se caen las 24 escrituras sobre objetos de red y quedan
-sólo lecturas:
-
-| API group | Recurso | Verbos | Alcance |
-|---|---|---|---|
-| `gateway.networking.k8s.io` | `gateways`, `httproutes` | `get, list, watch` | cluster |
-| `kuadrant.io` | `authpolicies` | `get, list, watch` | cluster |
-| `networking.istio.io` | `destinationrules` | `get, list, watch` | cluster |
-| `(core)` | `services`, `endpoints`, `pods` | `get, list` | cluster |
-| `apps` | `deployments` | `get, list, watch` | cluster |
-| `(core)` | `secrets` | `create, delete` | `kuadrant-system` |
-
-**La api key es la única escritura que sobrevive.** Se genera por vínculo y se devuelve
-sincrónicamente en el resultado de la acción: es una credencial y no puede viajar por un repo git.
-
-Las lecturas siguen siendo necesarias porque el agente verifica que lo que publicó realmente se
-haya aplicado: que la `HTTPRoute` quede `Accepted` y que la `AuthPolicy` quede `Enforced` antes de
-reportar la acción como exitosa.
 
 ## Por qué cluster-wide
 

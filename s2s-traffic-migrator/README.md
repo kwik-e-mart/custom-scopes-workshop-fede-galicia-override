@@ -182,86 +182,6 @@ Los valores que vienen de los attributes de la instancia se tipan (`conv.ToInt`)
 (`quote`) en el template: es lo que impide que un valor con saltos de línea inyecte claves en un
 manifest que después se aplica con credenciales del cluster.
 
-## Publicación a un repo GitOps
-
-El `reconcile` **sigue aplicando los manifiestos con `kubectl`**. Además, si hay un repo
-configurado, los publica antes de aplicarlos. Por ahora el repo es un **registro del estado
-deseado** que nadie reconcilia: es la pata 1 del camino a GitOps y lo que fija es el contrato de
-layout del que va a depender la pata 2.
-
-El árbol tiene **dos niveles**, porque los manifiestos no tienen la misma cardinalidad: cuatro son
-uno por namespace y dos son uno por servicio interceptado.
-
-```
-eks/<namespace>/                              openshift/<namespace>/
-├── 10-gateway.yaml                           ├── 10-gateway.yaml
-├── 20-authpolicy.yaml                        ├── 20-authpolicy.yaml
-├── 30-destinationrule-peer.yaml              ├── 30-destinationrule-peer.yaml
-├── 40-destinationrule-local-ingress.yaml     └── <svc>/
-└── <svc>/                                        ├── 50-httproute-egress.yaml
-    └── 50-httproute-egress.yaml                  └── 60-httproute-ingress.yaml
-```
-
-El segmento de substrato es el valor de la dimensión `site` de la instancia; no se configura. Va primero para que "todo el
-estado deseado de este cluster" sea un prefijo contiguo (`eks/`): en la pata 2 eso es un solo
-`Application` de Argo o un solo `Kustomization` de Flux.
-
-⚠️ El substrato hace de identificador del cluster, y eso sirve **mientras haya un cluster por
-substrato**. Dos EKS escribirían los dos en `eks/<namespace>/` y, como el publisher reemplaza el
-subárbol entero, se borrarían mutuamente sin que ninguno falle. Hay que volver a meter un segmento
-de cluster cuando caiga el Gap #1 o aparezca un segundo EKS por multi-región; el cambio es
-`gitops_subtree` y nada más.
-
-El publisher es **autoritativo sobre el subárbol del namespace**: cada corrida lo borra y lo
-reescribe, así que sacar una regla borra su hoja y el `delete` borra el subárbol entero. Corolario:
-**una sola instancia del service por (cluster, namespace)** — que ya es la única configuración sana,
-porque el `Gateway` se llama `s2s-egress` y es uno por namespace.
-
-### Configuración
-
-| variable | default | qué es |
-|---|---|---|
-| `GITOPS_REPO_URL` | — | la URL del repo, con la credencial adentro. Prende el publisher. |
-| `GITOPS_BRANCH` | `main` | branch destino. |
-| `GITOPS_PATH_PREFIX` | vacío | subdirectorio raíz, para que el repo pueda hostear otras cosas. |
-| `GITOPS_PUSH_RETRIES` | `5` | intentos de push ante contención. |
-
-**Sin URL el publisher está apagado** y el `reconcile` anda como siempre. Con URL presente,
-cualquier otro error es **fallo duro**: se aborta sin haber movido tráfico.
-
-La URL lleva la credencial (`https://$GITHUB_TOKEN@host/org/repo.git`) y llega **solo por el env del
-agente**, igual que `CLUSTER_LABEL`:
-
-```bash
-np-agent ... -command-executor-env "...,GITOPS_REPO_URL=https://$GITHUB_TOKEN@github.com/cliente/gitops.git"
-```
-
-`-command-executor-env` separa por **coma**, así que el valor no puede contener una (una URL de
-GitHub no tiene).
-
-Por llevar el token, la URL **no va en el `configuration:` de los workflows** —esos YAML están
-versionados en este repo— ni en sus `output:`, que es la maquinaria que el runner del CLI puede
-loguear. `build_context` no la lee: la resuelve `gitops_lib` en el momento de usarla. Todo log propio
-y el stderr de git pasan por un scrub que la reemplaza por `https://***@…`.
-
-Se aceptan **solo** dos formas de URL: `https://[credencial@]host[:puerto]/path`, o un path absoluto
-local. Cualquier otra cosa se rechaza antes de invocar git — en particular `ext::<comando>`, que es un
-transporte de git que ejecuta comandos arbitrarios. **Riesgo aceptado en esta versión:** el token
-queda en el `argv` del `git clone`, visible por `ps` para otros procesos del host; se cierra al pasar
-a GitHub App o a `http.extraHeader`.
-
-### Dos cosas para la pata 2
-
-**El path es ownership, no el namespace del objeto.** `60-httproute-ingress` declara un `HTTPRoute`
-en el namespace `gateways` y vive igual bajo el path del namespace de la app, porque su ciclo de vida
-es el de la intercepción. Un `Kustomization` sobre este subárbol **no puede forzar el namespace**:
-todos los manifiestos traen el suyo puesto, y reescribirlo mandaría la route de ingreso al namespace
-equivocado.
-
-**El subárbol describe el plano de ruteo, no el estado completo.** El swap de selector del `Service`
-y el alias `<svc>-local` son imperativos —se calculan en runtime a partir del `Service` real— y no
-salen de ningún template.
-
 ## Instalación
 
 `specs/` tiene dos layers de Terraform que se aplican en momentos distintos y con alcances
@@ -328,10 +248,6 @@ Son de la instalación, no del formulario, así que las pasa quien levanta el ag
 | `PATH` | tiene que resolver `bash` **>= 4**, `kubectl`, `jq`, `gomplate` y `git`. En macOS el `/bin/bash` 3.2 rompe el `logging` con *bad substitution*. |
 | `APPLICATION_TYPES_WITH_NO_AUTH_POLICY` | opcional: `application_type` de la metadata de la aplicación, separados por coma, cuyas routes de ingreso quedan sin validador (default `BFF,SPA`; vacía, todas lo llevan). Con `cluster-keys` el apply borra el validador que la route ya tuviera. |
 
-Y las del publisher GitOps, opcionales — ver **Configuración** más arriba:
-`GITOPS_REPO_URL`, `GITOPS_BRANCH`, `GITOPS_PATH_PREFIX`, `GITOPS_PUSH_RETRIES`.
-
-⚠️ **`GITOPS_REPO_URL` lleva la credencial adentro: nunca va en el `configuration:` de un workflow**,
 que está versionado. Va sólo por el env del agente.
 
 ### 2. Direcciones del sustrato: van en el `configuration:` de los workflows
@@ -387,10 +303,6 @@ Este service **no provisiona el layer de plataforma**. Da por hecho, en cada clu
 Todo eso está como manifiesto listo para aplicar en
 [`specs/prerequisites/manifests/`](./specs/prerequisites/manifests).
 
-Con `GITOPS_REPO_URL` configurada, además: la **rama destino tiene que existir** en el repo —el
-publisher clona con `--branch`— y el token necesita permiso de escritura sobre ella. Si la rama está
-protegida contra push directo, el publisher falla en cada corrida y aborta el reconcile.
-
 ## Tests
 
 ```bash
@@ -431,10 +343,6 @@ con una lista explícita de namespaces (`TARGET_NAMESPACES`): mismo `ClusterRole
 un `RoleBinding` por namespace en vez de un `ClusterRoleBinding`. Las instrucciones para activarla
 están en el propio archivo. Ojo con dos cosas: la lista tiene que incluir `gateways`, y onboardear
 una app nueva pasa a requerir un `RoleBinding` más.
-
-Con el apply delegado a un reconciler de GitOps va `rbac/np-agent-rbac-gitops.yaml.tpl` en su lugar:
-sólo lectura, salvo el Secret de la api key del `api-manager-publisher`, que se emite por link y no
-puede publicarse en un repo.
 
 Ajustar `AGENT_SA`/`AGENT_NAMESPACE` al ServiceAccount real del agente en el cluster.
 

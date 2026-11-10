@@ -566,48 +566,6 @@ rule() {  # <service_name tal cual lo escribe el dev>
   [[ "$output" == *"50% al otro sustrato"* ]]
 }
 
-@test "sin repo gitops configurado no se exige nada más" {
-  run_bc
-  [ "$status" -eq 0 ]
-}
-
-@test "un GITOPS_PATH_PREFIX con .. ABORTA" {
-  export GITOPS_REPO_URL=https://tok@example.com/o/r.git
-  export GITOPS_PATH_PREFIX=../../etc
-  run_bc
-  [ "$status" -ne 0 ]
-}
-
-@test "un GITOPS_PATH_PREFIX absoluto ABORTA" {
-  export GITOPS_REPO_URL=https://tok@example.com/o/r.git
-  export GITOPS_PATH_PREFIX=/etc
-  run_bc
-  [ "$status" -ne 0 ]
-  [[ "$output" == *gitops_path_prefix* ]]
-}
-
-@test "la URL del repo NUNCA se imprime" {
-  export GITOPS_REPO_URL=https://ghp_secreto123@example.com/o/r.git
-  run_bc
-  [ "$status" -eq 0 ]
-  [[ "$output" != *ghp_secreto123* ]]
-}
-
-@test "la traza dice a qué path del repo se va a publicar" {
-  export GITOPS_REPO_URL=https://tok@example.com/o/r.git
-  run_bc
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"openshift-crc/payments"* ]]
-}
-
-@test "un GITOPS_BRANCH con inyección ABORTA" {
-  export GITOPS_REPO_URL=https://tok@example.com/o/r.git
-  export GITOPS_BRANCH='main;whoami'
-  run_bc
-  [ "$status" -ne 0 ]
-  [[ "$output" == *gitops_branch* ]]
-}
-
 @test "un LOCAL_INGRESS_TLS_MODE desconocido ABORTA en vez de elegir uno" {
   LOCAL_INGRESS_TLS_MODE=verify run_bc
   [ "$status" -ne 0 ]
