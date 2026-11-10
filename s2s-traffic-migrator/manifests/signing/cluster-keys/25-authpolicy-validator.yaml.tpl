@@ -18,6 +18,7 @@ El `when` sobre el `iss` no es decorativo: Authorino evalúa TODAS las reglas de
 AND, así que sin él un token tendría que cumplir también el `src_namespace` de los otros orígenes
 y nunca pasaría.
 */ -}}
+{{- if ne (index $raiz "ingress_auth_policy_enabled" | default "true") "false" }}
 {{- range .interceptions }}
 {{- $ruta := index . "ingress_route" | default "" }}
 {{- if $ruta }}
@@ -70,5 +71,6 @@ spec:
           message:
             value: "el token no corresponde a un namespace habilitado en este ingreso"
         success: {}
+{{- end }}
 {{- end }}
 {{- end }}

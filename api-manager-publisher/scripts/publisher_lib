@@ -2,23 +2,11 @@
 
 PUBLISHER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$PUBLISHER_LIB_DIR/subscriber_lib"
+source "$PUBLISHER_LIB_DIR/../../shared/scripts/application_type"
 
 PUBLISH_TENANT="b2c"
 LEGAJO_PATTERN='^l[0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
-
-require_publish_environment() {
-  local dimension
-  dimension=$(echo "$1" | tr '[:upper:]' '[:lower:]')
-  case "$dimension" in
-    dev|development|desarrollo) PUBLISH_ENVIRONMENT=dev ;;
-    int|integration|integracion) PUBLISH_ENVIRONMENT=int ;;
-    qa|qas|test|testing|homologacion) PUBLISH_ENVIRONMENT=qas ;;
-    prd|prod|production|produccion) PUBLISH_ENVIRONMENT=prd ;;
-    "") fail "publisher: el service no tiene la dimensión environment." ;;
-    *) fail "publisher: la dimensión environment '$1' del service no corresponde a dev, int, qas ni prd." ;;
-  esac
-}
 
 require_legajo() {
   local email
@@ -182,6 +170,22 @@ attach_scope_auth_policies() {
   done <<<"$routes"
 }
 
+reconcile_scope_auth_policies() {
+  local api_id="$1" namespace="$2" scope_id="$3" scope_slug="$4" service_id="$5" application_type
+  application_type=$(resolve_application_type "${CONTEXT-}")
+  if application_type_skips_auth_policy "$application_type"; then
+    log info "publisher: la aplicación es de tipo $application_type; las routes del scope '$scope_slug' quedan sin AuthPolicy y la autenticación queda en la aplicación."
+    detach_scope_auth_policies "$service_id" "$namespace" "$api_id"
+    return 0
+  fi
+  if [ -z "$application_type" ]; then
+    log info "publisher: la aplicación no declara application_type en su metadata; las routes del scope '$scope_slug' llevan AuthPolicy."
+  else
+    log info "publisher: la aplicación es de tipo $application_type; las routes del scope '$scope_slug' llevan AuthPolicy."
+  fi
+  attach_scope_auth_policies "$api_id" "$namespace" "$scope_id" "$scope_slug" "$service_id"
+}
+
 detach_scope_auth_policies() {
   local service_id="$1" namespace="$2" api_id="${3-}" selector
   local selectors=("service-id=$service_id")
@@ -191,6 +195,6 @@ detach_scope_auth_policies() {
   fi
   for selector in "${selectors[@]}"; do
     kubectl -n "$namespace" delete authpolicy -l "app.kubernetes.io/managed-by=api-manager-publisher,$selector" --ignore-not-found >/dev/null \
-      || fail "publisher: no se pudieron borrar las AuthPolicies del servicio $service_id en el namespace $namespace; reintentá el borrado."
+      || fail "publisher: no se pudieron borrar las AuthPolicies del servicio $service_id en el namespace $namespace; reintentá la acción."
   done
 }

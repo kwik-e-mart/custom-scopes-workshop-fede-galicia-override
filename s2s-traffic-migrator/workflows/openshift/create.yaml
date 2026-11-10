@@ -83,6 +83,7 @@ steps:
       - { name: GITOPS_PATH_PREFIX, type: environment }
       - { name: GITOPS_PUSH_RETRIES, type: environment }
       - { name: SIGLA, type: environment }
+      - { name: INGRESS_AUTH_POLICY_ENABLED, type: environment }
   - name: reconcile apply
     type: script
     file: $SERVICE_PATH/scripts/k8s/reconcile
