@@ -18,6 +18,7 @@ if [ -z "$NAMESPACE" ]; then
 fi
 NAMESPACE="${NAMESPACE:-nullplatform}"
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/defaults"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/sigla"
 SIGLA=$(resolve_sigla "$CONTEXT")
 
@@ -50,19 +51,18 @@ OVERRIDES_ACTIVOS=""
 # declara identidades de nullplatform, nunca direcciones de transporte.
 PEER_GATEWAY_HOST="${PEER_GATEWAY_HOST:-}"
 PEER_INGRESS_HOST="${PEER_INGRESS_HOST:-}"
+PEER_CLUSTER="${PEER_CLUSTER:-}"
 # El ingreso de ESTE cluster. Con origen EKS la rama no migrada también entra por un Gateway.
-LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-gateway-private-istio.gateways.svc.cluster.local}"
+# El valor por sustrato sale de scripts/k8s/defaults, después de resolver SITE.
+LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-}"
 if [ -n "${LOCAL_INGRESS_HOST_OVERRIDE:-}" ]; then
   LOCAL_INGRESS_HOST="$LOCAL_INGRESS_HOST_OVERRIDE"
   OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} LOCAL_INGRESS_HOST=${LOCAL_INGRESS_HOST}"
 fi
 LOCAL_INGRESS_TLS_MODE="${LOCAL_INGRESS_TLS_MODE-skip-verify}"
-LOCAL_INGRESS_SERVICE="${LOCAL_INGRESS_HOST%%.*}"
-LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_HOST#*.}"
-LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_SERVICE_NAMESPACE%%.*}"
 # Namespace del Gateway de ingreso. Es `gateways` y no `istio-system` porque el template de
 # HTTPRoute de los scopes de nullplatform hardcodea ese namespace en su parentRef.
-GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
+GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-}"
 if [ -n "${GATEWAY_NAMESPACE_OVERRIDE:-}" ]; then
   GATEWAY_NAMESPACE="$GATEWAY_NAMESPACE_OVERRIDE"
   OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} GATEWAY_NAMESPACE=${GATEWAY_NAMESPACE}"
@@ -95,7 +95,7 @@ LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}"
 PEER_JWKS_URL="${PEER_JWKS_URL:-}"
 JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-jwks-egress}"
 JWKS_IMAGE="${JWKS_IMAGE:-registry.access.redhat.com/ubi9/httpd-24:latest}"
-INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
+INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-}"
 if [ -n "${INGRESS_GATEWAY_NAME_OVERRIDE:-}" ]; then
   INGRESS_GATEWAY_NAME="$INGRESS_GATEWAY_NAME_OVERRIDE"
   OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} INGRESS_GATEWAY_NAME=${INGRESS_GATEWAY_NAME}"
@@ -154,6 +154,21 @@ export SITE PLATFORM
 # Cómo se identifica ESTE cluster en el header x-s2s-cluster. Se calcula DESPUÉS de SITE: con
 # `set -u`, leerlo antes aborta el script con "unbound variable".
 CLUSTER_LABEL="${CLUSTER_LABEL:-$SITE}"
+
+# El entorno y el sustrato eligen los valores de scripts/k8s/defaults. Una variable que llegue con
+# valor —del workflow o del entorno del agente— le gana a la tabla, y los *_OVERRIDE le ganan a todo.
+ENVIRONMENT=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.dimensions.environment // empty') \
+  || ENVIRONMENT=""
+aplicar_defaults "$SITE" "$ENVIRONMENT" \
+  INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE PEER_GATEWAY_HOST PEER_INGRESS_HOST PEER_CLUSTER
+INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
+GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
+# Istio nombra el Service del Gateway como <gateway>-istio, así que el ingreso local se deriva y no
+# se declara: un nombre y un namespace que no coincidan con el Gateway son un error silencioso.
+LOCAL_INGRESS_HOST="${LOCAL_INGRESS_HOST:-${INGRESS_GATEWAY_NAME}-istio.${GATEWAY_NAMESPACE}.svc.cluster.local}"
+LOCAL_INGRESS_SERVICE="${LOCAL_INGRESS_HOST%%.*}"
+LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_HOST#*.}"
+LOCAL_INGRESS_SERVICE_NAMESPACE="${LOCAL_INGRESS_SERVICE_NAMESPACE%%.*}"
 
 VAULT_KV_CLUSTER="${VAULT_KV_CLUSTER:-}"
 if [ -z "$VAULT_KV_CLUSTER" ]; then
@@ -272,6 +287,9 @@ LOCAL_JWKS_URL=${LOCAL_JWKS_URL//\{cluster\}/$CLAIM_CLUSTER}
 PEER_JWKS_URL=${PEER_JWKS_URL//\{namespace\}/$NAMESPACE}
 PEER_JWKS_URL=${PEER_JWKS_URL//\{cluster\}/$CLAIM_CLUSTER}
 [ -n "$LOCAL_JWKS_URL" ] || LOCAL_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${CLAIM_CLUSTER}/${NAMESPACE}/jwks.json"
+if [ -z "$PEER_JWKS_URL" ] && [ -n "$PEER_CLUSTER" ]; then
+  PEER_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${PEER_CLUSTER}/${NAMESPACE}/jwks.json"
+fi
 require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
 
 gitops_substrate_hint() {
@@ -505,6 +523,9 @@ export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
 export KEYGEN_IMAGE VAULT_APPROLE_ROLE_ID VAULT_APPROLE_SECRET VAULT_SECRET_STORE LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME JWKS_IMAGE
 export EGRESS_AUTHPOLICY ISSUER_DOMAIN NAMESPACE_SETUP_ENABLED SIGLA INGRESS_AUTH_POLICY_ENABLED
 export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
+if [ -n "${DEFAULTS_APLICADOS:-}" ]; then
+  log info "egress-interceptor: defaults de $SITE/${ENVIRONMENT:-sin-entorno}:${DEFAULTS_APLICADOS}"
+fi
 if [ -n "$OVERRIDES_ACTIVOS" ]; then
   log info "egress-interceptor: el entorno del agente pisa la configuración del workflow en:$OVERRIDES_ACTIVOS"
 fi

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+DEFAULTS_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../defaults.json"
+
+if ! type -t default_del_sustrato >/dev/null 2>&1; then
+default_del_sustrato() {  # <site> <environment> <clave>
+  jq -r --arg s "$1" --arg e "$2" --arg k "$3" \
+    '[.[$s][$e][$k], .[$s]["global"][$k]] | map(select(. != null and . != "")) | first // empty' \
+    "$DEFAULTS_FILE"
+}
+fi
+
+if ! type -t aplicar_defaults >/dev/null 2>&1; then
+aplicar_defaults() {  # <site> <environment> <clave...>
+  local site="$1" entorno="$2" clave valor
+  shift 2
+  for clave in "$@"; do
+    [ -z "${!clave:-}" ] || continue
+    valor=$(default_del_sustrato "$site" "$entorno" "$clave") \
+      || { log error "egress-interceptor: no se pudo leer $DEFAULTS_FILE."; return 1; }
+    [ -n "$valor" ] || continue
+    printf -v "$clave" '%s' "$valor"
+    DEFAULTS_APLICADOS="${DEFAULTS_APLICADOS:-} ${clave}=${valor}"
+  done
+}
+fi
