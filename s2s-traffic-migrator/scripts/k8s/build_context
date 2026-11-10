@@ -73,20 +73,6 @@ fi
 # del otro sustrato sin validar el token.
 INGRESS_AUTHPOLICY="${INGRESS_AUTHPOLICY:-s2s-validator}"
 
-SIGNING_STRATEGY="${S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY-cluster-keys}"
-case "$SIGNING_STRATEGY" in
-  cluster-keys|spiffe) ;;
-  *)
-    log error "egress-interceptor: S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY='${SIGNING_STRATEGY}' no es una estrategia de firma válida."
-    log error "  Valores: cluster-keys (default, wristband firmado con una clave del cluster) | spiffe (JWT-SVID minteado por Vault)"
-    exit 1 ;;
-esac
-
-NETWORKING_VAULT_ADDR="${NETWORKING_VAULT_ADDR:-}"
-NETWORKING_VAULT_NAMESPACE="${NETWORKING_VAULT_NAMESPACE:-}"
-NETWORKING_VAULT_SPIFFE_MOUNT="${NETWORKING_VAULT_SPIFFE_MOUNT:-}"
-NETWORKING_VAULT_SPIFFE_ROLE="${NETWORKING_VAULT_SPIFFE_ROLE:-s2s-egress}"
-NETWORKING_VAULT_TOKEN_SECRET="${NETWORKING_VAULT_TOKEN_SECRET:-s2s-vault-token}"
 LOCAL_JWKS_URL="${LOCAL_JWKS_URL:-}"
 PEER_JWKS_URL="${PEER_JWKS_URL:-}"
 JWKS_SERVICE_NAME="${JWKS_SERVICE_NAME:-jwks-egress}"
@@ -104,21 +90,6 @@ KEYS_NAMESPACE="kuadrant-system"
 # Dominio del `iss` del wristband. El chart arma `https://egress.<cluster>.<issuerDomain>` y el
 # validador compara el claim contra ese valor exacto, así que los dos lados tienen que coincidir.
 ISSUER_DOMAIN="${ISSUER_DOMAIN:-bancogalicia.com.ar}"
-warn_inert() {
-  local name="$1" value="$2" default="$3"
-  [ -n "$value" ] || return 0
-  [ "$value" != "$default" ] || return 0
-  log warn "egress-interceptor: ${name} está declarada pero la estrategia de firma es '${SIGNING_STRATEGY}': ese valor NO tiene efecto."
-}
-
-if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
-  warn_inert TOKEN_DURATION "${TOKEN_DURATION:-}" 60
-  warn_inert WRISTBAND_SECRET_NAME "${WRISTBAND_SECRET_NAME:-}" 'wristband-key-{namespace}-g0'
-  warn_inert EGRESS_ISSUER_URL "${EGRESS_ISSUER_URL:-}" "https://egress.{cluster}.${ISSUER_DOMAIN}"
-else
-  warn_inert NETWORKING_VAULT_SPIFFE_MOUNT "$NETWORKING_VAULT_SPIFFE_MOUNT" ""
-  warn_inert NETWORKING_VAULT_SPIFFE_ROLE "$NETWORKING_VAULT_SPIFFE_ROLE" s2s-egress
-fi
 
 # La plataforma sale de la dimension 'site' de la instancia, no del entorno del agente: un agente
 # puede atender instancias de sustratos distintos.
@@ -222,10 +193,6 @@ resolve_wristband_secret() {
     printf '%s' "${WRISTBAND_SECRET_NAME//\{namespace\}/$NAMESPACE}"
     return 0
   fi
-  if [ "$SIGNING_STRATEGY" != "cluster-keys" ]; then
-    printf '%s-wristband-key' "$NAMESPACE"
-    return 0
-  fi
   local found rc=0
   found=$(current_wristband_secret) || rc=$?
   case "$rc" in
@@ -246,16 +213,12 @@ require_match "$VAULT_KV_CLUSTER" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "vault_
 
 # El cluster que nombran los claims y el path del JWKS: el del chart, no el nuestro. Sólo se cae al
 # VAULT_KV_CLUSTER cuando todavía no hay AuthPolicy que leer.
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  CLAIM_CLUSTER=$(signing_policy_field 'customClaims.src_cluster.value') || CLAIM_CLUSTER=""
-else
-  CLAIM_CLUSTER=""
-fi
+CLAIM_CLUSTER=$(signing_policy_field 'customClaims.src_cluster.value') || CLAIM_CLUSTER=""
 [ -n "$CLAIM_CLUSTER" ] || CLAIM_CLUSTER="$VAULT_KV_CLUSTER"
 require_match "$CLAIM_CLUSTER" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "claim_cluster"
 
 EGRESS_ISSUER="${EGRESS_ISSUER_URL:-}"
-if [ -z "$EGRESS_ISSUER" ] && [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
+if [ -z "$EGRESS_ISSUER" ]; then
   EGRESS_ISSUER=$(signing_policy_field 'issuer') || EGRESS_ISSUER=""
 fi
 [ -n "$EGRESS_ISSUER" ] || EGRESS_ISSUER="https://egress.{cluster}.${ISSUER_DOMAIN}"
@@ -342,25 +305,6 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   fi
   if [ -z "$PEER_INGRESS_HOST" ]; then
     PEER_INGRESS_HOST="$PEER_GATEWAY_HOST"
-  fi
-  if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
-    if [ -z "$NETWORKING_VAULT_ADDR" ]; then
-      log error "egress-interceptor: falta NETWORKING_VAULT_ADDR en la configuración del workflow."
-      log error "  Con la estrategia 'spiffe' el token lo mintea Vault: sin su dirección no hay quién firme."
-      exit 1
-    fi
-    if [ -z "$NETWORKING_VAULT_SPIFFE_MOUNT" ]; then
-      log error "egress-interceptor: falta NETWORKING_VAULT_SPIFFE_MOUNT en la configuración del workflow."
-      log error "  Es el path donde está montado el secrets engine 'spiffe' que emite los JWT-SVID."
-      exit 1
-    fi
-    require_match "$NETWORKING_VAULT_ADDR" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "NETWORKING_VAULT_ADDR"
-    require_match "$NETWORKING_VAULT_SPIFFE_MOUNT" '^[a-zA-Z0-9]([a-zA-Z0-9._/-]{0,62})?$' "NETWORKING_VAULT_SPIFFE_MOUNT"
-    require_match "$NETWORKING_VAULT_TOKEN_SECRET" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "NETWORKING_VAULT_TOKEN_SECRET"
-    require_match "$NETWORKING_VAULT_SPIFFE_ROLE" '^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,62})?$' "NETWORKING_VAULT_SPIFFE_ROLE"
-    if [ -n "$NETWORKING_VAULT_NAMESPACE" ]; then
-      require_match "$NETWORKING_VAULT_NAMESPACE" '^[a-zA-Z0-9]([a-zA-Z0-9._/-]{0,62})?$' "NETWORKING_VAULT_NAMESPACE"
-    fi
   fi
   require_match "$GATEWAY_NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "gateway_namespace"
   require_match "$INGRESS_AUTHPOLICY" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "ingress_authpolicy"
@@ -474,17 +418,15 @@ export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PE
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST PEER_INGRESS_HOST LOCAL_INGRESS_HOST PEER_TLS_MODE
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
 export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_CLUSTER
-export SIGNING_STRATEGY NETWORKING_VAULT_ADDR NETWORKING_VAULT_NAMESPACE
 export LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME
 export EGRESS_AUTHPOLICY ISSUER_DOMAIN SIGLA INGRESS_AUTH_POLICY_ENABLED
-export NETWORKING_VAULT_SPIFFE_MOUNT NETWORKING_VAULT_SPIFFE_ROLE NETWORKING_VAULT_TOKEN_SECRET
 if [ -n "${DEFAULTS_APLICADOS:-}" ]; then
   log info "egress-interceptor: defaults de $SITE/${ENVIRONMENT:-sin-entorno}:${DEFAULTS_APLICADOS}"
 fi
 if [ -n "$OVERRIDES_ACTIVOS" ]; then
   log info "egress-interceptor: el entorno del agente pisa la configuración del workflow en:$OVERRIDES_ACTIVOS"
 fi
-log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM strategy=$SIGNING_STRATEGY key=$WRISTBAND_SECRET"
+log info "build_context OK: ns=$NAMESPACE interceptions=$(echo "$INTERCEPTIONS_JSON" | jq 'length') site=$SITE platform=$PLATFORM key=$WRISTBAND_SECRET"
 printf %s "$INTERCEPTIONS_JSON" | jq -r '.[] | "  regla: \(.service_name) → scope \(.scope) = \(.scope_fqdn) · \(.percent)% al otro sustrato"' \
   | while IFS= read -r RULE_LINE; do log info "$RULE_LINE"; done
 # Dato de salida que parsean los tests, no una traza: va con echo para que no lo filtre LOG_LEVEL.

@@ -1,12 +1,6 @@
 provider_categories:
   - container-orchestration
 configuration:
-  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: cluster-keys
-  NETWORKING_VAULT_ADDR: "https://vault.example:8200"
-  NETWORKING_VAULT_NAMESPACE: "admin"
-  NETWORKING_VAULT_SPIFFE_MOUNT: spiffe
-  NETWORKING_VAULT_SPIFFE_ROLE: s2s-egress
-  NETWORKING_VAULT_TOKEN_SECRET: s2s-vault-token
   LOCAL_JWKS_URL: ""
   INGRESS_GATEWAY_NAME: ""
   VAULT_KV_CLUSTER: ""
@@ -39,17 +33,11 @@ steps:
       - { name: SERVICE_ID, type: environment }
       - { name: WRISTBAND_SECRET, type: environment }
       - { name: EGRESS_ISSUER, type: environment }
-      - { name: SIGNING_STRATEGY, type: environment }
       - { name: LOCAL_JWKS_URL, type: environment }
       - { name: PEER_JWKS_URL, type: environment }
       - { name: INGRESS_GATEWAY_NAME, type: environment }
       - { name: VAULT_KV_CLUSTER, type: environment }
       - { name: JWKS_SERVICE_NAME, type: environment }
-      - { name: NETWORKING_VAULT_ADDR, type: environment }
-      - { name: NETWORKING_VAULT_NAMESPACE, type: environment }
-      - { name: NETWORKING_VAULT_SPIFFE_MOUNT, type: environment }
-      - { name: NETWORKING_VAULT_SPIFFE_ROLE, type: environment }
-      - { name: NETWORKING_VAULT_TOKEN_SECRET, type: environment }
       - { name: PEER_CA_SECRET, type: environment }
       - { name: PEER_TLS_MODE, type: environment }
       - { name: PEER_GATEWAY_HOST, type: environment }

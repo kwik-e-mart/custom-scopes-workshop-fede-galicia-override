@@ -22,8 +22,6 @@ setup() {
 
   # Configuración del workflow, no del form: la dirección del ingreso del sustrato opuesto.
   export PEER_GATEWAY_HOST=kuadrant.peer.example.io
-  export NETWORKING_VAULT_ADDR=https://vault.example.io:8200
-  export NETWORKING_VAULT_SPIFFE_MOUNT=spiffe
 
   export NP_CALLS_LOG="$BATS_TEST_TMPDIR/np-calls.log"
   export NP_MOCK_MODE=ok
@@ -257,13 +255,6 @@ interceptions() { echo "$1" | grep '^INTERCEPTIONS_JSON=' | sed 's/^INTERCEPTION
   CONTEXT="$(ctx)" NP_ACTION_CONTEXT="$(notif)" WRISTBAND_SECRET_NAME='{namespace}-fija' run bash "$BC"
   [ "$status" -eq 0 ]
   [[ "$output" == *"key=payments-fija"* ]]
-}
-
-@test "con spiffe no se consulta el cluster: no hay clave que descubrir" {
-  S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY=spiffe run_bc
-  [ "$status" -eq 0 ]
-  run grep -c "get authpolicy" "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
 }
 
 @test "WRISTBAND_SECRET_NAME de la configuración del workflow sustituye {namespace}" {
