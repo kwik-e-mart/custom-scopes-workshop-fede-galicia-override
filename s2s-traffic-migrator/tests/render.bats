@@ -37,7 +37,6 @@ render() {
     peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, peer_ingress_host:$pin, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
-    vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-eks-plataforma",
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
@@ -51,7 +50,7 @@ render() {
   # mirando el stream completo, así que lo que se asserta es lo que se termina aplicando.
   local out="$BATS_TEST_TMPDIR/out"
   rm -rf "$out"
-  render_all_manifests "$BATS_TEST_TMPDIR/ctx.json" "$out" cluster-keys >"$BATS_TEST_TMPDIR/list.txt" || return 1
+  render_all_manifests "$BATS_TEST_TMPDIR/ctx.json" "$out" >"$BATS_TEST_TMPDIR/list.txt" || return 1
   # El `---` va ENTRE archivos y no antes del primero: un separador al inicio agrega un documento
   # `null` al stream que después tienen que esquivar todas las aserciones.
   local f first=1
@@ -70,7 +69,6 @@ rendered_files() {
     peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, peer_ingress_host:$pin, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
-    vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-eks-plataforma",
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
@@ -80,7 +78,7 @@ rendered_files() {
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
   local out="$BATS_TEST_TMPDIR/out2"
   rm -rf "$out"
-  render_all_manifests "$BATS_TEST_TMPDIR/ctx2.json" "$out" cluster-keys | xargs -n1 basename
+  render_all_manifests "$BATS_TEST_TMPDIR/ctx2.json" "$out" | xargs -n1 basename
 }
 
 # doc <render> <kind>: el documento de ese kind, sin comentarios. Se borran a propósito: varios
@@ -575,6 +573,19 @@ rule() {  # <percent> [service]
   [[ "$output" == *"no tiene ningún"* ]]
 }
 
+@test "el render consulta SIGNING_MANIFESTS_DIR y un valor malo ABORTA nombrandolo" {
+  SIGNING_MANIFESTS_DIR="$BATS_TEST_TMPDIR/no-existe"
+  run render openshift "$(rule 50)"
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"no-existe"* ]]
+}
+
+@test "el service no emite la AuthPolicy de firma: la crea el chart del namespace" {
+  run render openshift "$(rule 50)"
+  [ "$status" -eq 0 ] || false
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -x sign)" ]
+}
+
 @test "un template que no compila ABORTA nombrando el archivo" {
   run render openshift "$(jq -nc '[{service_name:"reports", scope:"dev", scope_fqdn:"f.io", percent:"cincuenta"}]')"
   [ "$status" -ne 0 ]
@@ -722,8 +733,7 @@ rule() {  # <percent> [service]
 
 @test "ningun manifiesto nombra objetos que hoy crea el chart con otro nombre" {
   local dir="${BATS_TEST_DIRNAME}/../manifests" viejos
-  viejos=$(grep -rn "s2s-egress\|s2s-jwks\|wristband-rotator\|wristband-init-\|wristband-rotate-\|vault-ocp-plataforma" "$dir" \
-    | grep -v "spiffe_role\|vault_spiffe_role" || true)
+  viejos=$(grep -rn "s2s-egress\|s2s-jwks\|wristband-rotator\|wristband-init-\|wristband-rotate-\|vault-ocp-plataforma" "$dir" || true)
   [ -z "$viejos" ] || { echo "$viejos" >&2; false; }
 }
 

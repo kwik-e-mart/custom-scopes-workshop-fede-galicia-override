@@ -69,78 +69,31 @@ encoding. Y el `kid` del token lo deriva Authorino del **nombre del Secret**: si
 el `kid` del JWKS que publica el destino, ninguna clave se prueba y todo da 401 con los objetos
 en verde.
 
-## Estrategia de firma
+## Firma del tráfico de egreso
 
-`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` elige quién le da identidad al tráfico que sale del
-namespace. El header es `x-egress-token` en las dos, y el `Gateway`, las `HTTPRoute` y las
-`DestinationRule` son las mismas: lo único que cambia es la `AuthPolicy` de egreso y el validador
-del ingreso.
+El tráfico que sale del namespace lleva su identidad en el header `x-egress-token`: un wristband
+que firma Authorino con una clave del cluster, el `Secret <ns>-wristband-key` de `kuadrant-system`.
+El `Gateway`, las `HTTPRoute` y las `DestinationRule` no participan de la identidad: sólo la
+`AuthPolicy` de egreso y el validador del ingreso.
 
-| | `spiffe` | `cluster-keys` (default) |
-|---|---|---|
-| quién firma | Vault, con el secrets engine `spiffe` | Authorino, con una clave del cluster |
-| qué firma | un JWT-SVID | un wristband |
-| dónde vive el material de firma | dentro de Vault, no sale nunca | `Secret <ns>-wristband-key` en `kuadrant-system` |
-| qué hay en el cluster | el `client_token` de Vault, TTL 1 h, rotado cada 30 min, acotado a mintear un solo role | la clave privada RSA, sin rotación |
-| granularidad de la identidad | **una sola para toda la plataforma** (un role, un `sub`) | **una por namespace** (clave y JWKS propios, claim `src_namespace`) |
-| el destino puede autorizar por namespace | no | sí |
-| qué tiene que existir en el cluster | el CronJob de login y el validador de `spiffe` | el endpoint de JWKS, el `ExternalName` al JWKS del peer y la clave por namespace |
-| qué tiene que existir afuera | un mount `spiffe` en Vault y **un** role | nada |
+El validador del ingreso es del layer de plataforma y no lo crea el service, así que el orden de
+rollout no es negociable:
 
-**El default es `cluster-keys`.** Una instancia que reconcilie sin declarar la variable cambia de
-mecanismo en esa corrida. El validador del ingreso es del layer de plataforma y no lo crea el
-service, así que el orden de rollout no es negociable:
-
-1. Aplicar en el cluster el set de prerequisites de `cluster-keys` (`30-`, `35-`, `40-` y `50-`).
+1. Aplicar en el cluster el set de prerequisites (`30-`, `35-`, `40-` y `50-`).
 2. Recién después, reconciliar las instancias.
 
-Al revés, el tráfico que cruza muere con un 401 en el ingreso del peer. Para usar Vault, la
-instancia declara `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: spiffe`.
+Al revés, el tráfico que cruza muere con un 401 en el ingreso del peer.
 
-Las dos estrategias no son intercambiables en caliente entre clusters: el que emite y el que valida
-tienen que estar en la misma. Y con `spiffe`, `TOKEN_DURATION` y `WRISTBAND_SECRET_NAME` dejan de
-tener efecto — el TTL pasa a ser config del role de Vault. `build_context` avisa por log si vienen
-declaradas con un valor distinto del default, en vez de aceptarlas en silencio.
+### La identidad es por namespace
 
-### Aislamiento: las dos estrategias NO son equivalentes
+Hay una clave y un JWKS **por namespace**, y el token lleva `iss` y `src_namespace` propios de ese
+namespace. El validador de destino los chequea explícitamente (`auth.identity.iss` y
+`auth.identity.src_namespace`) y puede decir "este namespace sí, este no"; el JWKS por namespace es
+lo que impide que otro los falsifique.
 
-**`spiffe` no distingue namespaces.** Es la diferencia más importante entre las dos y hay que
-tenerla presente antes de prender el default.
-
-Con `cluster-keys` hay una clave y un JWKS **por namespace**, y el token lleva `iss` y
-`src_namespace` propios de ese namespace. El validador de destino los chequea explícitamente
-(`auth.identity.iss` y `auth.identity.src_namespace`) y puede decir "este namespace sí, este no";
-el JWKS por namespace es lo que impide que otro los falsifique.
-
-Con `spiffe` hay **un solo role en Vault para toda la plataforma**:
-
-```
-spiffe/role/<NETWORKING_VAULT_SPIFFE_ROLE>
-  template: {"sub": "spiffe://<trust-domain>/s2s-egress"}
-```
-
-Todos los namespaces de los dos clusters mintean de ese role, así que todos los tokens salen con el
-**mismo `sub` y el mismo `iss`**, y la `aud` es el `PEER_GATEWAY_HOST` del emisor: una por sentido de
-tráfico, no por namespace. El validador exige esa `aud`, lo que corta el replay de un token minteado
-para otro destino, pero sólo si cada ingreso se alcanza con un nombre distinto: si los dos clusters
-usan el mismo `PEER_GATEWAY_HOST`, la `aud` no distingue sentidos. El validador de destino no tiene con qué
-distinguir de qué namespace vino un request: lo único que puede afirmar es "esto lo firmó nuestro
-Vault para nuestra plataforma". En la práctica, cualquier workload que alcance el Gateway de egreso
-de su namespace puede hablar con cualquier destino habilitado.
-
-Lo que sigue acotando el tráfico con `spiffe` es la capa de red y de ruteo —la `NetworkPolicy` del
-namespace, y que las `HTTPRoute` de egreso sólo existen para los servicios declarados en cada
-instancia— no el token.
-
-Si hace falta volver a distinguir por namespace, hay que ir a un role de Vault por namespace, con el
-namespace dentro del `sub`, y un predicado por namespace en el validador. No es un cambio de este
-service: es config de Vault más el `45-`.
-
-En las dos estrategias, además, quien pueda crear una `AuthPolicy` en cualquier namespace del cluster
-alcanza todos los `Secret` de `kuadrant-system` — porque ahí es donde Kuadrant crea el `AuthConfig`
-y donde Authorino resuelve `signingKeyRefs` y `sharedSecretRef`. Es la misma superficie que ya
-existe hoy, pero con `spiffe` el `Secret` alcanzable es uno para toda la plataforma en vez de uno
-por namespace. Si eso importa, se acota con RBAC sobre `authpolicies`.
+Quien pueda crear una `AuthPolicy` en cualquier namespace del cluster alcanza todos los `Secret` de
+`kuadrant-system` — porque ahí es donde Kuadrant crea el `AuthConfig` y donde Authorino resuelve
+`signingKeyRefs` y `sharedSecretRef`. Si eso importa, se acota con RBAC sobre `authpolicies`.
 
 ## Templating
 
@@ -166,15 +119,13 @@ Los manifests son templates de **gomplate**, renderizados contra un contexto JSO
   Los cuatro condicionales renderean vacío cuando su condición no se cumple. `kubectl apply -f`
   sobre un archivo vacío falla, así que el loop los descarta — y gomplate directamente no crea el
   archivo cuando la salida es vacía.
-- `manifests/signing/<estrategia>/` — el único objeto que cambia según la estrategia de firma. Se
-  rendea al mismo directorio que el set compartido y la lista de aplicación se reordena por nombre,
-  así que el `20-authpolicy.yaml` queda entre el `10-gateway` y el `30-destinationrule` igual que
-  antes. Ver [Estrategia de firma](#estrategia-de-firma).
+- `manifests/signing/` — el validador del ingreso. Se rendea al mismo directorio que el set
+  compartido y la lista de aplicación se reordena por nombre, así que queda entre el `10-gateway` y
+  el `30-destinationrule`. Ver [Firma del tráfico de egreso](#firma-del-tráfico-de-egreso).
 
   | archivo | objeto | cuándo se emite |
   |---|---|---|
-  | `cluster-keys/20-authpolicy.yaml.tpl` | `AuthPolicy` que firma el wristband con una clave del cluster | siempre, con `cluster-keys` |
-  | `spiffe/20-authpolicy.yaml.tpl` | `AuthPolicy` que mintea un JWT-SVID contra Vault | siempre, con `spiffe` |
+  | `25-authpolicy-validator.yaml.tpl` | `AuthPolicy` que valida el wristband en el ingreso | salvo que la aplicación quede exenta por su `application_type` |
 - `rbac/np-agent-rbac.yaml.tpl` (en la raíz del repo) — usa `{{ getenv "VAR" }}` porque se
   renderiza a mano, fuera del workflow.
 
@@ -269,16 +220,10 @@ la tabla porque se derivan de los otros valores.
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
 | `EGRESS_ISSUER_URL` | el `iss` del token, con `{namespace}` sustituido. Default `https://egress.{namespace}.s2s.local`. Tiene que coincidir con el `__EGRESS_ISSUER__` del validador del cluster. |
-| `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `cluster-keys` (default) o `spiffe`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |
-| `NETWORKING_VAULT_ADDR` | sólo con `spiffe`, **obligatoria**: `https://host[:puerto]` del Vault que mintea. Sin default. |
-| `NETWORKING_VAULT_NAMESPACE` | sólo con `spiffe`, opcional: el namespace de Vault Enterprise/HCP. Vacío no emite el header `X-Vault-Namespace`. |
-| `NETWORKING_VAULT_SPIFFE_MOUNT` | sólo con `spiffe`: path del mount del secrets engine. Default `spiffe`. |
-| `NETWORKING_VAULT_SPIFFE_ROLE` | sólo con `spiffe`: el role que mintea, uno para toda la plataforma. Default `s2s-egress`. |
-| `NETWORKING_VAULT_TOKEN_SECRET` | sólo con `spiffe`: Secret de `kuadrant-system` con el `client_token`, lo puebla el CronJob. Default `s2s-vault-token`. |
-| `WRISTBAND_SECRET_NAME` | sólo con `cluster-keys`: Secret con la clave de firma. `{namespace}` se interpola. |
+| `WRISTBAND_SECRET_NAME` | Secret con la clave de firma. `{namespace}` se interpola. |
 | `PEER_CA_SECRET` | CA con la que se valida el cert del peer, y el del ingreso local sólo con `LOCAL_INGRESS_TLS_MODE=certificate`. |
 | `GATEWAY_CLASS`, `LISTEN_PORT` | del Gateway. |
-| `TOKEN_DURATION` | sólo con `cluster-keys`. Con `spiffe` el TTL es config del role de Vault. |
+| `TOKEN_DURATION` | vigencia del wristband, en segundos. |
 
 ⚠️ **Los valores que vienen en este repo son los de la PoC** y hay que cambiarlos antes de usarlo.
 El más importante es `PEER_GATEWAY_HOST`: apunta a un overlay de Tailscale, que era el andamiaje

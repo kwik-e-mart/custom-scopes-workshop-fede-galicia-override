@@ -245,10 +245,8 @@ if [ "$ACTION" = "delete" ]; then
   fi
   kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "${MANAGED_LABEL}=true" --ignore-not-found \
     || die "falló el borrado de los objetos del interceptor en $NAMESPACE."
-  if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-    delete_ingress_validator_rules \
-      || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
-  fi
+  delete_ingress_validator_rules \
+    || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
   log info "reconcile delete OK en ns $NAMESPACE"
   # `return` y no `exit`: el workflow sourcea los steps, así que un exit mata la corrida entera y
   # se saltea los steps siguientes. exit queda sólo para los errores.
@@ -334,12 +332,6 @@ jq -n \
   --arg role_label "$ROLE_LABEL" \
   --arg original_selector_annotation "$ORIGINAL_SELECTOR_ANNOTATION" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
-  --arg signing_strategy "$SIGNING_STRATEGY" \
-  --arg vault_addr "$NETWORKING_VAULT_ADDR" \
-  --arg vault_namespace "$NETWORKING_VAULT_NAMESPACE" \
-  --arg vault_spiffe_mount "$NETWORKING_VAULT_SPIFFE_MOUNT" \
-  --arg vault_spiffe_role "$NETWORKING_VAULT_SPIFFE_ROLE" \
-  --arg vault_token_secret "$NETWORKING_VAULT_TOKEN_SECRET" \
   --arg local_jwks_url "$LOCAL_JWKS_URL" \
   --arg peer_jwks_url "$PEER_JWKS_URL" \
   --arg ingress_authpolicy "$INGRESS_AUTHPOLICY" \
@@ -399,8 +391,8 @@ rm -f "$MANIFEST_DIR"/*.yaml
 MANIFEST_LIST="$NP_OUTPUT_DIR/manifest-list.txt"
 # La redirección no enmascara el estado de salida (a diferencia de `local x=$(...)`), así que un
 # render fallido aborta acá y no sigue hasta un apply de nada.
-render_all_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" "$SIGNING_STRATEGY" > "$MANIFEST_LIST" \
-  || die "falló el render de los manifiestos (estrategia de firma '$SIGNING_STRATEGY'). No se aplicó nada."
+render_all_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" > "$MANIFEST_LIST" \
+  || die "falló el render de los manifiestos. No se aplicó nada."
 mapfile -t MANIFESTS < "$MANIFEST_LIST"
 if [ "${#MANIFESTS[@]}" -eq 0 ]; then
   log error "egress-interceptor: el render no produjo ningún manifiesto con contenido."
@@ -410,30 +402,26 @@ fi
 
 
 VALIDATOR_FILE=""
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    if [ "$(basename "$f")" = "25-authpolicy-validator.yaml" ]; then
-      VALIDATOR_FILE="$f"
-    else
-      KEEP+=("$f")
-    fi
-  done
-  MANIFESTS=("${KEEP[@]}")
-fi
+KEEP=()
+for f in "${MANIFESTS[@]}"; do
+  if [ "$(basename "$f")" = "25-authpolicy-validator.yaml" ]; then
+    VALIDATOR_FILE="$f"
+  else
+    KEEP+=("$f")
+  fi
+done
+MANIFESTS=("${KEEP[@]}")
 
 # El alta de namespace —Gateway de egreso, clave de firma, endpoint de JWKS y la AuthPolicy que
 # firma— la hace el chart del cliente, una vez por namespace.
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    case "$(basename "$f")" in
-      10-gateway.yaml) ;;
-      *) KEEP+=("$f") ;;
-    esac
-  done
-  MANIFESTS=("${KEEP[@]}")
-fi
+KEEP=()
+for f in "${MANIFESTS[@]}"; do
+  case "$(basename "$f")" in
+    10-gateway.yaml) ;;
+    *) KEEP+=("$f") ;;
+  esac
+done
+MANIFESTS=("${KEEP[@]}")
 
 # El par ServiceEntry + DestinationRule que alcanza al peer es del chart: uno mete el host en el
 # registro de Istio y el otro define el SNI con el que se le habla. Separarlos entre dos dueños es
@@ -465,7 +453,7 @@ if [ -n "$VALIDATOR_FILE" ]; then
   reconcile_ingress_validator "$VALIDATOR_FILE" \
     || die "falló el alta de las reglas de $NAMESPACE en el validador de ingreso $INGRESS_AUTHPOLICY."
 fi
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$INGRESS_AUTH_POLICY_ENABLED" = "false" ]; then
+if [ "$INGRESS_AUTH_POLICY_ENABLED" = "false" ]; then
   delete_route_validators \
     || die "no se pudieron sacar los validadores de las routes de una aplicación sin auth policy. El tráfico NO se desvió."
 fi
@@ -486,13 +474,11 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
   die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
 fi
 
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
-    log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
-    log error "  Sin él el validador no puede bajar las claves y el destino responde 401."
-    log error "  Ese objeto lo crea el chart del namespace, con validator.enabled."
-    exit 1
-  fi
+if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
+  log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
+  log error "  Sin él el validador no puede bajar las claves y el destino responde 401."
+  log error "  Ese objeto lo crea el chart del namespace, con validator.enabled."
+  exit 1
 fi
 
 # `Accepted=True` sólo dice que Kuadrant entendió el objeto. Sin esperar `Enforced=True`, el swap
@@ -501,12 +487,7 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$EGRESS_A
   log error "la AuthPolicy $EGRESS_AUTHPOLICY no llegó a Enforced=True. El tráfico NO se desvió."
   log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$EGRESS_AUTHPOLICY" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
-  if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
-    log error "  Causa típica: el Secret $NETWORKING_VAULT_TOKEN_SECRET no existe en kuadrant-system o está vacío."
-    log error "  Lo puebla el CronJob de login a Vault (specs/prerequisites/manifests/55-vault-login-cronjob.yaml)."
-  else
-    log error "  Causa típica: el Secret de firma '$WRISTBAND_SECRET' no existe en $KEYS_NAMESPACE, o no está en PKCS#1."
-  fi
+  log error "  Causa típica: el Secret de firma '$WRISTBAND_SECRET' no existe en $KEYS_NAMESPACE, o no está en PKCS#1."
   exit 1
 fi
 
@@ -546,8 +527,8 @@ fi
 
 # Kuadrant NO enforcea una AuthPolicy que no esté en el camino de ninguna route, y no falla
 # ruidosamente: queda Accepted=True y el destino acepta tráfico sin validar el wristband. Se espera
-# siempre que el validador sea nuestro —con cluster-keys lo emite este service—, y no sólo con
-# origen OpenShift como cuando era un prerequisito del layer.
+# siempre que el validador sea nuestro, y no sólo con origen OpenShift como cuando era un
+# prerequisito del layer.
 if [ -n "$VALIDATOR_FILE" ]; then
   VALIDATOR_NS="$NAMESPACE"
   for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
