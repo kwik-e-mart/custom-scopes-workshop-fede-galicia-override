@@ -343,10 +343,6 @@ un `RoleBinding` por namespace en vez de un `ClusterRoleBinding`. Las instruccio
 están en el propio archivo. Ojo con dos cosas: la lista tiene que incluir `gateways`, y onboardear
 una app nueva pasa a requerir un `RoleBinding` más.
 
-Con el apply delegado a un reconciler de GitOps va `rbac/np-agent-rbac-gitops.yaml.tpl` en su lugar:
-solo lectura, salvo el Secret de la api key en `KEYS_NAMESPACE`, que se emite por link y no puede
-publicarse en un repo.
-
 
 ## Verificar
 

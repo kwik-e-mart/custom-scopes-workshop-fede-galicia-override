@@ -128,7 +128,6 @@ correr() {
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
   NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
   NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
-  GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
   INTERCEPTIONS_JSON='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":50,"ingress_route":"k-8-s-reports-internal"}]' \
   bash -c '
     source "'"$SVC_DIR"'/logging"
@@ -165,7 +164,6 @@ correr_openshift() {  # [interceptions-json]
   NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
   NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
   NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
-  GITOPS_REPO_URL="${GITOPS_REPO_URL:-}" \
   INTERCEPTIONS_JSON="$reglas" \
   bash -c '
     source "'"$SVC_DIR"'/logging"
@@ -236,23 +234,6 @@ correr_delete() {
   [ "$output" -eq 0 ]
 }
 
-@test "si la publicacion gitops falla, NO se aplica nada" {
-  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo"
-  run correr
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"repo gitops"* ]]
-  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "en OpenShift, si la publicacion gitops falla, tampoco se crea el alias" {
-  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo"
-  run correr_openshift
-  [ "$status" -ne 0 ]
-  run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
 @test "en OpenShift el alias es el PRIMER objeto que toca el cluster" {
   run correr_openshift
   [ "$status" -eq 0 ]
@@ -302,18 +283,6 @@ correr_delete() {
   [[ "$output" == *"reports"* ]]
   run grep -cE '(^| )apply ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
-}
-
-@test "si la publicacion gitops falla, tampoco se toca el selector" {
-  export GITOPS_REPO_URL="$BATS_TEST_TMPDIR/no-hay-repo"
-  run correr
-  run grep -c ' patch svc ' "$KUBECTL_CALLS"
-  [ "$output" -eq 0 ]
-}
-
-@test "sin repo gitops el reconcile anda igual que siempre" {
-  run correr
-  [ "$status" -eq 0 ]
 }
 
 @test "con todo sano SÍ anota y desvía, en ese orden" {

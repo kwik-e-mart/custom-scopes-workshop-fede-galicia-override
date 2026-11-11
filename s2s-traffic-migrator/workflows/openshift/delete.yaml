@@ -20,9 +20,6 @@ configuration:
   TOKEN_DURATION: "60"
   GATEWAY_CLASS: istio
   LISTEN_PORT: "8080"
-  GITOPS_BRANCH: main
-  GITOPS_PATH_PREFIX: intra-namespace-rules
-  GITOPS_PUSH_RETRIES: "5"
 steps:
   - name: load logging
     type: script
@@ -67,9 +64,6 @@ steps:
       - { name: LISTEN_PORT, type: environment }
       - { name: TOKEN_DURATION, type: environment }
       - { name: GATEWAY_CLASS, type: environment }
-      - { name: GITOPS_BRANCH, type: environment }
-      - { name: GITOPS_PATH_PREFIX, type: environment }
-      - { name: GITOPS_PUSH_RETRIES, type: environment }
       - { name: SIGLA, type: environment }
       - { name: INGRESS_AUTH_POLICY_ENABLED, type: environment }
   - name: reconcile delete
