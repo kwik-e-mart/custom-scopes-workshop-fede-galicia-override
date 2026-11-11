@@ -1022,8 +1022,8 @@ Si alguno sale vacío, la instancia no existe: volvé al Paso 12.
 
 **En el body no va ninguna dirección.** La regla declara un **scope** —dónde corre `reports` del
 lado EKS— y el service resuelve su FQDN con `np scope list`. La dirección del Kuadrant remoto, por
-donde sale todo lo migrado, es configuración del workflow (`PEER_GATEWAY_HOST`), no un campo del
-form.
+donde sale todo lo migrado, sale de `defaults.json` por sustrato y entorno (`PEER_GATEWAY_HOST`),
+no un campo del form.
 
 El slug ya está exportado desde el Paso 0 (`SCOPE=eks`). Para ver los disponibles:
 

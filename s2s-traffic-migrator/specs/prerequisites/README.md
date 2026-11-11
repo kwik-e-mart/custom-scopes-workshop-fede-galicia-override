@@ -12,13 +12,9 @@ en verde y el tráfico pasa sin validar. Sin lo de `manifests/` el service recon
 objetos y el tráfico que cruza muere con un 401 o un 503 que no señalan a ningún objeto en rojo.
 
 Los valores concretos (`gateways`, `s2s-ingress`, `s2s-remote-ca`, `s2s-validator`, el header
-`x-egress-token`, el puerto 8080, y `<ns>-wristband-key` o `s2s-vault-token` según la estrategia) son el
+`x-egress-token`, el puerto 8080 y `<ns>-wristband-key`) son el
 **contrato con el service**: son los defaults del `configuration:` de `workflows/openshift/*.yaml` y
 de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también allá.
-
-**Qué archivos de `manifests/` aplican depende de la estrategia de firma del service**
-(`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY`, default `cluster-keys`). Ver
-[Qué aplicar según la estrategia de firma](#qué-aplicar-según-la-estrategia-de-firma).
 
 ## Qué aplica cada archivo
 
@@ -27,16 +23,13 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `00-namespace-gateways.yaml` | `Namespace gateways` | cluster | siempre. El label `kubernetes.io/metadata.name` es lo que selecciona la NetworkPolicy |
 | `10-gateway-tls.yaml` | `Secret s2s-gateway-tls` | cluster | siempre: es el cert de servidor del listener 443 |
 | `20-ingress-gateway.yaml` | `Gateway s2s-ingress` | cluster | siempre |
-| `30-jwks-endpoint.yaml` | `ConfigMap` + `Deployment` + `Service` del JWKS | cluster | **sólo `cluster-keys`** |
-| `35-peer-jwks-service.yaml` | `Service` `ExternalName` al JWKS del cluster opuesto | cluster | **sólo `cluster-keys`**, y sólo con tráfico cruzado: es lo que hace que la `jwksUrl` del peer resuelva desde este cluster |
-| `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `cluster-keys`** |
-| `45-authpolicy-validator-spiffe.yaml` | `AuthPolicy s2s-validator` | cluster | **sólo `spiffe`**. Mismo nombre de objeto que `40-`: se aplica uno o el otro, nunca los dos |
-| `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system`. Alternativa manual a lo que emite el service; si se usa, fijar `WRISTBAND_SECRET_NAME` para que el descubrimiento por label no lo pise | por namespace emisor | **sólo `cluster-keys`** |
-| `15-keygen-rbac.yaml` + `16-keygen-jobs.yaml` | **Los emite el service, no son prerequisito.** SA + Roles + `ConfigMap` con `init.sh` y `rotate.sh`, y el `Job` de bootstrap + `CronJob` de rotación semanal. La clave vive en Vault y llega a `kuadrant-system` por `ExternalSecret` con el nombre `<ns>-wristband-key-gen<N>`; el `kid` es ese nombre. Reemplaza a `50-` | por namespace emisor | **sólo `cluster-keys`** |
-| `55-vault-login-cronjob.yaml` | `Secret` del `client_token` + `Role` + `RoleBinding` + `CronJob` de login a Vault | cluster | **sólo `spiffe`** |
+| `30-jwks-endpoint.yaml` | `ConfigMap` + `Deployment` + `Service` del JWKS | cluster | siempre |
+| `35-peer-jwks-service.yaml` | `Service` `ExternalName` al JWKS del cluster opuesto | cluster | sólo con tráfico cruzado: es lo que hace que la `jwksUrl` del peer resuelva desde este cluster |
+| `40-authpolicy-validator.yaml` | `AuthPolicy s2s-validator` | cluster | siempre |
+| `50-wristband-signing-key.yaml` | `Secret <ns>-wristband-key` en `kuadrant-system`. Alternativa manual a lo que emite el service; si se usa, fijar `WRISTBAND_SECRET_NAME` para que el descubrimiento por label no lo pise | por namespace emisor | siempre |
 | `60-peer-ca.yaml` | `Secret s2s-remote-ca` en el namespace de la app | por namespace emisor | siempre que haya tráfico cruzado |
 | `70-networkpolicy.yaml` | `NetworkPolicy allow-intra-namespace` | por namespace | siempre |
-| `75-networkpolicy-jwks.yaml` | `NetworkPolicy allow-authorino-jwks`: habilita `kuadrant-system` → el pod `s2s-jwks` del namespace en el 8080. **Sin esto el validador no puede bajar el JWKS** y Authorino falla cerrado con `UNAVAILABLE`, que llega al cliente como un 500 | por namespace emisor | **sólo `cluster-keys`** |
+| `75-networkpolicy-jwks.yaml` | `NetworkPolicy allow-authorino-jwks`: habilita `kuadrant-system` → el pod `s2s-jwks` del namespace en el 8080. **Sin esto el validador no puede bajar el JWKS** y Authorino falla cerrado con `UNAVAILABLE`, que llega al cliente como un 500 | por namespace emisor | siempre |
 
 ## Placeholders
 
@@ -51,135 +44,21 @@ de lo que emiten sus templates. Cambiar uno acá obliga a cambiarlo también all
 | `__APP_NAMESPACE_JWKS__` | el JWKS (una sola clave) de la pública de ese namespace | ver abajo |
 | `__APP_NAMESPACE_SIGNING_KEY_PKCS1_PEM__` | la privada RSA 2048 en PKCS#1 | ver abajo |
 | `__PEER_CA_PEM__` | CA con la que se valida el cert del ingreso del peer | la CA propia del PoC |
-| `__EGRESS_ISSUER__` | el `iss` que el validador exige: tiene que ser el mismo que el `EGRESS_ISSUER_URL` del service, con `{namespace}` ya sustituido (sólo `cluster-keys`) | `https://egress.payments.s2s.local` |
-| `__NETWORKING_VAULT_ADDR__` | `https://host[:puerto]` del Vault que mintea (sólo `spiffe`) | el HCP Vault de noprod, puerto `8200` |
-| `__NETWORKING_VAULT_NAMESPACE__` | namespace de Vault Enterprise/HCP (sólo `spiffe`). En el `55-` va como header `X-Vault-Namespace`; en el `jwksUrl` del `45-` va en el **path**, porque `jwt.jwksUrl` de Authorino es un `GET` sin headers custom | `admin/spiffe` |
-| `__NETWORKING_VAULT_SPIFFE_MOUNT__` | path del mount del secrets engine `spiffe` | `spiffe` |
-| `__NETWORKING_VAULT_SPIFFE_SUB__` | el `sub` completo que emite el role, tal cual sale en el token | `spiffe://<trust-domain>/s2s-egress` |
-| `__NETWORKING_VAULT_ISSUER__` | el `iss` del token, o sea el `jwt_issuer_url` de `spiffe/config` | `https://vault-noprod.example.cloud:8200` |
-| `__S2S_INGRESS_AUDIENCE__` | la `aud` que el `45-` exige: el `PEER_GATEWAY_HOST` del cluster **opuesto**, que es lo que su emisor pide como audiencia al mintear (sólo `spiffe`) | el host del overlay con el que el peer alcanza este ingreso |
-| `__NETWORKING_VAULT_AUTH_MOUNT__` | mount del método de login del cluster | `auth/jwt` en EKS, `auth/jwt-ocp` en OpenShift |
-| `__NETWORKING_VAULT_AUTH_ROLE__` | role de ese mount, bindeado a la SA de Authorino | `s2s-authorino-egress` |
-| `__NETWORKING_VAULT_TOKEN_SECRET__` | Secret de `kuadrant-system` donde el CronJob deja el `client_token` | `s2s-vault-token` |
-| `__VAULT_LOGIN_IMAGE__` | imagen del CronJob de login. Necesita `curl`, `jq` y `kubectl` | una imagen interna pineada por digest |
-| `__KEYGEN_IMAGE__` | imagen del Job de keygen. Necesita `bash`, `curl`, `jq`, `kubectl` y poder instalar `openssl` | `alpine/k8s:1.31.2` |
-| `__CLUSTER_LABEL__` | identifica al cluster dentro del KV: las claves cuelgan de `<mount>/<cluster>/<namespace>/` | `arqc-delta-136` |
-| `__VAULT_SECRET_STORE__` | `SecretStore` de external-secrets que apunta a ese Vault | `vault-ocp-plataforma` |
-| `__EGRESS_AUTHPOLICY__` | la `AuthPolicy` de firma del namespace, que el modo `rotate` parchea | `s2s-egress` |
-| `__LOCAL_JWKS_URL__` | URL del JWKS de este cluster, que `rotate` consulta para saber si el `kid` nuevo se propagó | `http://jwks.rot-dest.svc.cluster.local:8080/<ns>/jwks.json` |
-| `__VAULT_APPROLE_ROLE_ID__` | `role_id` del AppRole con el que el Job se loguea a Vault | — |
-| `__VAULT_APPROLE_SECRET__` | Secret de `kuadrant-system` con el `secret-id` del AppRole, en la clave `secret-id` | `vault-approle-secret-id` |
+| `__EGRESS_ISSUER__` | el `iss` que el validador exige: tiene que ser el mismo que el `EGRESS_ISSUER_URL` del service, con `{namespace}` ya sustituido | `https://egress.payments.s2s.local` |
 
 `__LOCAL_JWKS_NAME__` y `__PEER_JWKS_NAME__` **tienen que ser distintos**: cada cluster resuelve el
 endpoint del peer en su propio `kuadrant-system`, así que un nombre compartido colisiona con el
 endpoint propio.
 
-## Qué aplicar según la estrategia de firma
+## El orden importa
 
-El service elige con `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` (default `cluster-keys`). El cluster tiene
-que estar en la MISMA que las instancias que corren en él, y los dos clusters tienen que estar en la
-misma entre sí: el que emite y el que valida no pueden diferir.
+Primero el cluster, después las instancias. Al revés, lo que cruza muere con un 401 en el ingreso
+del peer.
 
-| | `spiffe` | `cluster-keys` (default) |
-|---|---|---|
-| por cluster | `45-`, `55-` | `30-`, `35-` |
-| por namespace emisor | nada | `40-`, `50-` |
-| material de firma que hay que generar | ninguno | una clave RSA por namespace |
-| config fuera del cluster | mount `spiffe` en Vault + **un** role | ninguna |
-| el destino autoriza por namespace | no | sí |
+Por cluster van `20-`, `30-` y `35-`; por namespace emisor, `40-`, `50-`, `60-`, `70-` y `75-`. El
+`40-` es el objeto (`AuthPolicy s2s-validator` en `gateways`) que el service espera ver `Enforced`.
 
-`40-` y `45-` crean el **mismo objeto** (`AuthPolicy s2s-validator` en `gateways`), que es el que el
-service espera ver `Enforced`. Se aplica uno o el otro. Aplicar el segundo encima del primero
-funciona como cambio de estrategia, pero deja el tráfico en 401 hasta que las instancias
-reconcilien con la estrategia nueva.
-
-**El orden importa**: primero el cluster, después las instancias. Al revés, lo que cruza muere con
-un 401 en el ingreso del peer.
-
-### Lo que hay que configurar en Vault (sólo `spiffe`)
-
-No lo hace ninguno de estos archivos ni el service: el service no tiene credenciales de Vault. Lo
-provisiona quien administre el mount.
-
-**Un solo role para toda la plataforma**, compartido por los dos clusters y por todos los
-namespaces:
-
-```
-spiffe/role/s2s-egress
-  template: {"sub": "spiffe://<trust-domain>/s2s-egress"}
-  ttl:      el TTL del JWT-SVID
-```
-
-El nombre del role es configurable desde el service con `NETWORKING_VAULT_SPIFFE_ROLE` (default
-`s2s-egress`). Si acá se usa otro nombre, hay que declararlo también en el `configuration:` del
-workflow.
-
-Y por cluster, el método de login de Authorino:
-
-```
-sys/auth/<mount>                    # auth/jwt en EKS, auth/jwt-ocp en OpenShift
-  oidc_discovery_url                # el issuer del cluster; en OpenShift el issuer es interno,
-                                    # así que va con jwt_validation_pubkeys estáticas
-
-auth/<mount>/role/s2s-authorino-egress
-  bound_subject: system:serviceaccount:kuadrant-system:authorino-authorino
-  token_policies: s2s-spiffe-mint-only
-
-policy s2s-spiffe-mint-only
-  path "spiffe/role/s2s-egress/mintjwt" { capabilities = ["update"] }
-```
-
-El `template` tiene que ser un objeto JSON completo (`{"sub": "..."}`), no el fragmento
-`"sub": "..."`. Y `spiffe/config` necesita el `jwt_issuer_url` con los **tres** componentes —host,
-puerto y el path completo del mount— o el `jwks_uri` que publica el discovery no resuelve. Ese
-`jwt_issuer_url` es el valor que va en `__NETWORKING_VAULT_ISSUER__` del `45-`.
-
-**El secrets engine `spiffe` es exclusivo de Vault Enterprise.** No está en la edición community.
-
-**Con un solo role no hay identidad por namespace.** Todos los tokens salen con el mismo `sub`, así
-que el `45-` no puede autorizar por namespace como sí hace el `40-`. Ver *Aislamiento* en el README
-del service.
-
-**Con OpenShift, ojo con las pubkeys estáticas.** `auth/jwt-ocp` valida el SA token de Authorino
-contra claves sacadas una vez de `/openid/v1/jwks` del cluster. El día que OpenShift rote sus claves
-de firma de ServiceAccount, el login a Vault deja de funcionar y con él todo el egreso del cluster.
-Hay que re-extraerlas en esa ventana; no hay nada que lo detecte solo.
-
-### Dos cosas que rompen en silencio con `spiffe`
-
-1. **`evaluatorCacheSize` del CR `Authorino`.** El default es 1 (MB), con un tope por entrada de
-   1/1024 de eso (~1 KB), y el JWT-SVID pesa ~1 KB. Con el default, cada escritura al cache falla
-   **sin loguear nada** salvo en `LogLevel: debug`, y la `AuthPolicy` mintea contra Vault en cada
-   request: latencia completa por request y riesgo de pegarle al timeout de 200 ms del `ext_authz`
-   de Kuadrant. Subirlo a `10` resuelve con margen. El chart de `kuadrant-operator` no lo expone,
-   así que va como patch al CR:
-
-   ```bash
-   kubectl -n kuadrant-system patch authorino authorino --type=merge -p '{"spec":{"evaluatorCacheSize":10}}'
-   kubectl -n kuadrant-system rollout status deployment authorino
-   ```
-
-   El `kuadrant-operator` no lo revierte: cuando el CR ya existe, su reconcile aplica por
-   server-side apply un patch que sólo nombra `spec.oidcServer.tls`, `spec.listener.tls` y
-   `spec.tracing`. Por eso el patch es sobre esos tres campos y no un `apply` del spec entero: un
-   `apply` que reclame `listener.tls`/`oidcServer.tls` puede hacer que el operador ceda ownership de
-   esos campos y deje de reconciliarlos.
-
-2. **El `Secret` del `client_token` se rota cada 30 minutos.** El `55-` lo crea vacío a propósito:
-   el `Role` queda con `get`/`update`/`patch` sobre ese nombre y **sin** `create`, porque `create` no
-   se puede acotar por `resourceNames` y daría permiso sobre cualquier `Secret` del namespace. Hasta
-   la primera corrida del CronJob el token está vacío y el mint da 403; para no esperar al horario:
-
-   ```bash
-   kubectl -n kuadrant-system create job --from=cronjob/s2s-vault-login s2s-vault-login-manual
-   kubectl -n kuadrant-system logs job/s2s-vault-login-manual
-   ```
-
-   Si aparece un 403 con `no such key: data` en los logs de Authorino con el `Secret` poblado y
-   Vault respondiendo bien a mano, es estado stale del pod de Authorino leyendo el
-   `sharedSecretRef`: `kubectl -n kuadrant-system rollout restart deployment authorino`.
-
-## Generar el material de firma (sólo `cluster-keys`)
+## Generar el material de firma
 
 Una clave por namespace emisor. La privada no cruza nunca al otro cluster: lo que cruza es el JWKS
 de la pública.
@@ -245,7 +124,7 @@ kubectl -n gateways wait --for=condition=Programmed gateway/s2s-ingress --timeou
 El `Programmed=True` del Gateway es la puerta: hasta que el controller no le auto-provisiona su
 Service y su Deployment de Envoy, lo que se aplique después no tiene dónde colgarse.
 
-Y en cualquiera de las dos estrategias, por namespace emisor:
+Y por namespace emisor:
 
 ```bash
 NS=payments
@@ -253,41 +132,7 @@ kubectl -n "$NS" create secret generic s2s-remote-ca --from-file=ca.crt=peer-ca.
 sed "s/__APP_NAMESPACE__/$NS/g" manifests/70-networkpolicy.yaml | kubectl apply -f -
 ```
 
-### Con `spiffe`
-
-Por cluster, una vez, con el mount y los roles de Vault ya creados:
-
-```bash
-sed -e "s|__NETWORKING_VAULT_ADDR__|https://vault-noprod.example.cloud:8200|g" \
-    -e "s|__NETWORKING_VAULT_NAMESPACE__|admin/spiffe|g" \
-    -e "s|__NETWORKING_VAULT_AUTH_MOUNT__|auth/jwt|g" \
-    -e "s/__NETWORKING_VAULT_AUTH_ROLE__/s2s-authorino-egress/g" \
-    -e "s/__NETWORKING_VAULT_TOKEN_SECRET__/s2s-vault-token/g" \
-    -e "s|__VAULT_LOGIN_IMAGE__|registry.interna/s2s-vault-login@sha256:...|g" \
-    manifests/55-vault-login-cronjob.yaml | kubectl apply -f -
-
-kubectl -n kuadrant-system create job --from=cronjob/s2s-vault-login s2s-vault-login-manual
-kubectl -n kuadrant-system logs job/s2s-vault-login-manual
-
-kubectl -n kuadrant-system patch authorino authorino --type=merge -p '{"spec":{"evaluatorCacheSize":10}}'
-kubectl -n kuadrant-system rollout status deployment authorino
-
-sed -e "s/__APP_NAMESPACE__/payments/g" \
-    -e "s|__NETWORKING_VAULT_ADDR__|https://vault-noprod.example.cloud:8200|g" \
-    -e "s|__NETWORKING_VAULT_NAMESPACE__|admin/spiffe|g" \
-    -e "s|__NETWORKING_VAULT_SPIFFE_MOUNT__|spiffe|g" \
-    -e "s|__NETWORKING_VAULT_ISSUER__|https://vault-noprod.example.cloud:8200|g" \
-    -e "s|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://s2s.bancogalicia.com.ar/s2s-egress|g" \
-    manifests/45-authpolicy-validator-spiffe.yaml | kubectl apply -f -
-```
-
-Ninguno de los dos lleva `__APP_NAMESPACE__`: con un role único, el `45-` y el `55-` son **uno por
-cluster** y no cambian al sumar un namespace emisor. Es la diferencia operativa más grande con
-`cluster-keys`, donde el `30-` y el `40-` hay que editarlos por cada namespace nuevo.
-
-### Con `cluster-keys`
-
-Por cluster, una vez:
+Después, también por cluster:
 
 ```bash
 sed -e "s/__PEER_JWKS_NAME__/s2s-crc-jwks/" \
@@ -354,23 +199,9 @@ kubectl -n kuadrant-system run jwks-probe --rm -i --image=curlimages/curl --rest
   -s http://__LOCAL_JWKS_NAME__.kuadrant-system.svc.cluster.local:8080/payments/jwks.json
 ```
 
-Con `spiffe`, además:
-
-```bash
-kubectl -n kuadrant-system get secret s2s-vault-token \
-  -o jsonpath='{.data.client_token}' | wc -c
-kubectl -n kuadrant-system get cronjob s2s-vault-login
-kubectl -n kuadrant-system get authorino authorino -o jsonpath='{.spec.evaluatorCacheSize}{"\n"}'
-kubectl -n kuadrant-system run jwks-probe --rm -i --image=curlimages/curl --restart=Never -- \
-  -s __NETWORKING_VAULT_ADDR__/v1/__NETWORKING_VAULT_SPIFFE_MOUNT__/.well-known/keys
-```
-
-El primero cuenta bytes en vez de imprimir el token: es una credencial viva, no algo para dejar en
-el scrollback de una terminal. Un `1` significa que el CronJob todavía no corrió.
-
-Y que el validador quede `Enforced` con un token válido pasando **no prueba que rechace inválidos**.
-La prueba negativa es aparte: cambiar temporalmente el `template` del `spiffe/role/...` a un `sub`
-no autorizado, confirmar el 403, y revertirlo.
+Que el validador quede `Enforced` con un token válido pasando **no prueba que rechace inválidos**.
+La prueba negativa es aparte: firmar un token con un `iss` o un `src_namespace` que el validador no
+tenga habilitado y confirmar el 403.
 
 `Accepted=True` **no** alcanza: la señal que importa es `Enforced=True`. Y una `AuthPolicy` sobre un
 Gateway sin ningún `HTTPRoute` colgado **no enforcea nada** — es el estado normal mientras no haya

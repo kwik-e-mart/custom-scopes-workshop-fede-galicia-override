@@ -117,17 +117,10 @@ correr() {
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
   INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=jwks-egress JWKS_IMAGE=httpd:test \
-  NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
   NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
-  SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   INGRESS_AUTH_POLICY_ENABLED="${INGRESS_AUTH_POLICY_ENABLED:-true}" \
-  NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
-  NETWORKING_VAULT_NAMESPACE=admin/spiffe \
-  NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
-  NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
-  NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   INTERCEPTIONS_JSON='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":50,"ingress_route":"k-8-s-reports-internal"}]' \
   bash -c '
     source "'"$SVC_DIR"'/logging"
@@ -153,17 +146,10 @@ correr_openshift() {  # [interceptions-json]
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
   INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=jwks-egress JWKS_IMAGE=httpd:test \
-  NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
   NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
-  SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
   INGRESS_AUTH_POLICY_ENABLED="${INGRESS_AUTH_POLICY_ENABLED:-true}" \
-  NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
-  NETWORKING_VAULT_NAMESPACE=admin/spiffe \
-  NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
-  NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
-  NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   INTERCEPTIONS_JSON="$reglas" \
   bash -c '
     source "'"$SVC_DIR"'/logging"
@@ -183,16 +169,9 @@ correr_delete() {
   VAULT_SECRET_STORE=vault-ocp-plataforma LOCAL_JWKS_URL=http://jwks.example:8080/payments/jwks.json  \
   KEYS_NAMESPACE=kuadrant-system PEER_JWKS_URL=http://peer-jwks:8080/payments/jwks.json \
   INGRESS_GATEWAY_NAME=s2s-ingress VAULT_KV_MOUNT=kv/eks VAULT_KV_CLUSTER=gal-poc JWKS_SERVICE_NAME=jwks-egress JWKS_IMAGE=httpd:test \
-  NETWORKING_VAULT_ADDR=https://vault.example:8200 NETWORKING_VAULT_NAMESPACE=admin/ocp \
   GATEWAY_NAMESPACE=gateways INGRESS_AUTHPOLICY=s2s-validator \
   EGRESS_AUTHPOLICY=sign ISSUER_DOMAIN=bancogalicia.com.ar \
   NAMESPACE_SETUP_ENABLED="${NAMESPACE_SETUP_ENABLED:-false}" \
-  SIGNING_STRATEGY="${SIGNING_STRATEGY:-spiffe}" \
-  NETWORKING_VAULT_ADDR=https://vault.example.io:8200 \
-  NETWORKING_VAULT_NAMESPACE=admin/spiffe \
-  NETWORKING_VAULT_SPIFFE_MOUNT=spiffe \
-  NETWORKING_VAULT_SPIFFE_ROLE=s2s-egress \
-  NETWORKING_VAULT_TOKEN_SECRET=s2s-vault-token \
   INTERCEPTIONS_JSON='[]' \
   bash -c '
     source "'"$SVC_DIR"'/logging"
@@ -376,7 +355,7 @@ correr_delete() {
 @test "con origen EKS tambien se exige que el validador de ingreso quede Enforced" {
   # Era el agujero: el wait vivia dentro del if de plataforma, asi que con origen EKS el service
   # desviaba el trafico sin haber verificado nunca que el ingreso valide el token.
-  SIGNING_STRATEGY=cluster-keys FALLA_WAIT="authpolicy/s2s-validator-" run correr
+  FALLA_WAIT="authpolicy/s2s-validator-" run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"SIN validar el token"* ]]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
@@ -386,13 +365,13 @@ correr_delete() {
 @test "con origen EKS el validador se espera donde vive la route del scope" {
   # Con origen EKS la route del destino es la del scope y vive en el namespace de la app, asi que
   # el validador que cuelga de ella va ahi y no en el del Gateway.
-  SIGNING_STRATEGY=cluster-keys run correr
+  run correr
   run grep -c -- '-n payments wait --for=condition=Enforced authpolicy/s2s-validator-' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ]
 }
 
 @test "una aplicacion sin auth policy desvia el trafico sin colgar ni esperar el validador" {
-  SIGNING_STRATEGY=cluster-keys INGRESS_AUTH_POLICY_ENABLED=false run correr
+  INGRESS_AUTH_POLICY_ENABLED=false run correr
   [ "$status" -eq 0 ]
   run grep -c '25-authpolicy-validator.yaml' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ] || false
@@ -403,18 +382,18 @@ correr_delete() {
 }
 
 @test "una aplicacion sin auth policy borra el validador que su route tuviera de antes" {
-  SIGNING_STRATEGY=cluster-keys INGRESS_AUTH_POLICY_ENABLED=false run correr
+  INGRESS_AUTH_POLICY_ENABLED=false run correr
   grep -qx -- '-n payments delete authpolicy.kuadrant.io s2s-validator-k-8-s-reports-internal --ignore-not-found' "$KUBECTL_CALLS"
 }
 
 @test "una aplicacion con auth policy no borra su validador" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  run correr
   run grep -c 'delete authpolicy' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
 @test "si no puede borrar el validador viejo NO desvia el trafico" {
-  SIGNING_STRATEGY=cluster-keys INGRESS_AUTH_POLICY_ENABLED=false FALLA_DELETE_VALIDATOR=1 run correr
+  INGRESS_AUTH_POLICY_ENABLED=false FALLA_DELETE_VALIDATOR=1 run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"s2s-validator-k-8-s-reports-internal"* ]] || false
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
@@ -423,7 +402,7 @@ correr_delete() {
 
 @test "el alta del namespace NO se aplica: la hace el chart" {
 
-  SIGNING_STRATEGY=cluster-keys run correr
+  run correr
   for m in 15-keygen-rbac.yaml 16-keygen-jobs.yaml 17-jwks-endpoint.yaml 20-authpolicy.yaml; do
     run grep -c "$m" "$KUBECTL_CALLS"
     [ "$output" -eq 0 ] || false
@@ -431,20 +410,20 @@ correr_delete() {
 }
 
 @test "el DestinationRule del peer lo trae el chart, no el service" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  run correr
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   run grep -c '30-destinationrule-peer.yaml' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
 
 @test "se saca el DestinationRule del peer que hubiera quedado" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  run correr
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q 'delete destinationrule.networking.istio.io/egress-gw-peer --ignore-not-found' "$KUBECTL_CALLS"
 }
 
 @test "el validador y las routes SI se siguen aplicando" {
-  SIGNING_STRATEGY=cluster-keys run correr
+  run correr
   run grep -c '25-authpolicy-validator.yaml' "$KUBECTL_CALLS"
   [ "$output" -ge 1 ] || false
   run grep -c '50-httproute-egress.yaml' "$KUBECTL_CALLS"
@@ -452,7 +431,7 @@ correr_delete() {
 }
 
 @test "si no esta el endpoint de JWKS el apply ABORTA" {
-  SIGNING_STRATEGY=cluster-keys JWKS_AUSENTE=1 run correr
+  JWKS_AUSENTE=1 run correr
   [ "$status" -ne 0 ]
   [[ "$output" == *"no existe el endpoint de JWKS"* ]] || false
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
@@ -469,7 +448,7 @@ correr_delete() {
 
 @test "el Gateway no se borra con el alta delegada al chart" {
   # Es del namespace entero: borrarlo por un delete de instancia deja sin egreso a todas las demas.
-  SIGNING_STRATEGY=cluster-keys ARGS=delete run correr
+  ARGS=delete run correr
   run grep -c 'delete.*gateway.gateway.networking.k8s.io' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
 }
@@ -477,7 +456,7 @@ correr_delete() {
 @test "un error de API al leer el Service corta el apply en vez de seguir con un valor vacio" {
   # Un Forbidden devolvia vacio igual que un Service inexistente: el service acusaba que un destino
   # sano no tenia endpoints, y podia pisar la annotation que guarda el selector original.
-  SIGNING_STRATEGY=cluster-keys FALLA_GET_SVC=1 run correr
+  FALLA_GET_SVC=1 run correr
   [ "$status" -ne 0 ]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
