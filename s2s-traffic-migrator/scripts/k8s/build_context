@@ -125,7 +125,7 @@ fi
 SITE=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.dimensions.site // empty') \
   || { log error "egress-interceptor: no se pudo leer la dimension site de la notificacion."; exit 1; }
 if [ -z "$SITE" ]; then
-  log error "egress-interceptor: la instancia no declara la dimension 'site'. Es obligatoria: de ahi sale en que plataforma corre y en que carpeta del repo gitops se publica."
+  log error "egress-interceptor: la instancia no declara la dimension 'site'. Es obligatoria: de ahi sale en que plataforma corre."
   exit 1
 fi
 case "$SITE" in
@@ -270,30 +270,6 @@ if [ -z "$PEER_JWKS_URL" ] && [ -n "$PEER_CLUSTER" ]; then
   PEER_JWKS_URL="http://${JWKS_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:8080/${PEER_CLUSTER}/${NAMESPACE}/jwks.json"
 fi
 require_match "$EGRESS_ISSUER" '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' "egress_issuer_url"
-
-gitops_substrate_hint() {
-  printf %s "$SITE"
-}
-
-GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
-GITOPS_PATH_PREFIX="${GITOPS_PATH_PREFIX:-}"
-GITOPS_PUSH_RETRIES="${GITOPS_PUSH_RETRIES:-5}"
-
-if [ -n "${GITOPS_REPO_URL:-}" ]; then
-  require_match "$GITOPS_BRANCH" '^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$' "gitops_branch"
-  require_match "$GITOPS_PUSH_RETRIES" '^[1-9][0-9]?$' "gitops_push_retries"
-  if [ -n "$GITOPS_PATH_PREFIX" ]; then
-    require_match "$GITOPS_PATH_PREFIX" '^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$' "gitops_path_prefix"
-    case "$GITOPS_PATH_PREFIX" in
-      *..*)
-        log error "egress-interceptor: GITOPS_PATH_PREFIX no puede contener '..'."
-        exit 1 ;;
-    esac
-  fi
-  log info "gitops: se publica en ${GITOPS_PATH_PREFIX:+${GITOPS_PATH_PREFIX%/}/}$(gitops_substrate_hint)/${NAMESPACE} (branch ${GITOPS_BRANCH})"
-fi
-
-export GITOPS_BRANCH GITOPS_PATH_PREFIX GITOPS_PUSH_RETRIES
 
 INTERCEPTIONS_JSON=$(printf %s "$INTERCEPTIONS_JSON" | jq -c '
   map(((.service_name // "") | tostring | ascii_downcase | sub("\\.+$"; "")) as $raw

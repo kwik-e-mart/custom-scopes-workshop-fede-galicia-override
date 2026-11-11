@@ -4,7 +4,6 @@ set -euo pipefail
 ACTION="${ARGS:-${1:-apply}}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/manifests_lib"
-source "$HERE/gitops_lib"
 
 GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
@@ -207,8 +206,6 @@ delete_route_validators() {
 }
 
 if [ "$ACTION" = "delete" ]; then
-  gitops_publish_removal \
-    || die "falló la publicación del borrado al repo gitops. No se borró nada del cluster."
   # Revertir ANTES de borrar el Gateway: al revés, el Service queda apuntando a un selector sin
   # endpoints y el namespace pierde el servicio.
   #
@@ -458,8 +455,6 @@ mkdir -p "$SERVICES_DIR"
 rm -f "$SERVICES_DIR"/*.yaml
 render_manifests_from "$SERVICES_MANIFESTS_DIR" "$RENDER_CONTEXT" "$SERVICES_DIR" >/dev/null \
   || die "falló el render de los Services del interceptor. No se aplicó nada."
-gitops_publish "$RENDER_CONTEXT" "$MANIFEST_DIR" \
-  || die "falló la publicación de los manifiestos al repo gitops. NO se aplicó nada."
 if [ -f "$SERVICES_DIR/70-service-local.yaml" ]; then
   apply_manifests "$SERVICES_DIR/70-service-local.yaml" \
     || die "no se pudieron crear los alias <svc>-local; sin ellos el ingreso se queda sin backend."

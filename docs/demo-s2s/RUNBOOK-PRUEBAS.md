@@ -170,33 +170,6 @@ acción de `egress-eks` la toma el agente de EKS y la de `egress-crc` la de CRC.
 prender uno por vez porque el selector era sólo `role=egress-interceptor` y la acción podía caer
 en el cluster equivocado sin fallar.
 
-### La config del publisher gitops sale del `.env`
-
-Los launchers leen el **`.env` de la raíz del repo** — gitignoreado, porque la URL lleva el token
-adentro— y de ahí sacan la configuración del publisher. No hay que exportar nada a mano:
-
-| variable | qué es |
-|---|---|
-| `GITOPS_REPO_URL` | repo donde se publican los manifiestos, con la credencial en la URL. **Sin ella el publisher queda apagado** y el reconcile anda como siempre. |
-| `GITOPS_BRANCH` | rama destino. Default `main`. |
-| `GITOPS_PATH_PREFIX` | subdirectorio raíz. Opcional. |
-| `GITOPS_PUSH_RETRIES` | reintentos ante contención. Opcional, default `5`. |
-
-Dos detalles del mecanismo, los dos deliberados:
-
-- **Lo que ya esté exportado en el shell gana sobre el archivo.** Sirve para apuntar a otro repo por
-  una corrida sin editar nada.
-- **El `.env` no se ejecuta**: los launchers leen sólo las asignaciones de esas cuatro claves. Una
-  línea con un comando no corre, y `NP_TOKEN` u otras variables del archivo no se cargan.
-
-⚠️ **La rama destino tiene que existir en el remoto.** El publisher clona con `--branch`, así que
-una rama inexistente aborta el reconcile. El launcher lo chequea antes de arrancar el agente y te
-dice cómo crearla:
-
-```bash
-git push origin HEAD:refs/heads/<rama>
-```
-
 ### Levantar los agentes
 
 Cada uno en **su propia terminal**, desde la raíz del repo:
@@ -213,17 +186,6 @@ export NP_API_KEY="$(cat accounts/galicia/np-api-skill.key)"
 kubectl config use-context crc-admin      # el de CRC valida el current-context y aborta si no coincide
 ./services/egress-interceptor/start-agent-crc.sh
 ```
-
-Con el publisher configurado, cada launcher imprime al arrancar a dónde va a publicar, con la
-credencial tapada:
-
-```
-gitops: config leída de /…/galicia-banco/.env
-gitops: publicando a https://***@github.com/nullplatform/galicia-banco
-gitops: branch feature/gitops, prefijo gitops_manifests
-```
-
-Si no ves esas líneas, el publisher está apagado y los manifiestos sólo se aplican al cluster.
 
 Usan puertos distintos (8182 y 8181), así que no chocan. El de EKS se arma su propio kubeconfig y
 no le importa el `current-context`; el de CRC sí lo mira.
