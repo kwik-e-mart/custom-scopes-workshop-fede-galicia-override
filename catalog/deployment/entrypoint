@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CONTROL_NULL_URL="https://control-null-devo-devops-dev.apps.paas-dev.bancogalicia.com.ar/notification"
+CONTROL_NULL_URL="https://control-null-devo-devops-dev.apps.paas-dev.bancogalicia.com.ar/notifications"
 NP_API_URL="${NP_API_URL:-https://api.nullplatform.com}"
 
 if [ -z "${NP_ACTION_CONTEXT:-}" ]; then
@@ -80,7 +80,7 @@ echo "Notifying control-null for deployment $(echo "$CONTEXT" | jq -r .deploymen
 response_file=$(mktemp)
 trap 'rm -f "$response_file"' EXIT
 
-CONTROL_NULL_CODE=$(curl -s -o "$response_file" -w "%{http_code}" -X POST "$CONTROL_NULL_URL" \
+CONTROL_NULL_CODE=$(curl -k -s -o "$response_file" -w "%{http_code}" -X POST "$CONTROL_NULL_URL" \
     -H "Content-Type: application/json" \
     --data-binary "$control_null_body") || CONTROL_NULL_CODE="000"
 
@@ -104,7 +104,7 @@ payload=$(jq -n \
 
 echo "Updating hook with status: $STATUS. URL: $CALLBACK_URL"
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
+HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -X PATCH "$CALLBACK_URL" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary "$payload") || HTTP_CODE="000"

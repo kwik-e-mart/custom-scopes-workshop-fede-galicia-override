@@ -40,6 +40,6 @@ variable "base_clone_path" {
 
 variable "entrypoint_path" {
   type        = string
-  default     = "catalog/deployment/entrypoint"
+  default     = "galicia-deployment-override/catalog/deployment/entrypoint"
   description = "Ruta del entrypoint dentro del repo."
 }

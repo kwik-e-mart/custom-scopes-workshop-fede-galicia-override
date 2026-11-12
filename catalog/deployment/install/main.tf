@@ -12,10 +12,15 @@ resource "nullplatform_entity_hook_action" "deployment_update" {
 module "channel_api_key" {
   source = "git::https://github.com/nullplatform/tofu-modules.git//nullplatform/api_key?ref=v4.5.1"
 
-  type              = "custom"
-  nrn               = var.nrn
-  custom_name       = "DEPLOYMENT-NOTIFICATION-CHANNEL-CONTROL-NULL"
-  custom_role_slugs = ["controlplane:agent", "ops"]
+  type        = "custom"
+  custom_name = "DEPLOYMENT-NOTIFICATION-CHANNEL-CONTROL-NULL"
+  # custom_grants instead of nrn: the module's nrn path requires an account-level NRN
+  custom_grants = [
+    for role in ["controlplane:agent", "ops"] : { nrn = var.nrn, role_slug = role }
+  ]
+  custom_tags = [
+    for part in split(":", var.nrn) : { key = split("=", part)[0], value = split("=", part)[1] }
+  ]
 }
 
 resource "terraform_data" "agent_api_key_trigger" {
