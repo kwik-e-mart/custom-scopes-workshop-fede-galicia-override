@@ -22,7 +22,7 @@ load_external_notification() {
 subscriber_url() {
   local dimension environment url="${API_SUBSCRIBER_URL-}"
   if [ -z "$url" ]; then
-    dimension=$(echo "$NOTIFICATION" | jq -r '.service.dimensions.environment // empty')
+    dimension=$(notification_field '.service.dimensions.environment')
     environment=$(publish_environment_of "$dimension") \
       || reject "la dimensión environment '$dimension' del service no corresponde a dev, int, qas ni prd."
     url=$(apim_url_of "$environment" subscriber)
@@ -34,7 +34,7 @@ subscriber_url() {
 }
 
 list_apim_plans() {
-  local url response code body
+  local url response code body no_response="el API Subscriber no respondió a GET /v1/plans."
   url=$(subscriber_url)
   local args=(-sS --connect-timeout "$PLANS_CONNECT_TIMEOUT" --max-time "$PLANS_MAX_TIME"
     -w '\n%{http_code}' -H "Accept: application/json" "$url/v1/plans")
@@ -44,23 +44,24 @@ list_apim_plans() {
   echo "external: GET $url/v1/plans" >&2
   if [ -n "${API_SUBSCRIBER_TOKEN-}" ]; then
     response=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" | curl --config - "${args[@]}") \
-      || reject "el API Subscriber no respondió a GET /v1/plans."
+      || reject "$no_response"
   else
-    response=$(curl "${args[@]}") || reject "el API Subscriber no respondió a GET /v1/plans."
+    response=$(curl "${args[@]}") || reject "$no_response"
   fi
   code="${response##*$'\n'}"
   body="${response%$'\n'*}"
   if [ "$code" != "200" ]; then
     reject "GET /v1/plans respondió HTTP $code: $(apim_problem_detail "$body")"
   fi
-  echo "$body" | jq -ce '{plans: [.items[]? | select(.id | type == "string")
-      | {const: .id, title: (if .maxTps == null then "\(.id) (sin límite)" else "\(.id) (\(.maxTps) TPS)" end)}]}
+  echo "$body" | jq -ce --arg pattern "$PLAN_ID_PATTERN" '{plans: [.items[]? | objects | select(.id | type == "string" and test($pattern))
+      | {const: .id, title: (if .maxTps == null then "\(.id) (sin límite)" else "\(.id) (\(.maxTps) TPS)" end)}]
+      | unique_by(.const)}
     | select(.plans | length > 0)' \
     || reject "GET /v1/plans no devolvió planes."
 }
 
 load_external_notification
-ACTION=$(echo "$NOTIFICATION" | jq -r '.action // empty')
+ACTION=$(notification_field '.action')
 case "$ACTION" in
   list-apim-plans) list_apim_plans ;;
   *) reject "acción external no soportada: '$ACTION'." ;;
