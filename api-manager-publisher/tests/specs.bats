@@ -89,10 +89,30 @@ setup() {
 
 @test "el link pide el ticket y plan y guarda la suscripcion" {
   [ "$(jq -c '.attributes.schema.required | sort' "$CONNECT")" = '["approval_ref","plan_id"]' ]
-  [ "$(jq -c '[.attributes.schema.properties.plan_id.oneOf[].const]' "$CONNECT")" = '["bronze","gold","no-limits"]' ]
   [ "$(jq -c '.attributes.schema.properties.owns_subscription | {type, visibleOn}' "$CONNECT")" = '{"type":"boolean","visibleOn":[]}' ]
   [ "$(jq -c '.attributes.schema.properties.approval_ref | has("pattern")' "$CONNECT")" = "false" ]
   [ "$(jq -c '[.attributes.schema.properties.approval_ref.editableOn, .attributes.schema.properties.plan_id.editableOn]' "$CONNECT")" = '[["create","update"],["create","update"]]' ]
+}
+
+@test "los planes del link salen de APIM a traves del agente" {
+  [ "$(jq -r '.external.action' "$CONNECT")" = "list-apim-plans" ]
+  [ "$(jq -c '.external.output_schema.required' "$CONNECT")" = '["plans"]' ]
+  [ "$(jq -c '.external.output_schema.properties.plans.items.required' "$CONNECT")" = '["const","title"]' ]
+  local options
+  options=$(jq -r '.attributes.schema.properties.plan_id.additionalKeywords.oneOf' "$CONNECT")
+  [ "$(jq -c "$options" <<<'{"external":{"plans":[{"const":"platinum","title":"platinum (50 TPS)"}]}}')" = '[{"const":"platinum","title":"platinum (50 TPS)"}]' ]
+}
+
+@test "si el agente no trae los planes el link ofrece los conocidos" {
+  local options
+  options=$(jq -r '.attributes.schema.properties.plan_id.additionalKeywords.oneOf' "$CONNECT")
+  [ "$(jq -c "[$options | .[].const]" <<<'{}')" = '["bronze","gold","no-limits"]' ]
+}
+
+@test "el channel de la instalacion manda la accion del link al handler external" {
+  local install="${BATS_TEST_DIRNAME}/../specs/install/main.tf"
+  grep -q "\"\$in\" = \\[\"$(jq -r '.external.action' "$CONNECT")\"\\]" "$install"
+  grep -q '/entrypoint/external"' "$install"
 }
 
 @test "el link explica el ticket de suscripcion y que tiene que estar aprobado" {

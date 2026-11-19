@@ -35,3 +35,37 @@ module "service_definition_agent_association" {
   base_clone_path              = var.base_clone_path
   tags_selectors               = var.tags_selectors
 }
+
+resource "terraform_data" "external_api_key_trigger" {
+  input = module.actions_api_key.api_key
+}
+
+resource "nullplatform_notification_channel" "external" {
+  nrn    = var.nrn
+  type   = "agent"
+  source = ["service"]
+
+  configuration {
+    agent {
+      api_key = module.actions_api_key.api_key
+      command {
+        type = "exec"
+        data = {
+          cmdline     = "${var.base_clone_path}/${var.repository_service_spec_repo}/${var.service_path}/entrypoint/external"
+          arguments   = jsonencode([])
+          environment = jsonencode({ NP_ACTION_CONTEXT = "'$${NOTIFICATION_CONTEXT}'" })
+        }
+      }
+
+      selector = var.tags_selectors
+    }
+  }
+
+  filters = jsonencode({
+    action = { "$in" = ["list-apim-plans"] }
+  })
+
+  lifecycle {
+    replace_triggered_by = [terraform_data.external_api_key_trigger]
+  }
+}

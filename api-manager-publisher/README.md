@@ -26,6 +26,9 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
 - **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. Editar el link cambia el plan
   con el ticket que autoriza el cambio. El unlink da de baja la suscripción solo si ese link la creó.
+- **Los planes del link salen de APIM.** Al abrir el formulario del link, nullplatform le pide al agente los planes
+  (`external` del link spec, acción `list-apim-plans`) y `entrypoint/external` los trae de `GET /v1/plans` del API
+  Subscriber del ambiente del service. Si el agente no responde, el desplegable ofrece bronze, gold y no-limits.
 
 Qué se manda a APIM y de dónde sale:
 
@@ -98,6 +101,9 @@ cd specs/install
 cp terraform.tfvars.example terraform.tfvars   # np_api_key, nrn y tags_selectors
 tofu init && tofu apply
 ```
+
+La instalación crea además el channel `list-apim-plans`, que manda al agente los pedidos de planes del formulario del
+link. Va aparte del channel del servicio porque esos pedidos no traen el slug del service specification.
 
 ## Migración desde la versión anterior
 
