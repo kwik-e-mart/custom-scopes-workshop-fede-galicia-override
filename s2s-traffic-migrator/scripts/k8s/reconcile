@@ -86,7 +86,7 @@ revert_service() {
     log error "egress-interceptor: el selector de '$svc' no volvió a '$orig'. La annotation se deja."
     exit 1
   fi
-  kubectl -n "$NAMESPACE" annotate svc "$svc" "${ORIGINAL_SELECTOR_ANNOTATION}-"
+  kubectl -n "$NAMESPACE" annotate svc "$svc" "${ORIGINAL_SELECTOR_ANNOTATION}-" "${INSTANCE_KEY}-"
 }
 
 # En OpenShift el Service ya existe y se le roba el selector. En EKS no hay nada que robar: la app
@@ -281,7 +281,7 @@ if [ "$ACTION" = "delete" ]; then
   STILL_HIJACKED=$(printf %s "$SVC_JSON" \
     | jq -r --arg sel "$GATEWAY_SELECTOR" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" '.items[]
         | select((.metadata.labels // {})["gateway.networking.k8s.io/gateway-name"] | not)
-        | select(((.metadata.annotations // {})[$k] == $id) or ((.metadata.labels // {})[$k] == $id))
+        | select((((.metadata.annotations // {})[$k] // (.metadata.labels // {})[$k]) // $id) == $id)
         | select((.spec.selector // {}) == ($sel | fromjson)) | .metadata.name') \
     || die "no se pudo interpretar el listado de Services de $NAMESPACE."
   if [ -n "$STILL_HIJACKED" ]; then
@@ -609,7 +609,8 @@ for svc in $DECLARED_SERVICES; do
     [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }
     # ANTES del swap y con el fallo cortando: si la annotation no queda y el selector sí cambia,
     # el Service apunta al Gateway sin ningún registro de su selector original — irrecuperable.
-    kubectl -n "$NAMESPACE" annotate svc "$svc" "$ORIGINAL_SELECTOR_ANNOTATION=$CURRENT_SELECTOR" --overwrite \
+    kubectl -n "$NAMESPACE" annotate svc "$svc" \
+      "$ORIGINAL_SELECTOR_ANNOTATION=$CURRENT_SELECTOR" "$INSTANCE_KEY=$SERVICE_ID" --overwrite \
       || die "no se pudo anotar el selector original de '$svc'. NO se desvía: sin ese dato no habría vuelta atrás."
   fi
   set_selector "$svc" "$GATEWAY_SELECTOR" \
