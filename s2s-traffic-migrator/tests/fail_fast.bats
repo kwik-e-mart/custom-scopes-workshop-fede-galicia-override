@@ -22,6 +22,7 @@ setup() {
   # prueba su ausencia lo reemplaza.
   export FALLA_GRANTS=""   # simula no tener RBAC para listarlos
   export FAKE_GRANTS="$BATS_TEST_TMPDIR/grants.json"
+  export FAKE_SVC_JSON="$BATS_TEST_TMPDIR/svcjson"; printf '%s' '{"items":[]}' >"$FAKE_SVC_JSON"
   printf '%s' '{"items":[{"metadata":{"name":"payments-to-li","namespace":"example"},"spec":{"from":[{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","namespace":"payments"}],"to":[{"group":"","kind":"Service","name":"li"}]}}]}' >"$FAKE_GRANTS"
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
@@ -72,7 +73,7 @@ case "$*" in
   *"get svc reports -o jsonpath"*"annotations"*)    : ;;   # todavía sin anotar
   *"get svc reports -o json"*)
     echo '{"metadata":{"name":"reports","namespace":"payments"},"spec":{"selector":{"app":"reports"},"ports":[{"name":"http","port":8080,"targetPort":8080,"protocol":"TCP"}]}}' ;;
-  *"get svc -o json"*)   echo '{"items":[]}' ;;
+  *"get svc -o json"*)   cat "$FAKE_SVC_JSON" ;;
   *"get authpolicy.kuadrant.io -l egress-interceptor/managed=true"*)
     # El reconcile espera Enforced en cada validador que emitió; el mock lista el de esta route.
     printf 's2s-validator-k-8-s-reports-internal' ;;
@@ -108,7 +109,7 @@ MOCK
 # Corre el reconcile como lo corre el runner: con errexit NEUTRALIZADO.
 correr() {
   ARGS=apply \
-  NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
+  NAMESPACE=payments SERVICE_ID=svc-test SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
   WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example PEER_INGRESS_HOST=s2s.peer.example LOCAL_INGRESS_HOST=li.example \
@@ -137,7 +138,7 @@ correr_openshift() {  # [interceptions-json]
     reglas='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":100}]'
   fi
   ARGS=apply \
-  NAMESPACE=payments SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
+  NAMESPACE=payments SERVICE_ID=svc-test SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
   WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example PEER_INGRESS_HOST=s2s.peer.example LOCAL_INGRESS_HOST=li.example \
@@ -160,7 +161,7 @@ correr_openshift() {  # [interceptions-json]
 # Igual que `correr`, pero por la rama de delete.
 correr_delete() {
   ARGS=delete \
-  NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
+  NAMESPACE=payments SERVICE_ID=svc-test SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
   WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example PEER_INGRESS_HOST=s2s.peer.example LOCAL_INGRESS_HOST=li.example \
@@ -460,4 +461,23 @@ correr_delete() {
   [ "$status" -ne 0 ]
   run grep -c ' patch svc ' "$KUBECTL_CALLS"
   [ "$output" -eq 0 ]
+}
+
+@test "al hijackear se anota TAMBIEN el dueño: si no, nadie vuelve a reconocer ese Service" {
+  run correr_openshift
+  [ "$status" -eq 0 ] || false
+  grep ' annotate svc ' "$KUBECTL_CALLS" | grep -q 'egress-interceptor/instance=svc-test' || false
+}
+
+@test "el delete ABORTA si un Service apunta al Gateway y no tiene dueño" {
+  printf '%s' '{"items":[{"metadata":{"name":"legado","annotations":{"egress-interceptor/original-selector":"{\"app\":\"legado\"}"}},"spec":{"selector":{"gateway.networking.k8s.io/gateway-name":"egress-gw"}}}]}' >"$FAKE_SVC_JSON"
+  run correr_delete
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"legado"* ]] || false
+}
+
+@test "el delete NO se bloquea por un Service hijackeado de otra instancia" {
+  printf '%s' '{"items":[{"metadata":{"name":"de-otro","annotations":{"egress-interceptor/original-selector":"{\"app\":\"x\"}","egress-interceptor/instance":"svc-otro"}},"spec":{"selector":{"gateway.networking.k8s.io/gateway-name":"egress-gw"}}}]}' >"$FAKE_SVC_JSON"
+  run correr_delete
+  [ "$status" -eq 0 ] || false
 }

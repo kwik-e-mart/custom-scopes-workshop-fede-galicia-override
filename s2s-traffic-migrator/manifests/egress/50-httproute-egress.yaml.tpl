@@ -28,6 +28,7 @@ metadata:
   namespace: {{ $.namespace | quote }}
   labels:
     {{ $.managed_label }}: "true"
+    {{ $.instance_key }}: {{ $.service_id | quote }}
     nullplatform: "true"
 spec:
   parentRefs:

@@ -45,6 +45,7 @@ render() {
     sigla:(env.SIGLA_CTX // ""),
     ingress_auth_policy_enabled:(env.INGRESS_AUTH_POLICY_CTX // "true"),
     managed_label:"egress-interceptor/managed",
+    instance_key:"egress-interceptor/instance", service_id:"svc-test",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
   # Como en producción: se rendea el directorio entero y se concatena. Las aserciones siguen
   # mirando el stream completo, así que lo que se asserta es lo que se termina aplicando.
@@ -75,6 +76,7 @@ rendered_files() {
     egress_authpolicy:"sign", issuer_domain:"bancogalicia.com.ar", namespace_setup_enabled:"false",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
+    instance_key:"egress-interceptor/instance", service_id:"svc-test",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
   local out="$BATS_TEST_TMPDIR/out2"
   rm -rf "$out"
@@ -917,4 +919,36 @@ sin_sigla() {
     grep -q '{ name: PEER_TLS_MODE, type: environment }' "$dir/$f" \
       || { echo "falta PEER_TLS_MODE en el output de $f" >&2; false; }
   done
+}
+
+dueno_de() {  # <render> <kind> <nombre>
+  doc "$1" "$2" "$3" | yq '.metadata.labels["egress-interceptor/instance"] // ""'
+}
+
+@test "cada objeto por intercepción lleva el dueño: sin él, otra instancia del namespace lo barre" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  [ "$(dueno_de "$output" HTTPRoute egress-gw-reports)" = svc-test ] || false
+  [ "$(dueno_de "$output" AuthPolicy s2s-validator-k-8-s-reports-internal)" = svc-test ] || false
+}
+
+@test "la route de ingreso de OpenShift también lleva el dueño" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  [ "$(dueno_de "$output" HTTPRoute s2s-ingress-reports)" = svc-test ] || false
+}
+
+@test "los objetos compartidos del namespace NO llevan dueño: los aplican todas las instancias" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  [[ "$(doc "$output" Gateway egress-gw)" != *"egress-interceptor/instance"* ]] || false
+  [[ "$(doc "$output" DestinationRule egress-gw-local-ingress)" != *"egress-interceptor/instance"* ]] || false
+}
+
+@test "el DestinationRule del peer tampoco lleva dueño" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  local dr; dr=$(doc "$output" DestinationRule egress-gw-peer)
+  [ -n "$dr" ] || false
+  [[ "$dr" != *"egress-interceptor/instance"* ]]
 }
