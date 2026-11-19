@@ -86,7 +86,7 @@ require_parent_refs() {
     fail "publisher: GATEWAY_NAMESPACE inválido: '$namespace'."
   fi
   PARENT_REFS=$(jq -nc --arg name "$gateway" --arg namespace "$namespace" \
-    '[{group: "gateway.networking.k8s.io", kind: "Gateway", name: $name, namespace: $namespace}]')
+    '[{group: "gateway.networking.k8s.io", kind: "Gateway", name: $name, namespace: $namespace, sectionName: "test"}]')
 }
 
 require_scope_destination() {
