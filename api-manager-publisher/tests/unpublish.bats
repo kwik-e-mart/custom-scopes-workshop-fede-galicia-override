@@ -86,6 +86,13 @@ JSON
   [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
 }
 
+@test "un legajo que empieza con a tambien es valido en la baja" {
+  set_user_email a1015317@bancogalicia.com.ar
+  queue_response 202 "$(deleting)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "a1015317" ]
+}
+
 @test "un mail que no es de legajo falla sin llamar a APIM" {
   set_user_email alejandro.durante@bancogalicia.com.ar
   run_step
