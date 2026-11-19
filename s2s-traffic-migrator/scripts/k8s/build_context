@@ -22,18 +22,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/defaults"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/sigla"
 SIGLA=$(resolve_sigla "$CONTEXT")
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/application_type"
-APPLICATION_TYPE=$(resolve_application_type "$CONTEXT")
-INGRESS_AUTH_POLICY_ENABLED=true
-if application_type_skips_auth_policy "$APPLICATION_TYPE"; then
-  INGRESS_AUTH_POLICY_ENABLED=false
-  log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE; sus routes de ingreso quedan sin validador y la autenticación queda en la aplicación."
-elif [ -z "$APPLICATION_TYPE" ]; then
-  log info "egress-interceptor: la aplicación no declara application_type en su metadata; sus routes de ingreso llevan el validador."
-else
-  log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE; sus routes de ingreso llevan el validador."
-fi
-
 PEER_CA_SECRET="${PEER_CA_SECRET:-s2s-remote-ca}"
 PEER_TLS_MODE="${PEER_TLS_MODE-certificate}"
 case "$PEER_TLS_MODE" in
@@ -107,6 +95,22 @@ case "$SITE" in
     exit 1 ;;
 esac
 export SITE PLATFORM
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../shared/scripts/application_type"
+APPLICATION_TYPE=$(resolve_application_type "$CONTEXT")
+INGRESS_AUTH_POLICY_ENABLED=true
+if application_type_skips_auth_policy "$APPLICATION_TYPE"; then
+  if [ "$PLATFORM" = "eks" ]; then
+    INGRESS_AUTH_POLICY_ENABLED=false
+    log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE y en EKS la route de ingreso ya existía; queda sin validador y la autenticación queda en la aplicación."
+  else
+    log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE, pero en $PLATFORM la route de ingreso la crea el interceptor: lleva el validador igual para no abrir un camino que antes no existía."
+  fi
+elif [ -z "$APPLICATION_TYPE" ]; then
+  log info "egress-interceptor: la aplicación no declara application_type en su metadata; sus routes de ingreso llevan el validador."
+else
+  log info "egress-interceptor: la aplicación es de tipo $APPLICATION_TYPE; sus routes de ingreso llevan el validador."
+fi
 # Cómo se identifica ESTE cluster en el header x-s2s-cluster. Se calcula DESPUÉS de SITE: con
 # `set -u`, leerlo antes aborta el script con "unbound variable".
 CLUSTER_LABEL="${CLUSTER_LABEL:-$SITE}"
