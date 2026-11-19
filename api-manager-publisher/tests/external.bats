@@ -120,3 +120,10 @@ run_handler() {
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
+
+@test "no ofrece planes que el link despues rechazaria ni los repite" {
+  queue_response 200 '{"items":[{"id":"gold","maxTps":20},{"id":"gold plus","maxTps":30},{"id":"gold","maxTps":20},"roto",{"maxTps":1}]}'
+  run_handler
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.plans[].const]' <<<"$output")" = '["gold"]' ]
+}
