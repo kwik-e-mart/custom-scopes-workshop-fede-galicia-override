@@ -1,0 +1,67 @@
+#!/bin/bash
+set -euo pipefail
+
+SERVICE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SERVICE_PATH/scripts/subscriber_lib"
+
+PLANS_CONNECT_TIMEOUT=5
+PLANS_MAX_TIME=15
+
+reject() {
+  echo "external: $1" >&2
+  exit 1
+}
+
+load_external_notification() {
+  NOTIFICATION=$(echo "${NP_ACTION_CONTEXT-}" | sed "s/^'//;s/'$//" | jq -c '.notification // empty' 2>/dev/null) || NOTIFICATION=""
+  if [ -z "$NOTIFICATION" ]; then
+    reject "NP_ACTION_CONTEXT no es JSON válido o no trae .notification."
+  fi
+}
+
+subscriber_url() {
+  local dimension environment url="${API_SUBSCRIBER_URL-}"
+  if [ -z "$url" ]; then
+    dimension=$(echo "$NOTIFICATION" | jq -r '.service.dimensions.environment // empty')
+    environment=$(publish_environment_of "$dimension") \
+      || reject "la dimensión environment '$dimension' del service no corresponde a dev, int, qas ni prd."
+    url=$(apim_url_of "$environment" subscriber)
+  fi
+  if [[ "$url" != https://* ]]; then
+    reject "la URL del API Subscriber '$url' tiene que ser https; no se manda el token por un canal sin cifrar."
+  fi
+  echo "$url"
+}
+
+list_apim_plans() {
+  local url response code body
+  url=$(subscriber_url)
+  local args=(-sS --connect-timeout "$PLANS_CONNECT_TIMEOUT" --max-time "$PLANS_MAX_TIME"
+    -w '\n%{http_code}' -H "Accept: application/json" "$url/v1/plans")
+  if [ "${APIM_TLS_INSECURE-false}" = "true" ]; then
+    args+=(-k)
+  fi
+  echo "external: GET $url/v1/plans" >&2
+  if [ -n "${API_SUBSCRIBER_TOKEN-}" ]; then
+    response=$(printf 'header = "Authorization: Bearer %s"\n' "$API_SUBSCRIBER_TOKEN" | curl --config - "${args[@]}") \
+      || reject "el API Subscriber no respondió a GET /v1/plans."
+  else
+    response=$(curl "${args[@]}") || reject "el API Subscriber no respondió a GET /v1/plans."
+  fi
+  code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  if [ "$code" != "200" ]; then
+    reject "GET /v1/plans respondió HTTP $code: $(apim_problem_detail "$body")"
+  fi
+  echo "$body" | jq -ce '{plans: [.items[]? | select(.id | type == "string")
+      | {const: .id, title: (if .maxTps == null then "\(.id) (sin límite)" else "\(.id) (\(.maxTps) TPS)" end)}]}
+    | select(.plans | length > 0)' \
+    || reject "GET /v1/plans no devolvió planes."
+}
+
+load_external_notification
+ACTION=$(echo "$NOTIFICATION" | jq -r '.action // empty')
+case "$ACTION" in
+  list-apim-plans) list_apim_plans ;;
+  *) reject "acción external no soportada: '$ACTION'." ;;
+esac

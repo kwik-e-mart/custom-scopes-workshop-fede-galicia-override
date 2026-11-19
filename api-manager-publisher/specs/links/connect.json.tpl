@@ -3,6 +3,36 @@
   "unique": false,
   "assignable_to": "any",
   "use_default_actions": true,
+  "external": {
+    "action": "list-apim-plans",
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "plans"
+      ],
+      "properties": {
+        "plans": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "const",
+              "title"
+            ],
+            "properties": {
+              "const": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "attributes": {
     "schema": {
       "type": "object",
@@ -29,20 +59,9 @@
             "update"
           ],
           "description": "TPS máximo para tu namespace sobre esta API.",
-          "oneOf": [
-            {
-              "const": "bronze",
-              "title": "bronze (5 TPS)"
-            },
-            {
-              "const": "gold",
-              "title": "gold (20 TPS)"
-            },
-            {
-              "const": "no-limits",
-              "title": "no-limits (sin límite)"
-            }
-          ]
+          "additionalKeywords": {
+            "oneOf": ".external.plans // [{\"const\":\"bronze\",\"title\":\"bronze (5 TPS)\"},{\"const\":\"gold\",\"title\":\"gold (20 TPS)\"},{\"const\":\"no-limits\",\"title\":\"no-limits (sin límite)\"}]"
+          }
         },
         "subscription_id": {
           "type": "string",
