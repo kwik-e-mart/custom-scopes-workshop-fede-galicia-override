@@ -10,6 +10,7 @@ metadata:
   namespace: {{ $.namespace | quote }}
   labels:
     {{ $.managed_label }}: "true"
+    {{ $.instance_key }}: {{ $.service_id | quote }}
     {{ $.role_label }}: local-alias
     nullplatform: "true"
 spec:

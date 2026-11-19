@@ -8,6 +8,7 @@ source "$HERE/manifests_lib"
 GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
+INSTANCE_KEY="egress-interceptor/instance"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
 MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io"
 GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
@@ -19,6 +20,13 @@ GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\
 # El `exit` explícito SÍ corta la corrida (por eso el delete usa `return 0` al final, a propósito).
 # Conclusión operativa: todo comando cuyo fallo importe se guarda a mano con `|| die`.
 die() { log error "$@"; exit 1; }
+
+[ -n "${SERVICE_ID:-}" ] \
+  || die "egress-interceptor: falta service.id. Sin el no hay forma de distinguir los objetos de esta instancia de los de otra en el mismo namespace."
+
+owned_selector() {
+  printf '%s=true,%s=%s' "$MANAGED_LABEL" "$INSTANCE_KEY" "$SERVICE_ID"
+}
 
 # --type=json y no merge: un merge patch FUSIONA el mapa del selector en vez de reemplazarlo, y
 # el Service se queda sin endpoints. Sólo parecía andar mientras ambos selectores compartían la
@@ -161,12 +169,18 @@ route_conditions() {  # <ns> <route>
 }
 
 intercepted_services() {
-  kubectl -n "$NAMESPACE" get svc -o json \
-    | jq -r ".items[] | select(.metadata.annotations[\"$ORIGINAL_SELECTOR_ANNOTATION\"]) | .metadata.name"
+  local json
+  json=$(kubectl -n "$NAMESPACE" get svc -o json) || return 1
+  printf %s "$json" \
+    | jq -r --arg a "$ORIGINAL_SELECTOR_ANNOTATION" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" \
+        '.items[]
+         | select((.metadata.annotations // {})[$a])
+         | select((.metadata.annotations // {})[$k] == $id)
+         | .metadata.name'
 }
 
 own_gateway_services() {
-  kubectl -n "$NAMESPACE" get svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=gateway-service" \
+  kubectl -n "$NAMESPACE" get svc -l "$(owned_selector),${ROLE_LABEL}=gateway-service" \
     -o jsonpath='{.items[*].metadata.name}'
 }
 
@@ -178,8 +192,39 @@ delete_own_services() {  # <rol>
   # `!gateway.networking.k8s.io/gateway-name` excluye lo que auto-provisiona Istio para el
   # Gateway: hereda nuestras labels y no es nuestro para borrar.
   kubectl -n "$NAMESPACE" delete svc \
-    -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=$1,!gateway.networking.k8s.io/gateway-name" \
+    -l "$(owned_selector),${ROLE_LABEL}=$1,!gateway.networking.k8s.io/gateway-name" \
     --ignore-not-found
+}
+
+delete_interception_objects() {  # <svc>
+  kubectl -n "$NAMESPACE" delete svc -l "$(owned_selector),${ROLE_LABEL}=gateway-service" \
+    --field-selector "metadata.name=${1}" --ignore-not-found || return 1
+  kubectl -n "$NAMESPACE" delete svc -l "$(owned_selector),${ROLE_LABEL}=local-alias" \
+    --field-selector "metadata.name=${1}-local" --ignore-not-found || return 1
+  kubectl -n "$NAMESPACE" delete \
+    "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${1}" \
+    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${1}-scope" --ignore-not-found || return 1
+  kubectl -n "$NAMESPACE" delete \
+    "httproute.gateway.networking.k8s.io/s2s-ingress-${1}" --ignore-not-found || return 1
+}
+
+gc_undeclared() {
+  local intercepted own svc
+  intercepted=$(intercepted_services) \
+    || { log error "egress-interceptor: no se pudo listar los Services interceptados de $NAMESPACE."; return 1; }
+  own=$(own_gateway_services) \
+    || { log error "egress-interceptor: no se pudo listar los Services que creo el interceptor en $NAMESPACE."; return 1; }
+
+  for svc in $intercepted; do
+    if printf '%s\n' "$DECLARED_SERVICES" | grep -qx "$svc"; then continue; fi
+    revert_service "$svc"
+    delete_interception_objects "$svc" || return 1
+  done
+
+  for svc in $own; do
+    if printf '%s\n' "$DECLARED_SERVICES" | grep -qx "$svc"; then continue; fi
+    delete_interception_objects "$svc" || return 1
+  done
 }
 
 # Cada validador cuelga de UNA route y es nuestro entero, así que no hay merge con nadie: se
@@ -193,7 +238,7 @@ reconcile_ingress_validator() {  # <archivo rendeado>
 # cambiado entre el apply y el delete si el scope se redesplegó.
 delete_ingress_validator_rules() {
   kubectl -n "$NAMESPACE" delete authpolicy.kuadrant.io \
-    -l "${MANAGED_LABEL}=true" --ignore-not-found
+    -l "$(owned_selector)" --ignore-not-found
 }
 
 delete_route_validators() {
@@ -234,8 +279,9 @@ if [ "$ACTION" = "delete" ]; then
   SVC_JSON=$(kubectl -n "$NAMESPACE" get svc -o json) \
     || die "no se pudo listar los Services de $NAMESPACE. No se borra nada: no hay cómo verificar que ninguno siga apuntando al Gateway."
   STILL_HIJACKED=$(printf %s "$SVC_JSON" \
-    | jq -r --arg sel "$GATEWAY_SELECTOR" '.items[]
+    | jq -r --arg sel "$GATEWAY_SELECTOR" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" '.items[]
         | select((.metadata.labels // {})["gateway.networking.k8s.io/gateway-name"] | not)
+        | select(((.metadata.annotations // {})[$k] == $id) or ((.metadata.labels // {})[$k] == $id))
         | select((.spec.selector // {}) == ($sel | fromjson)) | .metadata.name') \
     || die "no se pudo interpretar el listado de Services de $NAMESPACE."
   if [ -n "$STILL_HIJACKED" ]; then
@@ -243,7 +289,7 @@ if [ "$ACTION" = "delete" ]; then
     log error "  No se borra nada más: sin el Gateway quedarían sin endpoints."
     exit 1
   fi
-  kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "${MANAGED_LABEL}=true" --ignore-not-found \
+  kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "$(owned_selector)" --ignore-not-found \
     || die "falló el borrado de los objetos del interceptor en $NAMESPACE."
   delete_ingress_validator_rules \
     || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
@@ -330,6 +376,8 @@ jq -n \
   --arg managed_label "$MANAGED_LABEL" \
   --arg sigla "${SIGLA:-}" \
   --arg role_label "$ROLE_LABEL" \
+  --arg instance_key "$INSTANCE_KEY" \
+  --arg service_id "$SERVICE_ID" \
   --arg original_selector_annotation "$ORIGINAL_SELECTOR_ANNOTATION" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
   --arg local_jwks_url "$LOCAL_JWKS_URL" \
@@ -532,7 +580,7 @@ fi
 if [ -n "$VALIDATOR_FILE" ]; then
   VALIDATOR_NS="$NAMESPACE"
   for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
-      -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+      -l "$(owned_selector)" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     if ! kubectl -n "$VALIDATOR_NS" wait --for=condition=Enforced "authpolicy/$POL" --timeout=180s; then
       log error "el validador '$POL' no llegó a Enforced=True en $VALIDATOR_NS."
       log error "$(kubectl -n "$VALIDATOR_NS" get "authpolicy/$POL" \
@@ -578,23 +626,7 @@ done
 # Mismo cuidado que en el delete: los dos listados se capturan por separado y con su chequeo. Un
 # fallo acá no borra nada de más, pero deja Services hijackeados que ya no están declarados —o sea
 # apuntando a un Gateway que no los va a atender— sin que nada lo diga.
-INTERCEPTED=$(intercepted_services) \
-  || die "no se pudo listar los Services interceptados de $NAMESPACE."
-OWN_GATEWAY=$(own_gateway_services) \
-  || die "no se pudo listar los Services que creó el interceptor en $NAMESPACE."
-STALE_SERVICES=$(printf '%s\n%s\n' "$INTERCEPTED" "$(printf '%s' "$OWN_GATEWAY" | tr ' ' '\n')" | grep -v '^$' | sort -u)
-for svc in $STALE_SERVICES; do
-  echo "$DECLARED_SERVICES" | grep -qx "$svc" && continue
-  revert_service "$svc"
-  kubectl -n "$NAMESPACE" delete svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=gateway-service" \
-    --field-selector "metadata.name=${svc}" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=local-alias" \
-    --field-selector "metadata.name=${svc}-local" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete \
-    "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${svc}" \
-    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${svc}-scope" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete \
-    "httproute.gateway.networking.k8s.io/s2s-ingress-${svc}" --ignore-not-found
-done
+gc_undeclared \
+  || die "no se pudieron limpiar las intercepciones que esta instancia ya no declara en $NAMESPACE."
 
 log info "reconcile apply OK en ns $NAMESPACE (gateway $GATEWAY_NAME, $(echo "$DECLARED_SERVICES" | grep -c .) servicio(s))"

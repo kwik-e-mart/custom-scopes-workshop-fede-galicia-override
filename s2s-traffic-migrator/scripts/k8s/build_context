@@ -141,7 +141,11 @@ require_match() {  # <value> <regex> <field>
   fi
 }
 require_match "$NAMESPACE" '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' "namespace"
-[ -n "$SERVICE_ID" ] && require_match "$SERVICE_ID" '^[a-zA-Z0-9_-]{1,64}$' "service.id"
+if [ -z "$SERVICE_ID" ]; then
+  log error "egress-interceptor build_context: la notificacion no trae service.id, que es el dueno de los objetos de esta instancia en el namespace."
+  exit 1
+fi
+require_match "$SERVICE_ID" '^[a-zA-Z0-9]([a-zA-Z0-9_.-]{0,61}[a-zA-Z0-9])?$' "service.id"
 
 # Cuál es la clave vigente lo dice la AuthPolicy de firma, no el nombre del Secret: el rotador
 # parchea ahí `signingKeyRefs` en cada rotación y el nombre que pone lleva un timestamp, que no se

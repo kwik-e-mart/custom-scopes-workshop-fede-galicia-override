@@ -108,7 +108,7 @@ MOCK
 # Corre el reconcile como lo corre el runner: con errexit NEUTRALIZADO.
 correr() {
   ARGS=apply \
-  NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
+  NAMESPACE=payments SERVICE_ID=svc-test SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
   WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example PEER_INGRESS_HOST=s2s.peer.example LOCAL_INGRESS_HOST=li.example \
@@ -137,7 +137,7 @@ correr_openshift() {  # [interceptions-json]
     reglas='[{"service_name":"reports","scope":"eks","scope_fqdn":"f.example","percent":100}]'
   fi
   ARGS=apply \
-  NAMESPACE=payments SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
+  NAMESPACE=payments SERVICE_ID=svc-test SITE=openshift-crc PLATFORM=openshift CLUSTER_LABEL=crc \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
   WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example PEER_INGRESS_HOST=s2s.peer.example LOCAL_INGRESS_HOST=li.example \
@@ -160,7 +160,7 @@ correr_openshift() {  # [interceptions-json]
 # Igual que `correr`, pero por la rama de delete.
 correr_delete() {
   ARGS=delete \
-  NAMESPACE=payments SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
+  NAMESPACE=payments SERVICE_ID=svc-test SITE=aws-us-east-1 PLATFORM=eks CLUSTER_LABEL=eks-kuadrant \
   GATEWAY_CLASS=istio LISTEN_PORT=8080 TOKEN_DURATION=60 \
   WRISTBAND_SECRET=wristband-key-payments-g0 EGRESS_ISSUER=https://egress.gal-poc.bancogalicia.com.ar PEER_CA_SECRET=s2s-remote-ca PEER_TLS_MODE=certificate \
   PEER_GATEWAY_HOST=peer.example PEER_INGRESS_HOST=s2s.peer.example LOCAL_INGRESS_HOST=li.example \

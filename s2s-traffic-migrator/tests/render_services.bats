@@ -16,6 +16,7 @@ contexto() {  # <platform> <interceptions-json>
   jq -n --arg platform "$1" --argjson interceptions "$2" '{
     namespace: "payments", gateway_name: "egress-gw", listen_port: 8080,
     managed_label: "egress-interceptor/managed", role_label: "egress-interceptor/role",
+    instance_key: "egress-interceptor/instance", service_id: "svc-test",
     original_selector_annotation: "egress-interceptor/original-selector",
     sigla: (env.SIGLA_CTX // ""),
     platform: $platform, interceptions: $interceptions
@@ -155,4 +156,26 @@ sin_service_previo() {  # <service>
   [ "$status" -eq 0 ]
   [ -n "$output" ]
   [ "$(echo "$output" | yq -N 'select(.kind == "Service") | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
+}
+
+@test "el Service hijackeado marca el dueño en una ANNOTATION: no es nuestro, no lleva labels" {
+  local out svc
+  out=$(render openshift "[$(regla reports)]")
+  svc=$(svc "$out" reports)
+  [ "$(echo "$svc" | yq '.metadata.annotations["egress-interceptor/instance"]')" = svc-test ] || false
+  [[ "$svc" != *"labels:"* ]] || false
+}
+
+@test "el Service que crea el interceptor marca el dueño en una LABEL: ese sí es nuestro" {
+  local out svc
+  out=$(render openshift "[$(sin_service_previo reports)]")
+  svc=$(svc "$out" reports)
+  [[ "$svc" == *"labels:"* ]] || false
+  [ "$(echo "$svc" | yq '.metadata.labels["egress-interceptor/instance"]')" = svc-test ] || false
+}
+
+@test "el alias -local también lleva el dueño" {
+  local out
+  out=$(render openshift "[$(regla reports)]")
+  [ "$(svc "$out" reports-local | yq '.metadata.labels["egress-interceptor/instance"]')" = svc-test ] || false
 }

@@ -30,6 +30,7 @@ metadata:
   namespace: {{ $ns | quote }}
   labels:
     {{ $raiz.managed_label }}: "true"
+    {{ $raiz.instance_key }}: {{ $raiz.service_id | quote }}
     nullplatform: "true"
 spec:
   targetRef:
