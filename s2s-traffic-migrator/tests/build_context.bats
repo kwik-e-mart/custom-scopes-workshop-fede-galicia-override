@@ -617,9 +617,14 @@ exportado() {  # <variable>
   [ "$v" = "kuadrant-system" ]
 }
 
-auth_policy_enabled_for() {  # <application_type>
+notif_en() {  # <site>
+  jq -nc --argjson a "$ATTRS" --argjson p "$PARAMS" --arg site "$1" \
+    '{notification:{type:"create", service:{id:"svc-1", attributes:$a, dimensions:{site:$site}}, parameters:$p}}'
+}
+
+auth_policy_enabled_for() {  # <application_type> [site]
   CONTEXT="$(ctx | jq -c --arg type "$1" '.application.metadata = {scaffolding: {application_type: $type}}')" \
-  NP_ACTION_CONTEXT="$(notif)" \
+  NP_ACTION_CONTEXT="$(notif_en "${2:-openshift-crc}")" \
     run bash -c 'source "$1" >/dev/null; bash -c "echo INGRESS_AUTH_POLICY_ENABLED=\$INGRESS_AUTH_POLICY_ENABLED"' _ "$BC"
 }
 
@@ -629,11 +634,19 @@ auth_policy_enabled_for() {  # <application_type>
   [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=true"* ]]
 }
 
-@test "una aplicacion BFF o SPA queda sin validador de ingreso" {
+@test "en EKS una aplicacion BFF o SPA queda sin validador de ingreso" {
   for type in BFF SPA; do
-    auth_policy_enabled_for "$type"
+    auth_policy_enabled_for "$type" aws-us-east-1
     [ "$status" -eq 0 ] || false
     [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=false"* ]] || false
+  done
+}
+
+@test "en OpenShift una aplicacion BFF o SPA lleva el validador igual" {
+  for type in BFF SPA; do
+    auth_policy_enabled_for "$type" openshift-crc
+    [ "$status" -eq 0 ] || false
+    [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=true"* ]] || false
   done
 }
 
@@ -645,17 +658,24 @@ auth_policy_enabled_for() {  # <application_type>
 }
 
 @test "APPLICATION_TYPES_WITH_NO_AUTH_POLICY elige que tipos quedan sin validador" {
-  APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API auth_policy_enabled_for API
+  APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API auth_policy_enabled_for API aws-us-east-1
   [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=false"* ]] || false
-  APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API auth_policy_enabled_for BFF
+  APPLICATION_TYPES_WITH_NO_AUTH_POLICY=API auth_policy_enabled_for BFF aws-us-east-1
   [[ "$output" == *"INGRESS_AUTH_POLICY_ENABLED=true"* ]]
 }
 
-@test "la traza dice que la aplicacion queda sin validador y por que tipo" {
+@test "la traza dice que en EKS la aplicacion queda sin validador y por que tipo" {
   CONTEXT="$(ctx | jq -c '.application.metadata = {scaffolding: {application_type: "BFF"}}')" \
-  NP_ACTION_CONTEXT="$(notif)" run bash "$BC"
+  NP_ACTION_CONTEXT="$(notif_en aws-us-east-1)" run bash "$BC"
   [ "$status" -eq 0 ]
   [[ "$output" == *"BFF"*"sin validador"* ]]
+}
+
+@test "la traza dice por que en OpenShift una BFF lleva el validador igual" {
+  CONTEXT="$(ctx | jq -c '.application.metadata = {scaffolding: {application_type: "BFF"}}')" \
+  NP_ACTION_CONTEXT="$(notif_en openshift-crc)" run bash "$BC"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"BFF"*"la crea el interceptor"* ]]
 }
 
 @test "la traza dice que una aplicacion API lleva validador" {
