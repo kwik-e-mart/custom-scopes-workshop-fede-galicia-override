@@ -127,3 +127,14 @@ run_handler() {
   [ "$status" -eq 0 ]
   [ "$(jq -c '[.plans[].const]' <<<"$output")" = '["gold"]' ]
 }
+
+@test "un contexto que no es JSON o no trae notification falla sin llamar a APIM" {
+  for invalid in "no es json" "'{\"otra\":1}'" ""; do
+    NP_ACTION_CONTEXT="$invalid"
+    run_handler
+    [ "$status" -ne 0 ] || false
+    [ -z "$output" ] || false
+    [[ "$stderr" == *"NP_ACTION_CONTEXT"* ]] || false
+  done
+  [ "$(curl_call_count)" = "0" ]
+}
