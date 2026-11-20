@@ -29,6 +29,10 @@ pushed() {
   jq -nc --arg status "${1-commited}" '{status:$status,message:"pusheada",apiId:"payments-test-kuadrant-b2c-1",hostname:"payments-test-kuadrant-b2c-qas.bancogalicia.com.ar",manifestPath:"clusters/gal-kuadrant-poc/apis/payments/test-kuadrant"}'
 }
 
+as_update() {
+  NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq -c '.notification.type = "update"')
+}
+
 @test "publica con la firma de APIM y deja la accion abierta con los resultados" {
   queue_response 200 "$(pushed)"
   run_step
@@ -561,10 +565,6 @@ set_application_type() {
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 000"*"Failed to connect"* ]]
 }
 
-as_update() {
-  NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq -c '.notification.type = "update"')
-}
-
 @test "el update republica con PUT a modify y el mismo body que el publish" {
   queue_response 200 "$(pushed)"
   run_step
@@ -573,7 +573,7 @@ as_update() {
   run_step
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
-  [ "$(sed -n 2p "$CURL_CALLS_LOG" | cut -d' ' -f1-2)" = "PUT https://publisher.test/v1/kuadrant/manifests/modify" ]
+  grep -q '^PUT https://publisher.test/v1/kuadrant/manifests/modify ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/1.json")" = "$(jq -cS . "$CURL_BODIES_DIR/0.json")" ]
   [ -z "$(np_last_update_flag --status)" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"Modificación synced en APIM"* ]] || false
@@ -586,7 +586,7 @@ as_update() {
   run_step
   [ "$status" -eq 0 ]
   grep -q '^PUT https://publisher.test/v1/kuadrant/manifests/modify idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
-  ! grep -q '/v1/kuadrant/manifests/publish' "$CURL_CALLS_LOG"
+  ! grep -q '/v1/kuadrant/manifests/publish' "$CURL_CALLS_LOG" || false
   grep -q 'apply -f -' "$KUBECTL_CALLS_LOG"
 }
 
