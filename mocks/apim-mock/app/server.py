@@ -317,7 +317,7 @@ class App:
                 self.schedule(self.complete_plan_change, operation["id"])
         for publication in list(self.state["publications"].values()):
             if publication.get("status") == "commited":
-                self.schedule(self.complete_publication, publication["apiId"], publication["ref"])
+                self.schedule(self.complete_publication, publication["apiId"], publication.get("revision", 0))
         for deletion in list(self.state["deletions"].values()):
             if not deletion.get("final"):
                 self.schedule(self.complete_deletion, deletion["deletionId"])
@@ -405,6 +405,8 @@ class App:
             return 200, public_operation(operation)
         if path == "/v1/kuadrant/manifests/publish" and method == "POST":
             return self.publish(body, outbox)
+        if path == "/v1/kuadrant/manifests/modify" and method == "PUT":
+            return self.modify(body, outbox)
         if path == "/v1/kuadrant/manifests/delete" and method == "POST":
             return self.delete_publication(body, outbox)
         match = re.fullmatch(r"/v1/kuadrant/manifests/delete/([^/]+)", path)
@@ -725,48 +727,76 @@ class App:
             return f"El mock no puede publicar en el namespace {metadata['namespace']}."
         return None
 
-    def publish(self, body, outbox):
-        error = self.validate_publication(body)
-        if error:
-            return publish_error(error)
+    def api_id(self, body):
+        metadata = body["metadata"]
+        entity, entity_id = callback_entity(body.get("callbackUrl"))
+        if entity == "service":
+            return f"apim-{entity_id}"
+        return f"{metadata['namespace']}-{metadata['name']}-{body['tenant']}-1"
+
+    def new_publication(self, body, api_id, revision):
         metadata = body["metadata"]
         name, namespace, tenant, environment = metadata["name"], metadata["namespace"], body["tenant"], body["environment"]
-        entity, entity_id = callback_entity(body.get("callbackUrl"))
-        api_id = f"apim-{entity_id}" if entity == "service" else f"{namespace}-{name}-{tenant}-1"
-        ref = publication_ref(body)
-        existing = self.state["publications"].get(api_id)
-        if existing and existing["ref"] == ref:
-            return publish_error(f"La API {api_id} ya está publicada en {ref}.")
-        stale_paths = []
-        if existing:
-            previous = set(existing.get("stalePaths", [])) | set(api_object_paths(existing["namespace"], existing["apiName"]))
-            stale_paths = sorted(previous - set(api_object_paths(namespace, name)))
         hostnames = metadata.get("hostnames") or [f"{namespace}-{name}-{tenant}-{environment}.{self.settings['domain']}"]
         callback_url = body.get("callbackUrl")
-        publication = {
-            "apiId": api_id, "ref": ref, "status": "commited", "hostname": hostnames[0], "namespace": namespace,
-            "apiName": name, "tenant": tenant, "environment": environment,
+        return {
+            "apiId": api_id, "revision": revision, "ref": publication_ref(body), "status": "commited",
+            "hostname": hostnames[0], "namespace": namespace, "apiName": name, "tenant": tenant, "environment": environment,
             "repository": f"{body['organization']}/{body['repository']}",
             "manifestPath": f"clusters/{body['cluster']}/apis/{namespace}/{name}",
             "callbackUrl": callback_url if isinstance(callback_url, str) else "",
             "labels": metadata.get("labels") or {}, "parentRefs": metadata["parentRefs"],
             "backend": metadata.get("backend") or {}, "window": body.get("window"), "hitsPerWindow": body.get("hitsPerWindow"),
-            "stalePaths": stale_paths,
+            "stalePaths": [],
         }
-        self.state["publications"][api_id] = publication
+
+    def manifests_fingerprint(self, publication):
+        manifests = api_manifests(publication, self.settings.get("route_paths") or ())
+        return body_hash([manifests, publication["ref"], publication["repository"], publication["manifestPath"]])
+
+    def start_publication(self, publication, message, outbox):
+        self.state["publications"][publication["apiId"]] = publication
         self.save()
-        response = {
-            "status": "commited",
-            "message": "La publicación fue pusheada correctamente a Git y Argo sigue sincronizándose.",
-            "apiId": api_id, "hostname": publication["hostname"], "namespace": namespace, "apiName": name,
-            "tenant": tenant, "environment": environment, "repository": publication["repository"],
-            "manifestPath": publication["manifestPath"], "generatedFiles": GENERATED_FILES,
+        outbox.append((publication["callbackUrl"], "Manifiestos pusheados a Git; Argo está sincronizando.", {}))
+        self.schedule(self.complete_publication, publication["apiId"], publication["revision"])
+        return 200, {
+            "status": "commited", "message": message,
+            "apiId": publication["apiId"], "hostname": publication["hostname"], "namespace": publication["namespace"],
+            "apiName": publication["apiName"], "tenant": publication["tenant"], "environment": publication["environment"],
+            "repository": publication["repository"], "manifestPath": publication["manifestPath"], "generatedFiles": GENERATED_FILES,
             "argoStatus": {"application": "apim-mock", "sync": "OutOfSync", "health": "Healthy",
                            "operationPhase": "Running", "resources": []},
         }
-        outbox.append((publication["callbackUrl"], "Manifiestos pusheados a Git; Argo está sincronizando.", {}))
-        self.schedule(self.complete_publication, api_id, ref)
-        return 200, response
+
+    def publish(self, body, outbox):
+        error = self.validate_publication(body)
+        if error:
+            return publish_error(error)
+        api_id = self.api_id(body)
+        if api_id in self.state["publications"]:
+            return publish_error(f"La API {api_id} ya se encontraba publicada; no se realizó ningún cambio.")
+        publication = self.new_publication(body, api_id, 1)
+        return self.start_publication(publication, "La publicación fue pusheada correctamente a Git y Argo sigue sincronizándose.", outbox)
+
+    def modify(self, body, outbox):
+        error = self.validate_publication(body)
+        if error:
+            return publish_error(error)
+        api_id = self.api_id(body)
+        existing = self.state["publications"].get(api_id)
+        if not existing:
+            return 404, {"status": "error", "message": f"La API {api_id} no tiene manifiestos publicados."}
+        if existing["status"] == "commited":
+            return publish_error(f"Hay una operación en curso sobre {api_id}; reintentá cuando termine.")
+        if any(not d["final"] and d["apiId"] == api_id for d in self.state["deletions"].values()):
+            return publish_error(f"La baja de {api_id} está en curso.")
+        publication = self.new_publication(body, api_id, existing.get("revision", 0) + 1)
+        if self.manifests_fingerprint(publication) == self.manifests_fingerprint(existing):
+            return publish_error(f"No hay cambios en los manifiestos de {api_id}; no se realizó ningún cambio.")
+        previous_paths = set(existing.get("stalePaths", [])) | set(api_object_paths(existing["namespace"], existing["apiName"]))
+        publication["stalePaths"] = sorted(previous_paths - set(api_object_paths(publication["namespace"], publication["apiName"])))
+        publication["previous"] = existing
+        return self.start_publication(publication, "La modificación fue pusheada correctamente a Git y Argo sigue sincronizándose.", outbox)
 
     def apply_api_objects(self, publication):
         for path, manifest in api_manifests(publication, self.settings.get("route_paths") or ()):
@@ -795,31 +825,45 @@ class App:
             except Exception as error:
                 log(f"apim-mock: no se pudo borrar {path}: {error}")
 
-    def complete_publication(self, api_id, ref):
+    def restore_api_objects(self, failed, previous):
+        self.apply_api_objects(previous)
+        restored = {path for path, _ in api_manifests(previous, self.settings.get("route_paths") or ())}
+        self.delete_paths([path for path in api_object_paths(failed["namespace"], failed["apiName"]) if path not in restored])
+
+    def complete_publication(self, api_id, revision):
         with self.lock:
             publication = self.state["publications"].get(api_id)
-            if not publication or publication["ref"] != ref or publication["status"] != "commited":
+            if not publication or publication.get("revision", 0) != revision or publication["status"] != "commited":
                 return
             pending = dict(publication)
+        previous = pending.pop("previous", None)
         applied = pending["repository"].split("/", 1)[1].startswith("fail-") is False and self.apply_api_objects(pending)
         with self.lock:
             publication = self.state["publications"].get(api_id)
-            current = publication and publication["ref"] == ref and publication["status"] == "commited"
-            if not current:
-                notification = None
-            elif not applied:
+            current = bool(publication) and publication.get("revision", 0) == revision and publication["status"] == "commited"
+            notification = None
+            if current and applied:
+                publication["status"] = "registered"
+                publication.pop("previous", None)
+                self.save()
+                verb = "modificada" if previous else "publicada"
+                notification = (pending["callbackUrl"], f"API {verb} y registrada en {pending['hostname']}.", {"status": "success"})
+            elif current and previous:
+                self.state["publications"][api_id] = previous
+                self.save()
+                notification = (pending["callbackUrl"], "Modify RolledBack: Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); se restauraron los manifiestos anteriores.",
+                                {"level": "error", "status": "failed"})
+            elif current:
                 del self.state["publications"][api_id]
                 self.save()
-                notification = (publication["callbackUrl"], "Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); se eliminaron los manifiestos.",
+                notification = (pending["callbackUrl"], "Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); se eliminaron los manifiestos.",
                                 {"level": "error", "status": "failed"})
-            else:
-                publication["status"] = "registered"
-                self.save()
-                notification = (publication["callbackUrl"], f"API publicada y registrada en {publication['hostname']}.", {"status": "success"})
-        if not publication or (current and not applied):
-            self.delete_api_objects(pending)
-        elif current:
+        if current and applied:
             self.delete_unused_objects(pending)
+        elif current and previous:
+            self.restore_api_objects(pending, previous)
+        elif current or not publication:
+            self.delete_api_objects(pending)
         if notification:
             self.notifier.notify(*notification[:2], **notification[2])
 
@@ -927,6 +971,7 @@ def make_handler(app):
         do_GET = respond
         do_POST = respond
         do_PATCH = respond
+        do_PUT = respond
         do_DELETE = respond
 
         def log_message(self, format, *args):
