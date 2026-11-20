@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
@@ -508,6 +509,7 @@ def publish_body(**overrides):
 
 PUBLISH = "/v1/kuadrant/manifests/publish"
 DELETE = "/v1/kuadrant/manifests/delete"
+MODIFY = "/v1/kuadrant/manifests/modify"
 DELETE_CALLBACK = "https://api.nullplatform.com/service/svc-1/action/act-9"
 
 
@@ -544,26 +546,102 @@ class PublisherTest(unittest.TestCase):
         _, state = call(app, "GET", "/mock/state")
         self.assertEqual(state["publications"]["apim-svc-1"]["status"], "registered")
 
-    def test_republicar_el_mismo_ref_responde_400(self):
+    def test_publicar_una_api_ya_publicada_responde_400_aunque_cambie_el_ref(self):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        status, body = call(app, "POST", PUBLISH, publish_body())
+        status, body = call(app, "POST", PUBLISH, publish_body(branch="develop"))
         self.assertEqual(status, 400)
         self.assertEqual(body["status"], "error")
-        self.assertIn("ya está publicada", body["message"])
+        self.assertIn("ya se encontraba publicada", body["message"])
+        _, state = call(app, "GET", "/mock/state")
+        self.assertEqual(state["publications"]["apim-svc-1"]["ref"], "master")
 
-    def test_republicar_otro_ref_actualiza_la_publicacion(self):
+    def test_publicar_durante_otra_publicacion_responde_400(self):
+        app, _, _, _ = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        status, _ = call(app, "POST", PUBLISH, publish_body(branch="develop"))
+        self.assertEqual(status, 400)
+
+    def test_modificar_otro_ref_responde_200_avisa_y_registra(self):
+        app, _, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        body = publish_body(callbackUrl="https://api.nullplatform.com/service/svc-1/action/act-2")
+        body.pop("branch")
+        body["tag"] = "0.2.6"
+        status, response = call(app, "PUT", MODIFY, body)
+        self.assertEqual(status, 200)
+        self.assertEqual(response["status"], "commited")
+        self.assertEqual(response["apiId"], "apim-svc-1")
+        self.assertEqual(response["manifestPath"], "clusters/cluster1/apis/test-kuadrant/test-kuadrant")
+        _, state = call(app, "GET", "/mock/state")
+        self.assertEqual(state["publications"]["apim-svc-1"]["status"], "commited")
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "success")
+        self.assertEqual(notifier.calls[-1]["url"], body["callbackUrl"])
+        self.assertIn("modificada", notifier.calls[-1]["message"])
+        _, state = call(app, "GET", "/mock/state")
+        self.assertEqual(state["publications"]["apim-svc-1"]["ref"], "0.2.6")
+        self.assertEqual(state["publications"]["apim-svc-1"]["status"], "registered")
+
+    def test_modificar_solo_el_rate_limit_es_un_cambio(self):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        body = publish_body()
-        body.pop("branch")
-        body["commit"] = "a1b2c3d"
-        status, response = call(app, "POST", PUBLISH, body)
+        status, _ = call(app, "PUT", MODIFY, publish_body(window="1m", hitsPerWindow=100))
         self.assertEqual(status, 200)
-        _, state = call(app, "GET", "/mock/state")
-        self.assertEqual(state["publications"][response["apiId"]]["ref"], "a1b2c3d")
+
+    def test_modificar_sin_cambios_responde_400(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        status, body = call(app, "PUT", MODIFY, publish_body(callbackUrl="https://api.nullplatform.com/service/svc-1/action/act-2"))
+        self.assertEqual(status, 400)
+        self.assertIn("No hay cambios", body["message"])
+
+    def test_modificar_una_api_sin_publicar_responde_404(self):
+        app, _, _, _ = make_app()
+        status, body = call(app, "PUT", MODIFY, publish_body())
+        self.assertEqual(status, 404)
+        self.assertEqual(body["status"], "error")
+        self.assertIn("no tiene manifiestos publicados", body["message"])
+
+    def test_modificar_durante_la_publicacion_responde_400(self):
+        app, _, _, _ = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        status, body = call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        self.assertEqual(status, 400)
+        self.assertIn("en curso", body["message"])
+
+    def test_modificar_valida_la_firma_como_el_publish(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        body = publish_body(branch="develop")
+        body.pop("sigla")
+        status, _ = call(app, "PUT", MODIFY, body)
+        self.assertEqual(status, 400)
+
+    def test_una_baja_durante_la_modificacion_responde_400(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        status, _ = call(app, "POST", DELETE, delete_body())
+        self.assertEqual(status, 400)
+
+    def test_una_modificacion_pendiente_se_reprograma_al_reiniciar(self):
+        app, _, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        restarted = server.App(app.store, app.k8s, notifier, scheduler, app.settings, app.link_service_id)
+        scheduler.pending.clear()
+        restarted.reschedule_pending()
+        scheduler.run_all()
+        self.assertEqual(restarted.state["publications"]["apim-svc-1"]["status"], "registered")
+        self.assertEqual(restarted.state["publications"]["apim-svc-1"]["ref"], "develop")
 
     def test_repo_que_empieza_con_fail_avisa_falla_y_borra_la_publicacion(self):
         app, _, notifier, scheduler = make_app()
@@ -842,6 +920,11 @@ class HttpTest(unittest.TestCase):
         status = self.send("POST", "/v1/subscriptions", {"Authorization": "Bearer secreto", "Content-Length": "-1"})
         self.assertEqual(status, 400)
 
+    def test_acepta_put(self):
+        body = b"{}"
+        status = self.send("PUT", "/v1/kuadrant/manifests/modify", {"Authorization": "Bearer secreto", "Content-Length": str(len(body))}, body)
+        self.assertEqual(status, 400)
+
     def test_un_error_inesperado_responde_500_y_no_corta_la_conexion(self):
         def explode(*args):
             raise ValueError("boom")
@@ -1003,38 +1086,92 @@ class PublishedObjectsTest(unittest.TestCase):
         for path in (ROUTE, AUTH, RLP):
             self.assertNotIn(path, k8s.objects)
 
-    def test_republicar_con_otro_nombre_borra_los_objetos_viejos(self):
+    def test_modificar_con_otro_nombre_borra_los_objetos_viejos(self):
         app, k8s, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
         scheduler.run_all()
         body = publish_body(branch="develop", window="1m", hitsPerWindow=100)
         body["metadata"]["name"] = "otra-api"
-        call(app, "POST", PUBLISH, body)
+        call(app, "PUT", MODIFY, body)
         scheduler.run_all()
         for path in (ROUTE, AUTH, RLP):
             self.assertNotIn(path, k8s.objects)
         self.assertIn("/apis/gateway.networking.k8s.io/v1/namespaces/test-kuadrant/httproutes/otra-api", k8s.objects)
 
-    def test_republicar_sin_rate_limit_borra_la_ratelimitpolicy(self):
+    def test_modificar_sin_rate_limit_borra_la_ratelimitpolicy(self):
         app, k8s, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
         scheduler.run_all()
-        call(app, "POST", PUBLISH, publish_body(branch="develop"))
+        call(app, "PUT", MODIFY, publish_body(branch="develop"))
         scheduler.run_all()
         self.assertNotIn(RLP, k8s.objects)
         self.assertIn(ROUTE, k8s.objects)
 
-    def test_si_falla_la_republicacion_no_quedan_los_objetos_viejos(self):
+    def test_si_falla_la_modificacion_restaura_la_version_anterior(self):
         app, k8s, notifier, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        before = {path: k8s.objects[path] for path in (ROUTE, AUTH, RLP)}
+        body = publish_body(branch="develop")
+        body["metadata"]["name"] = "otra-api"
+        k8s.fail_apply_for = "/authpolicies/otra-api"
+        call(app, "PUT", MODIFY, body)
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        self.assertIn("RolledBack", notifier.calls[-1]["message"])
+        self.assertEqual(sorted(p for p in k8s.objects if "/apis/" in p), sorted(before))
+        for path, manifest in before.items():
+            self.assertEqual(k8s.objects[path], manifest)
+        _, state = call(app, "GET", "/mock/state")
+        publication = state["publications"]["apim-svc-1"]
+        self.assertEqual((publication["status"], publication["ref"], publication["apiName"]), ("registered", "master", "test-kuadrant"))
+
+    def test_si_no_puede_restaurar_la_version_anterior_lo_avisa(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
         body = publish_body(branch="develop")
         body["metadata"]["name"] = "otra-api"
         k8s.fail_apply_for = "/authpolicies/"
-        call(app, "POST", PUBLISH, body)
+        call(app, "PUT", MODIFY, body)
         scheduler.run_all()
         self.assertEqual(notifier.calls[-1]["status"], "failed")
-        self.assertEqual([p for p in k8s.objects if "/apis/" in p], [])
+        self.assertIn("no se pudieron restaurar", notifier.calls[-1]["message"])
+
+    def test_una_excepcion_al_aplicar_no_deja_la_modificacion_en_curso(self):
+        app, _, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        with unittest.mock.patch.object(server.App, "apply_api_objects", side_effect=[ValueError("boom"), True]):
+            scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        _, state = call(app, "GET", "/mock/state")
+        self.assertEqual(state["publications"]["apim-svc-1"]["status"], "registered")
+        self.assertEqual(state["publications"]["apim-svc-1"]["ref"], "master")
+
+    def test_modificar_una_publicacion_guardada_por_la_version_anterior(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        app.state["publications"]["apim-svc-1"].pop("revision")
+        status, _ = call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        self.assertEqual(status, 200)
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "success")
+        self.assertEqual(app.state["publications"]["apim-svc-1"]["revision"], 1)
+
+    def test_un_repo_fail_en_la_modificacion_restaura_la_version_anterior(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
+        scheduler.run_all()
+        call(app, "PUT", MODIFY, publish_body(repository="fail-api"))
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        for path in (ROUTE, AUTH, RLP):
+            self.assertIn(path, k8s.objects)
+        _, state = call(app, "GET", "/mock/state")
+        self.assertEqual(state["publications"]["apim-svc-1"]["repository"], "zosc-zosconnect/test-kuadrant")
 
     def test_la_baja_borra_los_objetos(self):
         app, k8s, _, scheduler = make_app()
