@@ -94,7 +94,7 @@ pasan por ese workflow.
 
 El initial y el blue-green del deployment también dejan en `$OUTPUT_DIR` la AuthPolicy de cada HTTPRoute rendeada,
 así el `apply` del scope la crea antes que la route. El `apiId` sale del service de `APIM_PUBLISHER_PROVIDER` publicado
-sobre el scope y, si no hay, es `<namespace>-<repo>-b2c-1`; si la API se publica después con otro `apiId`, el siguiente
+sobre el scope y, si no hay, es el que arma APIM, `<repo sin "<sigla>-">--b2c` (la sigla es el primer segmento del namespace); si la API se publica después con otro `apiId`, el siguiente
 deploy la corrige. El delete del deployment la borra junto con la route.
 
 ## Instalación

@@ -6,9 +6,9 @@ AUTH_POLICY_TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/manifests
 
 if ! type -t default_api_id >/dev/null 2>&1; then
 default_api_id() {
-  local namespace="$1" repository="$2"
+  local sigla="${1%%-*}" repository="$2"
   repository=$(echo "${repository%.git}" | tr '[:upper:]' '[:lower:]')
-  echo "$namespace-$repository-$PUBLISH_TENANT-1"
+  echo "${repository#"$sigla"-}--$PUBLISH_TENANT"
 }
 fi
 

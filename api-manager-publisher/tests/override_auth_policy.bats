@@ -85,11 +85,11 @@ set_application_type() {
   run_step
   local policy
   policy=$(policies | jq -c '.[1]')
-  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"payments-test-kuadrant-b2c-1","scope_id":"5"}' ]
+  [ "$(jq -c .metadata.labels <<<"$policy")" = '{"app.kubernetes.io/managed-by":"api-manager-publisher","api-id":"test-kuadrant--b2c","scope_id":"5"}' ]
   [ "$(jq -c .spec.targetRef <<<"$policy")" = '{"group":"gateway.networking.k8s.io","kind":"HTTPRoute","name":"k-8-s-main-5-internal"}' ]
   [ "$(jq -r .spec.defaults.strategy <<<"$policy")" = "merge" ]
-  [ "$(jq -c '.spec.defaults.rules.authentication."payments-test-kuadrant-b2c-1"' <<<"$policy")" = \
-    '{"apiKey":{"selector":{"matchLabels":{"api-id":"payments-test-kuadrant-b2c-1"}},"allNamespaces":true},"credentials":{"customHeader":{"name":"app_key"}}}' ]
+  [ "$(jq -c '.spec.defaults.rules.authentication."test-kuadrant--b2c"' <<<"$policy")" = \
+    '{"apiKey":{"selector":{"matchLabels":{"api-id":"test-kuadrant--b2c"}},"allNamespaces":true},"credentials":{"customHeader":{"name":"app_key"}}}' ]
 }
 
 @test "con la API ya publicada sobre el scope usa el apiId de APIM" {
@@ -118,14 +118,22 @@ set_application_type() {
   NP_MOCK_SERVICES="[$(service "$APIM_PUBLISHER_PROVIDER" otro apim-otro-scope),$(service AWS main apim-otro-provider),$(service "$APIM_PUBLISHER_PROVIDER" main "")]"
   run_step
   [ "$status" -eq 0 ]
-  [ "$(policies | jq -r '[.[].metadata.labels."api-id"] | unique | join(",")')" = "payments-test-kuadrant-b2c-1" ]
+  [ "$(policies | jq -r '[.[].metadata.labels."api-id"] | unique | join(",")')" = "test-kuadrant--b2c" ]
 }
 
 @test "el nombre del repo va en minuscula y sin .git en el apiId por default" {
   CONTEXT=$(echo "$CONTEXT" | jq -c '.application.repository_url = "https://github.com/zosc/Test-Kuadrant.git"')
   run_step
   [ "$status" -eq 0 ]
-  [ "$(policies | jq -r '.[0].metadata.labels."api-id"')" = "payments-test-kuadrant-b2c-1" ]
+  [ "$(policies | jq -r '.[0].metadata.labels."api-id"')" = "test-kuadrant--b2c" ]
+}
+
+@test "el apiId por default saca del repo la sigla del namespace, como lo arma APIM" {
+  CONTEXT=$(echo "$CONTEXT" | jq -c '.application.repository_url = "https://github.com/galicia-apps/plcl-cz-py-312-ms"')
+  perl -pi -e 's/namespace: payments/namespace: plcl-platformops-int/' "$OUTPUT_DIR/ingress-5-6.yaml"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(policies | jq -r '[.[].metadata.labels."api-id"] | unique | join(",")')" = "cz-py-312-ms--b2c" ]
 }
 
 @test "si no puede listar los services frena el deploy sin generar la AuthPolicy" {
