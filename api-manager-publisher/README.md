@@ -16,14 +16,15 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   la acción falla. Desplegar no republica: hay que ejecutar la acción de actualizar después de cada deploy.
 - **Actualizar = republicar** con la versión desplegada en ese momento o con otro rate limit: va a `PUT /v1/kuadrant/manifests/modify`
   con el mismo body que el publish. Si APIM no tiene la API publicada, o no cambió nada, la acción falla con su mensaje.
-- **Después del 200 del publish**, cuelga en cada route del scope (`nullplatform=true,scope_id=<id>`) una
-  AuthPolicy `<apiId>-<route>` que acepta las credenciales de esa API (`app_key` con label `api-id`, `app_id`
-  igual al label `app-id`). Es la que deja pasar el reingreso de APIM por el gateway privado; se combina en
-  `merge` con el validador del s2s, que también tiene que estar en `merge`. Si el `application_type` de la
-  metadata de la aplicación está en `APPLICATION_TYPES_WITH_NO_AUTH_POLICY`, no cuelga ninguna y borra las
-  que la API ya tuviera: la route queda abierta y la autenticación queda en la aplicación.
-- **Borrar**: pide la baja a APIM (`/v1/kuadrant/manifests/delete`, con el legajo de quien borra) y, cuando
-  APIM la acepta, borra las AuthPolicies del servicio (label `service-id`), también si el publish había fallado. La acción queda abierta hasta el callback de APIM.
+- **Las routes del scope nacen cerradas.** El override (ver abajo) cuelga en cada deploy una AuthPolicy
+  con el mismo nombre que cada route, que solo acepta las credenciales de la API (`app_key` con label `api-id`,
+  `app_id` igual al label `app-id`). Sin suscripciones no entra nadie por la route; el s2s entra con su token
+  porque su validador se combina en `merge` con esta. Si el `application_type` de la metadata de la aplicación
+  está en `APPLICATION_TYPES_WITH_NO_AUTH_POLICY`, la route queda abierta y la autenticación queda en la aplicación.
+- **Después del 200 del publish** vuelve a colgar la AuthPolicy con el `apiId` que devolvió APIM y borra las del
+  scope con otro `apiId`. Para los tipos sin AuthPolicy borra las del scope.
+- **Borrar**: pide la baja a APIM (`/v1/kuadrant/manifests/delete`, con el legajo de quien borra). Las AuthPolicies
+  quedan: la route sigue cerrada. La acción queda abierta hasta el callback de APIM.
 - **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. Editar el link cambia el plan
   con el ticket que autoriza el cambio. El unlink da de baja la suscripción solo si ese link la creó.
@@ -73,17 +74,26 @@ Las URLs del API Publisher y del API Subscriber salen de `apim-urls.json` según
 
 ## Override del scope: la credencial en el deployment
 
-`override/` agrega a cada deploy de un scope linkeado a este servicio la credencial de APIM del namespace como
-variables de entorno del container `application`:
+`override/` agrega a cada deploy de un scope linkeado a este servicio la credencial de APIM como variables de entorno
+del container `application`, desde un Secret de la aplicación, `apim-credentials-<application_id>`, en el namespace
+del provider:
 
 | Variable | Sale de |
 |---|---|
-| `APIM_APP_ID` | Secret `secret-apim-b2c`, key `app_id` |
-| `APIM_APP_KEY` | Secret `secret-apim-b2c`, key `app_key` |
+| `APIM_APP_ID` | label `app-id` del Secret de la suscripción, guardado en la key `app_id` |
+| `APIM_APP_KEY` | key `api_key` del Secret de la suscripción, guardada en la key `app_key` |
+
+El Secret de la suscripción es el que deja el API Subscriber en `APIM_CREDENTIALS_NAMESPACE` (`apim-credentials`) con
+los labels `consumer-ns` (el namespace del provider) y `api-id` (el `api_id` del servicio linkeado). Cada deploy
+actualiza el Secret de la aplicación con server-side apply, así que una credencial rotada llega en el próximo deploy.
 
 El link se busca por `selectors.provider` (`APIM_PUBLISHER_PROVIDER`, `API Manager`), a nivel scope o a nivel
 aplicación con dimensiones que coinciden con las del scope, igual que en `pom-services/override/`. Sin link, el paso
-no toca el deployment; con link y sin el Secret en el namespace, el deploy falla. Para usarlo, el channel del scope
+no inyecta nada; el Secret de la aplicación se borra solo cuando ningún scope de la aplicación tiene link. La
+credencial se arma con las APIs linkeadas en toda la aplicación, así todos sus scopes del namespace usan el mismo
+Secret. Sin credencial en `apim-credentials`, o con APIs linkeadas que tienen credenciales distintas, avisa y el
+deploy sigue sin las variables. El agente necesita leer
+Secrets en `apim-credentials` y crear, actualizar y borrar Secrets en los namespaces de las aplicaciones. Para usarlo, el channel del scope
 tiene que pasar `--overrides-path=<repo>/api-manager-publisher/override`.
 
 El mismo override frena el borrado del deployment de un scope que tiene una API publicada: busca en la aplicación
@@ -91,6 +101,11 @@ services de `APIM_PUBLISHER_PROVIDER` (sin los archivados) cuyo `scope` sea el d
 delete falla avisando que no se puede borrar ni pausar el scope mientras la API esté publicada. Va en el delete del deployment y no en el del scope porque borrar un
 scope primero borra su deployment: en el delete del scope ya sería tarde. El finalize del blue-green y el rollback no
 pasan por ese workflow.
+
+El initial y el blue-green del deployment también dejan en `$OUTPUT_DIR` la AuthPolicy de cada HTTPRoute rendeada,
+así el `apply` del scope la crea antes que la route. El `apiId` sale del service de `APIM_PUBLISHER_PROVIDER` publicado
+sobre el scope y, si no hay, es el que arma APIM, `<repo sin "<sigla>-">--b2c` (la sigla es el primer segmento del namespace); si la API se publica después con otro `apiId`, el siguiente
+deploy la corrige. El delete del deployment la borra junto con la route.
 
 ## Instalación
 

@@ -10,6 +10,7 @@ configuration:
   LOCAL_INGRESS_HOST: ""
   LOCAL_INGRESS_TLS_MODE: skip-verify
   GATEWAY_NAMESPACE: ""
+  APPS_DOMAIN: ""
   INGRESS_AUTHPOLICY: s2s-validator
   TOKEN_DURATION: "60"
   GATEWAY_CLASS: istio
@@ -47,6 +48,7 @@ steps:
       - { name: LOCAL_INGRESS_SERVICE, type: environment }
       - { name: LOCAL_INGRESS_SERVICE_NAMESPACE, type: environment }
       - { name: GATEWAY_NAMESPACE, type: environment }
+      - { name: APPS_DOMAIN, type: environment }
       - { name: INGRESS_AUTHPOLICY, type: environment }
       - { name: CLUSTER_LABEL, type: environment }
       - { name: LISTEN_PORT, type: environment }

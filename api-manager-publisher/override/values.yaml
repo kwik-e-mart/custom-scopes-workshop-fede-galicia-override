@@ -1,2 +1,3 @@
 configuration:
   APIM_PUBLISHER_PROVIDER: "API Manager"
+  APIM_CREDENTIALS_NAMESPACE: "apim-credentials"
