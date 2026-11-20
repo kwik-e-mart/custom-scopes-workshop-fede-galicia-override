@@ -232,6 +232,35 @@ CREDENTIAL_ENV='[{"name":"PORT","value":"8080"},{"name":"APIM_APP_ID","valueFrom
   [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
 }
 
+@test "el deploy de un scope sin link no borra el secret que usa otro scope de la aplicacion" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$APP_NRN" '{"environment":"prd"}')]"
+  echo '{}' >"$KUBECTL_CLUSTER/payments.apim-credentials-4"
+  run_step
+  [ "$status" -eq 0 ]
+  [ -e "$KUBECTL_CLUSTER/payments.apim-credentials-4" ]
+  ! grep -qF '"delete"' "$KUBECTL_CALLS_LOG" || false
+}
+
+@test "las APIs linkeadas desde otros scopes de la aplicacion tambien definen la credencial" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN"),$(link "API Manager" "$APP_NRN" '{"environment":"prd"}' svc-2)]"
+  NP_MOCK_SERVICES='{"svc-1":{"attributes":{"api_id":"cz-py-312-ms--b2c"}},"svc-2":{"attributes":{"api_id":"otra--b2c"}}}'
+  APIM_SECRETS="[$(apim_secret cz-py-312-ms--b2c payments d604afed s3cr3t),$(apim_secret otra--b2c payments 0a1b2c3d s3cr3t)]"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"*"otra--b2c"* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+}
+
+@test "un api_id que no es un valor de label avisa y no se busca" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN")]"
+  NP_MOCK_SERVICES='{"svc-1":{"attributes":{"api_id":"x,consumer-ns!=payments"}}}'
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"*"x,consumer-ns!=payments"* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+  ! grep -qF '"get","secret","-n","apim-credentials"' "$KUBECTL_CALLS_LOG" || false
+}
+
 @test "un link de otro servicio no inyecta la credencial" {
   NP_MOCK_LINKS="[$(link "Servicios POM" "$SCOPE_NRN")]"
   run_step
@@ -248,7 +277,7 @@ CREDENTIAL_ENV='[{"name":"PORT","value":"8080"},{"name":"APIM_APP_ID","valueFrom
   [[ "$output" == *"⚠️"*"cz-py-312-ms--b2c"* ]] || false
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
-  [ ! -e "$KUBECTL_CLUSTER/payments.apim-credentials-4" ]
+  [ -e "$KUBECTL_CLUSTER/payments.apim-credentials-4" ]
 }
 
 @test "la credencial de otro namespace no se usa" {
@@ -317,6 +346,24 @@ CREDENTIAL_ENV='[{"name":"PORT","value":"8080"},{"name":"APIM_APP_ID","valueFrom
   [ "$status" -ne 0 ]
   [[ "$output" != *NEXT_STEP_RAN* ]] || false
   [[ "$output" == *"apim-credentials-4"* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+}
+
+@test "un secret de suscripcion sin app-id no cuenta como credencial" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN")]"
+  APIM_SECRETS="[$(apim_secret cz-py-312-ms--b2c payments d604afed s3cr3t | jq -c 'del(.metadata.labels["app-id"])')]"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+}
+
+@test "sin namespace del provider en el contexto corta el deployment" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN")]"
+  CONTEXT=$(echo "$CONTEXT" | jq -c 'del(.providers)')
+  run_step
+  [ "$status" -ne 0 ]
+  [[ "$output" != *NEXT_STEP_RAN* ]] || false
   [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
 }
 

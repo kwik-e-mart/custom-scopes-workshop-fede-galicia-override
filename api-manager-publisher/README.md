@@ -87,8 +87,10 @@ actualiza el Secret de la aplicación con server-side apply, así que una creden
 
 El link se busca por `selectors.provider` (`APIM_PUBLISHER_PROVIDER`, `API Manager`), a nivel scope o a nivel
 aplicación con dimensiones que coinciden con las del scope, igual que en `pom-services/override/`. Sin link, el paso
-no inyecta nada y borra el Secret de la aplicación. Con link y sin credencial en `apim-credentials`, o con APIs
-linkeadas que tienen credenciales distintas, avisa y el deploy sigue sin las variables. El agente necesita leer
+no inyecta nada; el Secret de la aplicación se borra solo cuando ningún scope de la aplicación tiene link. La
+credencial se arma con las APIs linkeadas en toda la aplicación, así todos sus scopes del namespace usan el mismo
+Secret. Sin credencial en `apim-credentials`, o con APIs linkeadas que tienen credenciales distintas, avisa y el
+deploy sigue sin las variables. El agente necesita leer
 Secrets en `apim-credentials` y crear, actualizar y borrar Secrets en los namespaces de las aplicaciones. Para usarlo, el channel del scope
 tiene que pasar `--overrides-path=<repo>/api-manager-publisher/override`.
 
