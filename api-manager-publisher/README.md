@@ -73,17 +73,26 @@ Las URLs del API Publisher y del API Subscriber salen de `apim-urls.json` según
 
 ## Override del scope: la credencial en el deployment
 
-`override/` agrega a cada deploy de un scope linkeado a este servicio la credencial de APIM del namespace como
-variables de entorno del container `application`:
+`override/` agrega a cada deploy de un scope linkeado a este servicio la credencial de APIM como variables de entorno
+del container `application`, desde un Secret de la aplicación, `apim-credentials-<application_id>`, en el namespace
+del provider:
 
 | Variable | Sale de |
 |---|---|
-| `APIM_APP_ID` | Secret `secret-apim-b2c`, key `app_id` |
-| `APIM_APP_KEY` | Secret `secret-apim-b2c`, key `app_key` |
+| `APIM_APP_ID` | label `app-id` del Secret de la suscripción, guardado en la key `app_id` |
+| `APIM_APP_KEY` | key `api_key` del Secret de la suscripción, guardada en la key `app_key` |
+
+El Secret de la suscripción es el que deja el API Subscriber en `APIM_CREDENTIALS_NAMESPACE` (`apim-credentials`) con
+los labels `consumer-ns` (el namespace del provider) y `api-id` (el `api_id` del servicio linkeado). Cada deploy
+actualiza el Secret de la aplicación con server-side apply, así que una credencial rotada llega en el próximo deploy.
 
 El link se busca por `selectors.provider` (`APIM_PUBLISHER_PROVIDER`, `API Manager`), a nivel scope o a nivel
 aplicación con dimensiones que coinciden con las del scope, igual que en `pom-services/override/`. Sin link, el paso
-no toca el deployment; con link y sin el Secret en el namespace, el deploy falla. Para usarlo, el channel del scope
+no inyecta nada; el Secret de la aplicación se borra solo cuando ningún scope de la aplicación tiene link. La
+credencial se arma con las APIs linkeadas en toda la aplicación, así todos sus scopes del namespace usan el mismo
+Secret. Sin credencial en `apim-credentials`, o con APIs linkeadas que tienen credenciales distintas, avisa y el
+deploy sigue sin las variables. El agente necesita leer
+Secrets en `apim-credentials` y crear, actualizar y borrar Secrets en los namespaces de las aplicaciones. Para usarlo, el channel del scope
 tiene que pasar `--overrides-path=<repo>/api-manager-publisher/override`.
 
 El mismo override frena el borrado del deployment de un scope que tiene una API publicada: busca en la aplicación
