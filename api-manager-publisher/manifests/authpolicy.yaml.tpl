@@ -32,3 +32,21 @@ spec:
           patternMatching:
             patterns:
               - predicate: auth.identity.metadata.labels['app-id'] == request.headers.app_id
+      response:
+        success:
+          headers:
+            X-App-Id:
+              plain:
+                selector: auth.identity.metadata.labels.app-id
+        unauthenticated:
+          headers:
+            Content-Type:
+              value: application/json
+          body:
+            value: '{"error":"AuthenticationRequired","message":"Authentication parameters missing"}'
+        unauthorized:
+          headers:
+            Content-Type:
+              value: application/json
+          body:
+            value: '{"error":"InvalidToken","message":"Authentication failed"}'

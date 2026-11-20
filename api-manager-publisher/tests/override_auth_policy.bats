@@ -92,6 +92,17 @@ set_application_type() {
     '{"apiKey":{"selector":{"matchLabels":{"api-id":"test-kuadrant--b2c"}},"allNamespaces":true},"credentials":{"customHeader":{"name":"app_key"}}}' ]
 }
 
+@test "la AuthPolicy responde como la de APIM: X-App-Id al backend y errores en JSON" {
+  run_step
+  local response
+  response=$(policies | jq -c '.[0].spec.defaults.rules.response')
+  [ "$(jq -c '.success.headers."X-App-Id"' <<<"$response")" = '{"plain":{"selector":"auth.identity.metadata.labels.app-id"}}' ]
+  [ "$(jq -c '.unauthenticated | [.headers."Content-Type".value, (.body.value | fromjson)]' <<<"$response")" = \
+    '["application/json",{"error":"AuthenticationRequired","message":"Authentication parameters missing"}]' ]
+  [ "$(jq -c '.unauthorized | [.headers."Content-Type".value, (.body.value | fromjson)]' <<<"$response")" = \
+    '["application/json",{"error":"InvalidToken","message":"Authentication failed"}]' ]
+}
+
 @test "con la API ya publicada sobre el scope usa el apiId de APIM" {
   NP_MOCK_SERVICES="[$(service "$APIM_PUBLISHER_PROVIDER" main apim-otro-id)]"
   run_step
