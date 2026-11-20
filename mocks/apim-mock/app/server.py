@@ -826,9 +826,17 @@ class App:
                 log(f"apim-mock: no se pudo borrar {path}: {error}")
 
     def restore_api_objects(self, failed, previous):
-        self.apply_api_objects(previous)
+        applied = self.try_apply_api_objects(previous)
         restored = {path for path, _ in api_manifests(previous, self.settings.get("route_paths") or ())}
         self.delete_paths([path for path in api_object_paths(failed["namespace"], failed["apiName"]) if path not in restored])
+        return applied
+
+    def try_apply_api_objects(self, publication):
+        try:
+            return self.apply_api_objects(publication)
+        except Exception as error:
+            log(f"apim-mock: falló la aplicación de {publication['apiId']}: {error}")
+            return False
 
     def complete_publication(self, api_id, revision):
         with self.lock:
@@ -837,7 +845,7 @@ class App:
                 return
             pending = dict(publication)
         previous = pending.pop("previous", None)
-        applied = pending["repository"].split("/", 1)[1].startswith("fail-") is False and self.apply_api_objects(pending)
+        applied = pending["repository"].split("/", 1)[1].startswith("fail-") is False and self.try_apply_api_objects(pending)
         with self.lock:
             publication = self.state["publications"].get(api_id)
             current = bool(publication) and publication.get("revision", 0) == revision and publication["status"] == "commited"
@@ -851,8 +859,6 @@ class App:
             elif current and previous:
                 self.state["publications"][api_id] = previous
                 self.save()
-                notification = (pending["callbackUrl"], "Modify RolledBack: Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); se restauraron los manifiestos anteriores.",
-                                {"level": "error", "status": "failed"})
             elif current:
                 del self.state["publications"][api_id]
                 self.save()
@@ -861,7 +867,10 @@ class App:
         if current and applied:
             self.delete_unused_objects(pending)
         elif current and previous:
-            self.restore_api_objects(pending, previous)
+            restored = "se restauraron los manifiestos anteriores." if self.restore_api_objects(pending, previous) \
+                else "no se pudieron restaurar todos los objetos anteriores; revisá el cluster."
+            notification = (pending["callbackUrl"], f"Modify RolledBack: Argo no sincronizó (mock: repo fail-* o el cluster rechazó los manifiestos); {restored}",
+                            {"level": "error", "status": "failed"})
         elif current or not publication:
             self.delete_api_objects(pending)
         if notification:

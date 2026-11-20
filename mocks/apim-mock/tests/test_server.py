@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
@@ -1124,6 +1125,41 @@ class PublishedObjectsTest(unittest.TestCase):
         _, state = call(app, "GET", "/mock/state")
         publication = state["publications"]["apim-svc-1"]
         self.assertEqual((publication["status"], publication["ref"], publication["apiName"]), ("registered", "master", "test-kuadrant"))
+
+    def test_si_no_puede_restaurar_la_version_anterior_lo_avisa(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        body = publish_body(branch="develop")
+        body["metadata"]["name"] = "otra-api"
+        k8s.fail_apply_for = "/authpolicies/"
+        call(app, "PUT", MODIFY, body)
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        self.assertIn("no se pudieron restaurar", notifier.calls[-1]["message"])
+
+    def test_una_excepcion_al_aplicar_no_deja_la_modificacion_en_curso(self):
+        app, _, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        with unittest.mock.patch.object(server.App, "apply_api_objects", side_effect=[ValueError("boom"), True]):
+            scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "failed")
+        _, state = call(app, "GET", "/mock/state")
+        self.assertEqual(state["publications"]["apim-svc-1"]["status"], "registered")
+        self.assertEqual(state["publications"]["apim-svc-1"]["ref"], "master")
+
+    def test_modificar_una_publicacion_guardada_por_la_version_anterior(self):
+        app, k8s, notifier, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        app.state["publications"]["apim-svc-1"].pop("revision")
+        status, _ = call(app, "PUT", MODIFY, publish_body(branch="develop"))
+        self.assertEqual(status, 200)
+        scheduler.run_all()
+        self.assertEqual(notifier.calls[-1]["status"], "success")
+        self.assertEqual(app.state["publications"]["apim-svc-1"]["revision"], 1)
 
     def test_un_repo_fail_en_la_modificacion_restaura_la_version_anterior(self):
         app, k8s, notifier, scheduler = make_app()
