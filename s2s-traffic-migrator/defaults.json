@@ -7,16 +7,20 @@
       "PEER_INGRESS_HOST": "s2s.ms.wd.bancogalicia.com.ar"
     },
     "dev": {
-      "PEER_CLUSTER": "arqc-delta-136"
+      "PEER_CLUSTER": "arqc-delta-136",
+      "APPS_DOMAIN": "apps.paas-dev.bancogalicia.com.ar"
     },
     "int": {
-      "PEER_CLUSTER": ""
+      "PEER_CLUSTER": "",
+      "APPS_DOMAIN": ""
     },
     "qas": {
-      "PEER_CLUSTER": ""
+      "PEER_CLUSTER": "",
+      "APPS_DOMAIN": ""
     },
     "prd": {
-      "PEER_CLUSTER": ""
+      "PEER_CLUSTER": "",
+      "APPS_DOMAIN": ""
     }
   },
   "aws-us-east-1": {
