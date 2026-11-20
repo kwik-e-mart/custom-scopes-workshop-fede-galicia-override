@@ -367,6 +367,64 @@ CREDENTIAL_ENV='[{"name":"PORT","value":"8080"},{"name":"APIM_APP_ID","valueFrom
   [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
 }
 
+@test "si una de las APIs linkeadas no tiene credencial avisa cual falta e inyecta la del namespace" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN"),$(link "API Manager" "$SCOPE_NRN" null svc-2)]"
+  NP_MOCK_SERVICES='{"svc-1":{"attributes":{"api_id":"cz-py-312-ms--b2c"}},"svc-2":{"attributes":{"api_id":"otra--b2c"}}}'
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"*"otra--b2c"* ]] || false
+  [ "$(app_env)" = "$CREDENTIAL_ENV" ]
+}
+
+@test "dos APIs con el mismo app-id y distinta api_key avisan y no inyectan ninguna" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN"),$(link "API Manager" "$SCOPE_NRN" null svc-2)]"
+  NP_MOCK_SERVICES='{"svc-1":{"attributes":{"api_id":"cz-py-312-ms--b2c"}},"svc-2":{"attributes":{"api_id":"otra--b2c"}}}'
+  APIM_SECRETS="[$(apim_secret cz-py-312-ms--b2c payments d604afed s3cr3t),$(apim_secret otra--b2c payments d604afed otra-clave)]"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"*"cz-py-312-ms--b2c"*"otra--b2c"* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+  ! grep -qF '"apply"' "$KUBECTL_CALLS_LOG" || false
+}
+
+@test "un link sin service_id avisa y sigue sin inyectar" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN" | jq -c 'del(.service_id)')]"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"*"the linked APIs"* ]] || false
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+  ! grep -qF '"get","secret","-n","apim-credentials"' "$KUBECTL_CALLS_LOG" || false
+}
+
+@test "dos links al mismo servicio leen el servicio y la credencial una sola vez" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN"),$(link "API Manager" "$APP_NRN" '{"environment":"qas"}')]"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(app_env)" = "$CREDENTIAL_ENV" ]
+  [ "$(grep -cF '"service","read"' "$NP_CALLS_LOG")" -eq 1 ]
+  [ "$(grep -cF '"get","secret","-n","apim-credentials"' "$KUBECTL_CALLS_LOG")" -eq 1 ]
+}
+
+@test "el secret y la referencia usan el id de la aplicacion del contexto" {
+  CONTEXT=$(echo "$CONTEXT" | jq -c '.application.id = 7')
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN")]"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.metadata.name, .metadata.labels["nullplatform.com/application-id"]' "$KUBECTL_CLUSTER/payments.apim-credentials-7" | paste -sd, -)" = "apim-credentials-7,7" ]
+  [[ "$(app_env)" == *'"name":"apim-credentials-7"'* ]] || false
+}
+
+@test "un secret de suscripcion sin api_key no cuenta como credencial" {
+  NP_MOCK_LINKS="[$(link "API Manager" "$SCOPE_NRN")]"
+  APIM_SECRETS="[$(apim_secret cz-py-312-ms--b2c payments d604afed s3cr3t | jq -c 'del(.data.api_key)')]"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"⚠️"* ]] || false
+  [ "$(app_env)" = "$NO_CREDENTIAL_ENV" ]
+  ! grep -qF '"apply"' "$KUBECTL_CALLS_LOG" || false
+}
+
 @test "si no puede listar los links corta el deployment" {
   export NP_MOCK_FAIL=1
   run_step
