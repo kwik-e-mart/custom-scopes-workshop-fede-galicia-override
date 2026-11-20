@@ -42,6 +42,7 @@ render() {
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
     egress_authpolicy:"sign", issuer_domain:"bancogalicia.com.ar", namespace_setup_enabled:"false",
     authpolicy_api_version:"kuadrant.io/v1",
+    apps_domain:(env.APPS_DOMAIN_CTX // ""),
     sigla:(env.SIGLA_CTX // ""),
     ingress_auth_policy_enabled:(env.INGRESS_AUTH_POLICY_CTX // "true"),
     managed_label:"egress-interceptor/managed",
@@ -75,6 +76,7 @@ rendered_files() {
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
     egress_authpolicy:"sign", issuer_domain:"bancogalicia.com.ar", namespace_setup_enabled:"false",
     authpolicy_api_version:"kuadrant.io/v1",
+    apps_domain:(env.APPS_DOMAIN_CTX // ""),
     managed_label:"egress-interceptor/managed",
     instance_key:"egress-interceptor/instance", service_id:"svc-test",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
@@ -137,6 +139,27 @@ rule() {  # <percent> [service]
   run render openshift "$(rule 100)"
   local r; r=$(named "$output" HTTPRoute egress-gw-reports)
   [ "$(echo "$r" | yq '.spec.hostnames | join(",")')" = "reports,reports.payments,reports.payments.svc,reports.payments.svc.cluster.local" ]
+}
+
+@test "en OpenShift la route tambien matchea el hostname con que el router publica el Route" {
+  APPS_DOMAIN_CTX=apps.paas-dev.example.ar run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" HTTPRoute egress-gw-reports)
+  [ "$(echo "$r" | yq '.spec.hostnames | join(",")')" = "reports,reports.payments,reports.payments.svc,reports.payments.svc.cluster.local,reports-payments.apps.paas-dev.example.ar" ]
+}
+
+@test "sin APPS_DOMAIN la route queda con las cuatro formas internas y el render no falla" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" HTTPRoute egress-gw-reports)
+  [ "$(echo "$r" | yq '.spec.hostnames | length')" = "4" ]
+}
+
+@test "en EKS el hostname del router de OpenShift no se agrega nunca" {
+  APPS_DOMAIN_CTX=apps.paas-dev.example.ar run render eks "$(rule 0)"
+  [ "$status" -eq 0 ]
+  local r; r=$(named "$output" HTTPRoute egress-gw-reports)
+  [ "$(echo "$r" | yq '.spec.hostnames | length')" = "4" ]
 }
 
 # ── el destino de cada rama depende del ORIGEN ───────────────────────────────

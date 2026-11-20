@@ -67,6 +67,11 @@ if [ -n "${GATEWAY_NAMESPACE_OVERRIDE:-}" ]; then
   GATEWAY_NAMESPACE="$GATEWAY_NAMESPACE_OVERRIDE"
   OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} GATEWAY_NAMESPACE=${GATEWAY_NAMESPACE}"
 fi
+APPS_DOMAIN="${APPS_DOMAIN:-}"
+if [ -n "${APPS_DOMAIN_OVERRIDE:-}" ]; then
+  APPS_DOMAIN="$APPS_DOMAIN_OVERRIDE"
+  OVERRIDES_ACTIVOS="${OVERRIDES_ACTIVOS} APPS_DOMAIN=${APPS_DOMAIN}"
+fi
 # La AuthPolicy que valida el wristband en el ingreso de ESTE cluster. La emite este service y
 # espera a que quede Enforced después de colgarle su route de ingreso: Kuadrant no aplica una
 # policy que no esté en el camino de ninguna route, y sin ese wait el destino aceptaría tráfico
@@ -116,7 +121,7 @@ CLUSTER_LABEL="${CLUSTER_LABEL:-$SITE}"
 ENVIRONMENT=$(printf %s "$NP_ACTION_CONTEXT" | jq -r '.notification.service.dimensions.environment // empty') \
   || ENVIRONMENT=""
 aplicar_defaults "$SITE" "$ENVIRONMENT" \
-  INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE PEER_GATEWAY_HOST PEER_INGRESS_HOST PEER_CLUSTER
+  INGRESS_GATEWAY_NAME GATEWAY_NAMESPACE PEER_GATEWAY_HOST PEER_INGRESS_HOST PEER_CLUSTER APPS_DOMAIN
 INGRESS_GATEWAY_NAME="${INGRESS_GATEWAY_NAME:-s2s-ingress}"
 GATEWAY_NAMESPACE="${GATEWAY_NAMESPACE:-gateways}"
 # Istio nombra el Service del Gateway como <gateway>-istio, así que el ingreso local se deriva y no
@@ -330,6 +335,9 @@ if [ "$(printf %s "$INTERCEPTIONS_JSON" | jq 'length')" -gt 0 ]; then
   fi
   require_match "$PEER_GATEWAY_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "peer_gateway_host"
   require_match "$PEER_INGRESS_HOST" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "peer_ingress_host"
+  if [ -n "$APPS_DOMAIN" ]; then
+    require_match "$APPS_DOMAIN" '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' "apps_domain"
+  fi
 
   APPLICATION_ID=$(printf %s "$CONTEXT" | jq -r '.application.id // empty')
   if [ -z "$APPLICATION_ID" ]; then
@@ -421,7 +429,7 @@ fi
 export NAMESPACE INTERCEPTIONS_JSON SERVICE_ID WRISTBAND_SECRET EGRESS_ISSUER PEER_CA_SECRET LISTEN_PORT
 export TOKEN_DURATION GATEWAY_CLASS PEER_GATEWAY_HOST PEER_INGRESS_HOST LOCAL_INGRESS_HOST PEER_TLS_MODE
 export LOCAL_INGRESS_SERVICE LOCAL_INGRESS_SERVICE_NAMESPACE LOCAL_INGRESS_TLS_MODE
-export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_CLUSTER
+export GATEWAY_NAMESPACE CLUSTER_LABEL INGRESS_AUTHPOLICY VAULT_KV_CLUSTER APPS_DOMAIN
 export LOCAL_JWKS_URL KEYS_NAMESPACE PEER_JWKS_URL INGRESS_GATEWAY_NAME JWKS_SERVICE_NAME
 export EGRESS_AUTHPOLICY ISSUER_DOMAIN SIGLA INGRESS_AUTH_POLICY_ENABLED
 if [ -n "${DEFAULTS_APLICADOS:-}" ]; then
