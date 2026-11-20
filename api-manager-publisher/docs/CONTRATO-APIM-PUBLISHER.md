@@ -11,6 +11,9 @@ implementada. La firma completa está en [`apim-publisher.openapi.json`](./apim-
 forma asíncrona: si sincroniza registra la API (`Synced` / `Registered`); si falla o vence el timeout borra
 los manifiestos (`RolledBack`).
 
+`PUT /v1/kuadrant/manifests/modify` recibe el mismo body y regenera una API ya publicada; si Argo no sincroniza,
+restaura los manifiestos anteriores. Es lo que usa la acción de actualizar.
+
 Respuestas: `200` con `status` `commited` / `synced` / `canceled`, o `400` con `{status: "error", message}`
 para validación o fallas del workflow (clone, push).
 

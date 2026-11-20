@@ -14,7 +14,8 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   `manifest_path`.
 - **Se publica la versión desplegada en el scope**: el release del deployment activo, como tag de git. Sin deployment activo
   la acción falla. Desplegar no republica: hay que ejecutar la acción de actualizar después de cada deploy.
-- **Actualizar = republicar** con la versión desplegada en ese momento o con otro rate limit (APIM sobrescribe la misma ruta).
+- **Actualizar = republicar** con la versión desplegada en ese momento o con otro rate limit: va a `PUT /v1/kuadrant/manifests/modify`
+  con el mismo body que el publish. Si APIM no tiene la API publicada, o no cambió nada, la acción falla con su mensaje.
 - **Las routes del scope nacen cerradas.** El override (ver abajo) cuelga en cada deploy una AuthPolicy
   con el mismo nombre que cada route, que solo acepta las credenciales de la API (`app_key` con label `api-id`,
   `app_id` igual al label `app-id`). Sin suscripciones no entra nadie por la route; el s2s entra con su token
