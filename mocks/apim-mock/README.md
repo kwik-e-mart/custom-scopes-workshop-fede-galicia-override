@@ -44,12 +44,13 @@ además la credencial que lee Authorino en `credentialSecrets.gatewayNamespace` 
 | Endpoint | Comportamiento |
 |---|---|
 | `POST /v1/kuadrant/manifests/publish` | Valida la firma, `sigla` y `project` incluidos (`400 {status: error, message}`); `200 commited` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
+| `PUT /v1/kuadrant/manifests/modify` | Mismo body que el publish, sobre una API ya registrada: `200 commited` y después avisa `success` al `callbackUrl` nuevo. Si el cluster rechaza los manifiestos o el repo empieza con `fail-`, avisa `failed` (`Modify RolledBack`) y vuelve a la versión anterior. Sin publicar → `404`; sin cambios en los manifiestos, o publicación, modificación o baja en curso → `400`. |
 | `POST /v1/kuadrant/manifests/delete` | Busca la API por `name`, `namespace`, `tenant` y `environment`: `202 Commited` con el `deletionId`; a los `callbackDelaySeconds` borra los objetos y avisa `success` (`Deleted`). Con legajo `l9990666` avisa `failed` (`RolledBack`) y deja la API. Sin manifests → `404`; publicación o baja en curso → `400`. |
 | `GET /v1/kuadrant/manifests/delete/{deletionId}` | Estado de la baja o `404`. |
 
 El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin callback de service,
-`<namespace>-<name>-<tenant>-1`. Publicar otra vez el mismo `apiId` con el mismo branch/tag/commit →
-`400 ya está publicada`; con otro ref → `200` (republicación).
+`<namespace>-<name>-<tenant>-1`. Publicar un `apiId` que ya existe → `400 ya se encontraba publicada`; para
+cambiarla se usa `modify`.
 
 Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadata.name`:
 - un `HTTPRoute` colgado de `metadata.parentRefs`, con el `hostname` publicado, los paths de `mock.routePaths` (`/whoami` por default, para simular lo que expone el swagger; vacío = `PathPrefix /`) y el backend de
@@ -58,9 +59,9 @@ Al terminar la publicación crea en `metadata.namespace`, con el nombre `metadat
 - una `AuthPolicy` que pide `app_key` (credenciales con `api-id` de la API) y `app_id` igual al de la credencial;
 - una `RateLimitPolicy` con `hitsPerWindow` por `window`, solo si vienen los dos.
 
-Al republicar borra lo que la versión anterior creó y la nueva ya no usa (otro nombre o namespace, o la
-`RateLimitPolicy` si se sacó el rate limit). Si el cluster los rechaza, avisa `failed` y borra la publicación
-y sus objetos. La baja los borra. Solo publica en los
+Al modificar borra lo que la versión anterior creó y la nueva ya no usa (otro nombre o namespace, o la
+`RateLimitPolicy` si se sacó el rate limit). Si el cluster rechaza una publicación, avisa `failed` y borra la
+publicación y sus objetos; si rechaza una modificación, restaura los de la versión anterior. La baja los borra. Solo publica en los
 namespaces de `credentialSecrets` (si no, `400`).
 
 **Utilidades**: `GET /mock/state` (todo el estado), `POST /mock/reset` (lo vacía), `GET /healthz`.
