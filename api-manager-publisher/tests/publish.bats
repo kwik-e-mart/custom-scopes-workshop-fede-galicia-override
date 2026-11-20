@@ -560,3 +560,41 @@ set_application_type() {
   [ "$(np_last_update_flag --status)" = "failed" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 000"*"Failed to connect"* ]]
 }
+
+as_update() {
+  NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq -c '.notification.type = "update"')
+}
+
+@test "el update republica con PUT a modify y el mismo body que el publish" {
+  queue_response 200 "$(pushed)"
+  run_step
+  as_update
+  queue_response 200 "$(pushed synced)"
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  [ "$(sed -n 2p "$CURL_CALLS_LOG" | cut -d' ' -f1-2)" = "PUT https://publisher.test/v1/kuadrant/manifests/modify" ]
+  [ "$(jq -cS . "$CURL_BODIES_DIR/1.json")" = "$(jq -cS . "$CURL_BODIES_DIR/0.json")" ]
+  [ -z "$(np_last_update_flag --status)" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"Modificación synced en APIM"* ]] || false
+  [ "$(np_last_update_flag --results | jq -r .api_id)" = "payments-test-kuadrant-b2c-1" ]
+}
+
+@test "el update no llama al publish y reaplica la AuthPolicy" {
+  as_update
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$status" -eq 0 ]
+  grep -q '^PUT https://publisher.test/v1/kuadrant/manifests/modify idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
+  ! grep -q '/v1/kuadrant/manifests/publish' "$CURL_CALLS_LOG"
+  grep -q 'apply -f -' "$KUBECTL_CALLS_LOG"
+}
+
+@test "si modify responde 404 el update falla con el detalle de APIM sin tocar las AuthPolicies" {
+  as_update
+  queue_response 404 '{"status":"error","message":"La API no tiene manifiestos publicados."}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM rechazó la modificación (HTTP 404)"*"no tiene manifiestos publicados"* ]] || false
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+}

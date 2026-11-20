@@ -12,13 +12,53 @@
     }
   ],
   "paths": {
+    "/v1/kuadrant/manifests/modify": {
+      "put": {
+        "tags": [
+          "Publicación de manifests"
+        ],
+        "summary": "Modifica una API ya publicada",
+        "description": "Mismo request que la publicación. La API se identifica igual que al publicar (`{info.title}--{tenant}` en `clusters/{cluster}/apis/{namespace}/{name}`) y debe existir con los 4 manifiestos (`httproute.yaml`, `ratelimitpolicy.yaml`, `authpolicy.yaml` y `apiproduct.yaml`) y `publishStatus: \"Published\"`; si no, no se realiza ningún cambio.\n\nSe guarda una copia de los 4 manifiestos, se regeneran y se publican (`Modify Commited`). Luego se monitorea Argo CD: si sincroniza se hace el commit `Modify Synced`, se registra la API y se hace `Modify Registered`; si falla o vence el timeout se restauran los 4 manifiestos previos con un commit `Modify RolledBack`.\n",
+        "operationId": "modifyManifests",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishManifestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Modificación realizada en Git; el campo `status` indica el estado según Argo CD.",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "400": {
+            "description": "Request inválido, faltan manifiestos, la API no está Published, no hay cambios en los manifiestos, hay una operación en curso o falló Git.",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "404": {
+            "description": "La API no tiene manifiestos publicados.",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
     "/v1/kuadrant/manifests/publish": {
       "post": {
         "tags": [
           "Publicación de manifests"
         ],
         "summary": "Publica manifests generados a partir de un repositorio con OpenAPI",
-        "description": "Clona el repositorio fuente (debe tener sopenapi.yamls, sopenapi.ymls u sopenapi.jsons en la raíz), genera shttproute.yamls, sratelimitpolicy.yamls, sauthpolicy.yamls y sapiproduct.yamls, y los publica en sclusters/{cluster}/apis/{namespace}/{name}s del repo de manifiestos del ambiente.\n\nSe debe indicar al menos uno de sbranchs, stags o scommits (precedencia: branch, tag, commit). El slegajos debe tener el formato sl#######s (por ejemplo sl0510541s).\n\nSi la API ya se encontraba publicada (su sapiproduct.yamls tiene spublishStatus: \"Published\"s) no se realiza ningún cambio y se responde 400.\n\nLuego se monitorea Argo CD de forma asíncrona: si sincroniza se registra la API y se hace el commit ssynceds/sRegistereds; si falla o vence el timeout se eliminan shttproutes, sratelimitpolicys y sauthpolicys, y sapiproduct.yamls queda con spublishStatus: \"Draft\"s, con un commit sRolledBacks.\n",
+        "description": "Clona el repositorio fuente (debe tener `openapi.yaml`, `openapi.yml` u `openapi.json` en la raíz), genera `httproute.yaml`, `ratelimitpolicy.yaml`, `authpolicy.yaml` y `apiproduct.yaml`, y los publica en `clusters/{cluster}/apis/{namespace}/{name}` del repo de manifiestos del ambiente.\n\nSe debe indicar al menos uno de `branch`, `tag` o `commit` (precedencia: branch, tag, commit). El `legajo` debe tener el formato `l#######` (por ejemplo `l0510541`).\n\nSi la API ya se encontraba publicada (su `apiproduct.yaml` tiene `publishStatus: \"Published\"`) no se realiza ningún cambio y se responde 400.\n\nLuego se monitorea Argo CD de forma asíncrona: si sincroniza se registra la API y se hace el commit `Publish Synced`/`Publish Registered`; si falla o vence el timeout se eliminan `httproute`, `ratelimitpolicy` y `authpolicy`, y `apiproduct.yaml` queda con `publishStatus: \"Draft\"`, con un commit `Publish RolledBack`.\n",
         "operationId": "generateAndPublishManifests",
         "requestBody": {
           "content": {
@@ -39,8 +79,9 @@
                     "legajo": "l0510541",
                     "callbackUrl": "https://null.example.com/null/callback",
                     "origen": "portal",
+                    "sigla": "zosc",
+                    "project": "zosc-zosconnect",
                     "metadata": {
-                      "name": "test-kuadrant",
                       "namespace": "test-kuadrant",
                       "labels": {
                         "app": "test-kuadrant"
@@ -50,8 +91,7 @@
                           "group": "gateway.networking.k8s.io",
                           "kind": "Gateway",
                           "name": "gw-echoserver",
-                          "namespace": "tenant-01-qas",
-                          "sectionName": "api"
+                          "namespace": "tenant-01-qas"
                         }
                       ],
                       "backend": {
@@ -72,7 +112,7 @@
         },
         "responses": {
           "200": {
-            "description": "Publicación realizada en Git. El campo sstatuss indica el estado según Argo CD (`commited`, `synced` o `canceled`).",
+            "description": "Publicación realizada en Git. El campo `status` indica el estado según Argo CD (`commited`, `synced` o `canceled`).",
             "content": {
               "application/json": {
                 "examples": {
@@ -82,7 +122,7 @@
                       "status": "commited",
                       "message": "La publicación fue pusheada correctamente a Git y Argo sigue sincronizándose.",
                       "apiId": "test-kuadrant-test-kuadrant-b2c",
-                      "hostname": "test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar",
+                      "hostname": "gali-test-kuadrant-b2c.paas-arqlab-dev.bancogalicia.com.ar",
                       "namespace": "test-kuadrant",
                       "apiName": "test-kuadrant",
                       "tenant": "b2c",
@@ -122,6 +162,165 @@
                   }
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "/v1/kuadrant/manifests/delete": {
+      "post": {
+        "tags": [
+          "Publicación de manifests"
+        ],
+        "summary": "Elimina los manifests publicados de una API",
+        "description": "Elimina `httproute.yaml`, `ratelimitpolicy.yaml` (tambien `ratelimit.yaml`), `authpolicy.yaml` y `apiproduct.yaml` de `clusters/{cluster}/apis/{namespace}/{name}--{tenant}` en el repo de manifiestos del ambiente y hace commit/push (`Commited`). La confirmación en Argo y la baja en el API register continúan en segundo plano; el estado se consulta con `GET /v1/kuadrant/manifests/delete/{deletionId}`.\n\nEstados: `Commited` y `Synced` (en progreso), `Deleted` (final OK) y `RolledBack` (final con error: se restauran los manifiestos previos). Al dar de baja la API en el API register se agrega el commit `Delete Registered`, que cierra la baja en Git (el commit `Deleted` solo se hace si la baja en el API register está deshabilitada). Si el request incluye `callbackUrl` (o si está configurada `PLATFORM_URL`), se envía el mismo callback que en la publicación: mensajes informativos en `Commited` y `Synced`, `status` `success` al quedar `Deleted` y `status` `failed` al revertir (`RolledBack`).",
+        "operationId": "deleteManifests",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteManifestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Manifiestos eliminados del repositorio; la baja sigue en curso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestDeletionStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request inválido, publicación/baja en curso o fallo de Git.",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "404": {
+            "description": "La API no tiene manifiestos publicados.",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/v1/kuadrant/reconciliations": {
+      "get": {
+        "tags": [
+          "Publicación de manifests"
+        ],
+        "summary": "Consulta lo que hizo el conciliador sobre publicaciones y bajas pendientes",
+        "description": "Devuelve, de la más reciente a la más antigua, cada intervención del conciliador: ambiente, tipo (`PUBLICATION`, `DELETION` o `REPOSITORY` si no pudo leer el repositorio), etapa en la que estaba la operación (`COMMITTED`, `SYNCED`, `DELETE_COMMITED`, `DELETE_SYNCED`), `apiId`, ruta de manifiestos, SHA del commit, `deletionId`, número de intento y resultado: `RESUMED` (la concluyó), `PENDING` (se reintenta en el próximo ciclo), `ERROR` (falló con una excepción) o `EXHAUSTED` (se agotaron los reintentos; requiere revisión manual). Las publicaciones retomadas también aparecen en `GET /publications` con el detalle `Retomada por el conciliador`.\n\nSolo registra intervenciones, no los ciclos sin pendientes. Los datos viven en memoria: se pierden al reiniciar y se conservan las últimas 500. Si el conciliador está deshabilitado (`manifest.reconciler.enabled=false`) la lista siempre está vacía. Filtros opcionales: `apiId` y `environment`.\n",
+        "operationId": "findReconciliations",
+        "parameters": [
+          {
+            "name": "apiId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReconciliationEntry"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/kuadrant/publications": {
+      "get": {
+        "tags": [
+          "Publicación de manifests"
+        ],
+        "summary": "Consulta los estados y los intentos de push de las publicaciones",
+        "description": "Devuelve, de la más reciente a la más antigua, cada publicación con su estado actual, el historial de estados (STARTED, COMMITTED, SYNCED, REGISTERED, ROLLED_BACK, ROLLBACK_FAILED, FAILED) y cada intento de push (push, número de intento, resultado OK/REJECTED/ERROR/REBASE_FAILED y detalle). Los datos viven en memoria: se pierden al reiniciar la aplicación y se conservan las últimas 500 publicaciones. Con el parámetro `apiId` se filtra por API.\n",
+        "operationId": "findPublications",
+        "parameters": [
+          {
+            "name": "apiId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicationTrace"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/kuadrant/manifests/delete/{deletionId}": {
+      "get": {
+        "tags": [
+          "Publicación de manifests"
+        ],
+        "summary": "Consulta el estado de una baja",
+        "operationId": "getDeletion",
+        "parameters": [
+          {
+            "name": "deletionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado actual de la baja.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestDeletionStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No existe una baja con ese identificador en esta instancia.",
+            "content": {
+              "application/json": {}
             }
           }
         }
@@ -191,28 +390,17 @@
             "type": "string",
             "description": "Namespace del Gateway.",
             "example": "tenant-01-qas"
-          },
-          "sectionName": {
-            "type": "string",
-            "description": "Listener del Gateway al que se asocia la ruta.",
-            "example": "api"
           }
         },
         "description": "Gateways a los que se asocia la ruta (al menos uno)."
       },
       "PublicationMetadata": {
         "required": [
-          "name",
           "namespace",
           "parentRefs"
         ],
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string",
-            "description": "Nombre de la API (y del HTTPRoute).",
-            "example": "test-kuadrant"
-          },
           "namespace": {
             "type": "string",
             "description": "Namespace donde se publican los recursos.",
@@ -239,14 +427,14 @@
           },
           "hostnames": {
             "type": "array",
-            "description": "Si se omite, se usa `{namespace}-{name}-{tenant}-{environment}.bancogalicia.com.ar`.",
+            "description": "Si se omite, se usa `{sigla}-{title}-{tenant}.{cluster}-{environment}.bancogalicia.com.ar`.",
             "example": [
-              "test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar"
+              "gali-test-kuadrant-b2c.paas-arqlab-dev.bancogalicia.com.ar"
             ],
             "items": {
               "type": "string",
-              "description": "Si se omite, se usa `{namespace}-{name}-{tenant}-{environment}.bancogalicia.com.ar`.",
-              "example": "[\"test-kuadrant-test-kuadrant-b2c-dev.bancogalicia.com.ar\"]"
+              "description": "Si se omite, se usa `{sigla}-{title}-{tenant}.{cluster}-{environment}.bancogalicia.com.ar`.",
+              "example": "[\"gali-test-kuadrant-b2c.paas-arqlab-dev.bancogalicia.com.ar\"]"
             }
           },
           "backend": {
@@ -261,6 +449,7 @@
           "metadata",
           "organization",
           "origen",
+          "project",
           "repository",
           "tenant"
         ],
@@ -328,12 +517,12 @@
           },
           "legajo": {
             "type": "string",
-            "description": "Usuario que publica, con el formato `l#######`. Se usa en el ticket del API register.",
+            "description": "Usuario que publica, con el formato `l#######`. Opcional; si se envía solo uno de `legajo`/`user`, se copia al otro.",
             "example": "l0510541"
           },
           "callbackUrl": {
             "type": "string",
-            "description": "URL (http/https) a la que se envía el callback con el resultado final (Synced, Registered o RolledBack). Si se omite, se usa `PLATFORM_URL` + `PLATFORM_CALLBACK_PATH`.",
+            "description": "URL (http/https) a la que se envía el callback con el resultado de la publicación (`status` `success` o `failed` solo al registrar o revertir). Si se omite, se usa `PLATFORM_URL` + `PLATFORM_CALLBACK_PATH`.",
             "nullable": true,
             "example": "https://null.example.com/null/callback"
           },
@@ -342,8 +531,341 @@
             "description": "Origen de la publicación.",
             "example": "portal"
           },
+          "sigla": {
+            "type": "string",
+            "description": "Sigla de la API. Obligatoria si no se envía `producerSigla`; si se envía solo una, se copia a la otra.",
+            "example": "gali"
+          },
+          "project": {
+            "type": "string",
+            "description": "Proyecto (business service) que se envía al API register como `service.project`.",
+            "example": "galicia-apps"
+          },
           "metadata": {
             "$ref": "#/components/schemas/PublicationMetadata"
+          },
+          "producerSigla": {
+            "type": "string",
+            "description": "Sigla del productor que se envía al API register como `service.producerSigla`. Obligatoria si no se envía `sigla`.",
+            "nullable": true,
+            "example": "gali"
+          },
+          "user": {
+            "type": "string",
+            "description": "Usuario que publica, que se envía al API register como `service.user`. Opcional.",
+            "nullable": true,
+            "example": "l0510541"
+          },
+          "platform": {
+            "type": "string",
+            "description": "Plataforma que se envía al API register como `service.platform`.",
+            "nullable": true,
+            "example": "kuadrant"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Canal que se envía al API register como `service.channel`.",
+            "nullable": true,
+            "example": "nullplatform"
+          }
+        }
+      },
+      "ManifestDeletionStatus": {
+        "type": "object",
+        "properties": {
+          "deletionId": {
+            "type": "string",
+            "description": "Identificador para consultar el estado de la baja."
+          },
+          "status": {
+            "type": "string",
+            "description": "Estado de la baja.",
+            "enum": [
+              "Commited",
+              "Synced",
+              "Deleted",
+              "RolledBack"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "apiId": {
+            "type": "string"
+          },
+          "apiName": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "tenant": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "manifestPath": {
+            "type": "string"
+          },
+          "deletedFiles": {
+            "type": "array",
+            "description": "Manifiestos eliminados del repositorio.",
+            "items": {
+              "type": "string",
+              "description": "Manifiestos eliminados del repositorio."
+            }
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "final": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeleteManifestRequest": {
+        "required": [
+          "cluster",
+          "environment",
+          "name",
+          "namespace",
+          "proyecto",
+          "tenant"
+        ],
+        "type": "object",
+        "properties": {
+          "sigla": {
+            "type": "string",
+            "description": "Sigla del proyecto. Obligatoria si no se envía `producerSigla`; si se envía solo una, se copia a la otra.",
+            "example": "kuad"
+          },
+          "proyecto": {
+            "type": "string",
+            "description": "Proyecto; se envía como `project` al API register. También se acepta con el nombre `project` (igual que en la publicación).",
+            "example": "kuadrantorqs"
+          },
+          "environment": {
+            "type": "string",
+            "description": "Ambiente. Determina el repositorio de manifiestos.",
+            "example": "dev",
+            "enum": [
+              "dev",
+              "int",
+              "qas",
+              "prd"
+            ]
+          },
+          "tenant": {
+            "type": "string",
+            "example": "b2c"
+          },
+          "cluster": {
+            "type": "string",
+            "description": "Cluster donde está publicada la API.",
+            "example": "cluster1"
+          },
+          "name": {
+            "type": "string",
+            "description": "Nombre de la API (`info.title` normalizado a minúsculas y guiones). La API se busca como `{name}--{tenant}`, el nombre con el que se publicó; también se acepta el nombre completo. Si se omite, se usa `apiName`.",
+            "example": "test-kuadrant"
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace de la API (`metadata.namespace` usado al publicar).",
+            "example": "test-kuadrant"
+          },
+          "version": {
+            "type": "string",
+            "description": "Versión registrada en el API register. Por defecto `v1`. Si se omite, se usa `apiVersion`.",
+            "nullable": true,
+            "example": "v1"
+          },
+          "legajo": {
+            "type": "string",
+            "description": "Usuario que solicita la baja, con el formato `l#######`. Opcional; si se envía solo uno de `legajo`/`user`, se copia al otro. Se usa en el ticket del API register.",
+            "example": "l0510541"
+          },
+          "callbackUrl": {
+            "type": "string",
+            "description": "URL (http/https) a la que se envía el callback con el resultado de la baja (`status` `success` o `failed` solo al finalizar o revertir). Si se omite, se usa `PLATFORM_URL` + `PLATFORM_CALLBACK_PATH`.",
+            "nullable": true,
+            "example": "https://null.example.com/null/callback"
+          },
+          "origen": {
+            "type": "string",
+            "description": "Origen de la baja.",
+            "nullable": true,
+            "example": "nullPlatform"
+          },
+          "apiName": {
+            "type": "string",
+            "description": "Nombre de la API que se envía al API register como `service.apiName`. Si se omite, se envía `name`. Si se envía sin `name`, también identifica la API a dar de baja (mismo formato que `name`).",
+            "nullable": true,
+            "example": "test-kuadrant"
+          },
+          "apiVersion": {
+            "type": "string",
+            "description": "Versión de la API que se envía al API register como `service.apiVersion`. Si se omite, se envía `version` (por defecto `v1`).",
+            "nullable": true,
+            "example": "1.0.0"
+          },
+          "producerSigla": {
+            "type": "string",
+            "description": "Sigla del productor que se envía al API register como `service.producerSigla`. Obligatoria si no se envía `sigla`.",
+            "nullable": true,
+            "example": "kuad"
+          },
+          "user": {
+            "type": "string",
+            "description": "Usuario que se envía al API register como `service.user`. Opcional.",
+            "nullable": true,
+            "example": "l0510541"
+          },
+          "platform": {
+            "type": "string",
+            "description": "Plataforma que se envía al API register como `service.platform`.",
+            "nullable": true,
+            "example": "kuadrant"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Canal que se envía al API register como `service.channel`.",
+            "nullable": true,
+            "example": "nullplatform"
+          }
+        }
+      },
+      "ReconciliationEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "apiId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "deletionId": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "PublicationTrace": {
+        "type": "object",
+        "properties": {
+          "publicationId": {
+            "type": "string"
+          },
+          "apiId": {
+            "type": "string"
+          },
+          "apiName": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "tenant": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "currentState": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StateEvent"
+            }
+          },
+          "pushAttempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushAttempt"
+            }
+          }
+        }
+      },
+      "PushAttempt": {
+        "type": "object",
+        "properties": {
+          "push": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "result": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "StateEvent": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
           }
         }
       }

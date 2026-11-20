@@ -71,24 +71,32 @@ publish() {
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
-  log info "publisher: publicando $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release $DEPLOYED_RELEASE) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
-  apim_request POST /v1/kuadrant/manifests/publish "$body" ""
+  local method=POST endpoint=/v1/kuadrant/manifests/publish operation=publicación verb=publicando
+  if [ "$(notification_field '.type')" = "update" ]; then
+    method=PUT
+    endpoint=/v1/kuadrant/manifests/modify
+    operation=modificación
+    verb=modificando
+  fi
+
+  log info "publisher: $verb $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release $DEPLOYED_RELEASE) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
+  apim_request "$method" "$endpoint" "$body" ""
 
   local status message results
   status=$(echo "$APIM_BODY" | jq -r '.status // empty' 2>/dev/null) || status=""
   message=$(echo "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
   if [ "$APIM_HTTP_CODE" != "200" ]; then
-    fail "publisher: APIM rechazó la publicación (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
+    fail "publisher: APIM rechazó la $operation (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
   fi
   results=$(echo "$APIM_BODY" | jq -c '{api_id: .apiId, hostname: .hostname, manifest_path: .manifestPath}')
   case "$status" in
     commited|synced)
       reconcile_scope_auth_policies "$(echo "$results" | jq -r '.api_id // empty')" "$PROVIDER_NAMESPACE" "$SCOPE_ID" "$SCOPE_SLUG" "$service_id"
-      report_progress "Publicación $status en APIM ($(echo "$results" | jq -r .api_id)). APIM avisa cuando quede registrada." "$results" \
+      report_progress "${operation^} $status en APIM ($(echo "$results" | jq -r .api_id)). APIM avisa cuando quede registrada." "$results" \
         || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
       ;;
     *)
-      fail "publisher: APIM no pudo publicar (estado '$status'): $(apim_problem_detail "${message:-$APIM_BODY}")"
+      fail "publisher: APIM no pudo hacer la $operation (estado '$status'): $(apim_problem_detail "${message:-$APIM_BODY}")"
       ;;
   esac
 }
