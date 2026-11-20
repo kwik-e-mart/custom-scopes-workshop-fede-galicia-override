@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../../scripts/auth_policy"
+
+write_apim_auth_policy_removal() {
+  local policies
+  if ! policies=$(kubectl get authpolicy -A -l "$AUTH_POLICY_MANAGED_BY,scope_id=$SCOPE_ID" -o json); then
+    echo "❌ Failed to read the AuthPolicies of scope $SCOPE_ID: they would stay behind after the deployment is deleted" >&2
+    exit 1
+  fi
+  if [ "$(echo "$policies" | jq '.items | length')" -eq 0 ]; then
+    echo "ℹ️ Scope $SCOPE_ID has no AuthPolicies to remove"
+    return 0
+  fi
+  echo "$policies" | jq '{apiVersion: "v1", kind: "List", items: [.items[] | {apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace}}]}' \
+    | yq -P >"$OUTPUT_DIR/authpolicy-apim-$SCOPE_ID-$DEPLOYMENT_ID.yaml"
+  echo "🗑️ The AuthPolicies of scope $SCOPE_ID are deleted with its route"
+}
+
+write_apim_auth_policy_removal
