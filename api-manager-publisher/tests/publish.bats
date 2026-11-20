@@ -143,6 +143,20 @@ JSON
   [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
 }
 
+@test "un legajo que empieza con a tambien es valido" {
+  set_user_email A1015317@bancogalicia.com.ar
+  queue_response 200 "$(pushed)"
+  run_step
+  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "a1015317" ]
+}
+
+@test "un legajo con otra letra falla sin llamar a APIM" {
+  set_user_email b1015317@bancogalicia.com.ar
+  run_step
+  [ ! -s "$CURL_CALLS_LOG" ]
+  [ "$(np_last_update_flag --status)" = "failed" ]
+}
+
 @test "un mail con el legajo en mayuscula lo manda en minuscula" {
   set_user_email L1015317@BancoGalicia.com.ar
   queue_response 200 "$(pushed)"

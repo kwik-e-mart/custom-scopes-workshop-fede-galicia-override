@@ -73,9 +73,10 @@ Sobre los campos del form:
   FQDN); `percent` es qué **% del tráfico se atiende en EKS** — `0` todo en OpenShift, `100` todo en
   EKS. Significa lo mismo desde los dos orígenes: si eso implica cruzar de sustrato lo decide dónde
   corre el que llama, no el form.
-- **Ningún campo lleva una dirección de transporte.** La del Kuadrant remoto es configuración del
-  workflow (`PEER_GATEWAY_HOST`), y el FQDN del scope lo resuelve el service con `np scope list`. Si
-  un campo del form contiene un hostname de infraestructura, es un bug.
+- **Ningún campo lleva una dirección de transporte.** La del Kuadrant remoto sale de
+  `defaults.json` por sustrato y entorno (`PEER_GATEWAY_HOST`), y el FQDN del scope lo resuelve el
+  service con `np scope list`. Si un campo del form contiene un hostname de infraestructura, es un
+  bug.
 - **`scope` es un enum dinámico**: sale de `.scopes` del contexto del spec, que la plataforma filtra
   por el environment elegido. No hace falta external field ni agente para resolverlo.
 - **El namespace no es un campo**: sale del provider `container-orchestration`. Y es el del servicio

@@ -1,0 +1,44 @@
+{
+  "openshift": {
+    "global": {
+      "INGRESS_GATEWAY_NAME": "gw-mesh",
+      "GATEWAY_NAMESPACE": "apim-gateways",
+      "PEER_GATEWAY_HOST": "eks-backend.external",
+      "PEER_INGRESS_HOST": "s2s.ms.wd.bancogalicia.com.ar"
+    },
+    "dev": {
+      "PEER_CLUSTER": "arqc-delta-136"
+    },
+    "int": {
+      "PEER_CLUSTER": ""
+    },
+    "qas": {
+      "PEER_CLUSTER": ""
+    },
+    "prd": {
+      "PEER_CLUSTER": ""
+    }
+  },
+  "aws-us-east-1": {
+    "global": {
+      "INGRESS_GATEWAY_NAME": "gateway-private",
+      "GATEWAY_NAMESPACE": "gateways"
+    },
+    "dev": {
+      "PEER_GATEWAY_HOST": "shard1.paas-dev.mesh-noprod.bancogalicia.com.ar",
+      "PEER_CLUSTER": "paas-dev"
+    },
+    "int": {
+      "PEER_GATEWAY_HOST": "shard1.paas-stg.mesh-noprod.bancogalicia.com.ar",
+      "PEER_CLUSTER": ""
+    },
+    "qas": {
+      "PEER_GATEWAY_HOST": "",
+      "PEER_CLUSTER": ""
+    },
+    "prd": {
+      "PEER_GATEWAY_HOST": "",
+      "PEER_CLUSTER": ""
+    }
+  }
+}

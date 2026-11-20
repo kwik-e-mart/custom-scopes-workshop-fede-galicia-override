@@ -6,8 +6,6 @@ código. **No es documentación de uso**: para eso está el [`README.md`](../REA
 | Archivo | Qué es |
 |---|---|
 | [`DISENO-SIN-OPENRESTY.md`](./DISENO-SIN-OPENRESTY.md) | Por qué se sacó OpenResty y qué lo reemplaza, con la evidencia de la migración |
-| [`DISENO-GITOPS.md`](./DISENO-GITOPS.md) | El diseño de la publicación a GitOps y sus gaps |
-| [`PLAN-GITOPS.md`](./PLAN-GITOPS.md) | El plan con el que se construyó esa feature, tarea por tarea |
 | [`PLAN-DESTINO-POR-SCOPE.md`](./PLAN-DESTINO-POR-SCOPE.md) | El pivote de destino por FQDN a destino por scope |
 | [`PLAN-CICLO-DE-VIDA.md`](./PLAN-CICLO-DE-VIDA.md) | Qué pasa con la regla una vez que la migración terminó |
 | [`PLAN-GATEWAY-POR-NAMESPACE.md`](./PLAN-GATEWAY-POR-NAMESPACE.md) | Un Gateway de egreso por namespace en vez de uno por regla |

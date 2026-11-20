@@ -39,7 +39,7 @@ Qué se manda a APIM y de dónde sale:
 | `project` | tag `namespace` de la notificación de la acción, o `APIM_PROJECT` |
 | `sigla` | primera parte de ese namespace, sin pasarla a mayúsculas, o `APIM_SIGLA` |
 | `cluster` | `cluster.id` del provider de `container-orchestration` (el mismo que usa el s2s), o `APIM_CLUSTER_NAME` |
-| `legajo` | mail de quien ejecuta la acción sin el dominio (`l1015317@bancogalicia.com.ar` → `l1015317`), o `LEGAJO_OVERRIDE`. Si no tiene el formato `l#######` la acción falla |
+| `legajo` | mail de quien ejecuta la acción sin el dominio (`l1015317@bancogalicia.com.ar` → `l1015317`), o `LEGAJO_OVERRIDE`. Si no tiene el formato `l#######` o `a#######` la acción falla |
 | `metadata.name`, `labels.app` | nombre del repo |
 | `metadata.namespace` | namespace del provider |
 | `metadata.parentRefs` | el Gateway de ingreso que usa el s2s: `INGRESS_GATEWAY_NAME` (`s2s-ingress`) en `GATEWAY_NAMESPACE` (`gateways`) |

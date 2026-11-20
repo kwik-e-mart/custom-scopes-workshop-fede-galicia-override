@@ -37,7 +37,6 @@ render() {
     peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, peer_ingress_host:$pin, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
-    vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-eks-plataforma",
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
@@ -46,12 +45,13 @@ render() {
     sigla:(env.SIGLA_CTX // ""),
     ingress_auth_policy_enabled:(env.INGRESS_AUTH_POLICY_CTX // "true"),
     managed_label:"egress-interceptor/managed",
+    instance_key:"egress-interceptor/instance", service_id:"svc-test",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx.json"
   # Como en producción: se rendea el directorio entero y se concatena. Las aserciones siguen
   # mirando el stream completo, así que lo que se asserta es lo que se termina aplicando.
   local out="$BATS_TEST_TMPDIR/out"
   rm -rf "$out"
-  render_all_manifests "$BATS_TEST_TMPDIR/ctx.json" "$out" cluster-keys >"$BATS_TEST_TMPDIR/list.txt" || return 1
+  render_all_manifests "$BATS_TEST_TMPDIR/ctx.json" "$out" >"$BATS_TEST_TMPDIR/list.txt" || return 1
   # El `---` va ENTRE archivos y no antes del primero: un separador al inicio agrega un documento
   # `null` al stream que después tienen que esquivar todas las aserciones.
   local f first=1
@@ -70,17 +70,17 @@ rendered_files() {
     peer_ca_secret:"s2s-remote-ca", peer_tls_mode:$ptls, peer_gateway_host:$peer, peer_ingress_host:$pin, local_ingress_host:$li, gateway_namespace:$gwns, cluster_label:"crc-openshift", keys_namespace:"kuadrant-system", peer_jwks_url:(env.PEER_JWKS // "http://peer-jwks:8080/payments/jwks.json"), ingress_authpolicy:"s2s-validator", ingress_gateway_name:$igw, vault_kv_mount:"kv/eks", vault_kv_cluster:"gal-poc", jwks_service:"jwks-egress", jwks_image:"httpd:test",
     local_ingress_service:($li | split(".")[0]), local_ingress_service_namespace:($li | split(".")[1]),
     local_ingress_tls_mode:(env.TLS_MODE // "skip-verify"),
-    vault_addr:"https://vault.example:8200", vault_namespace:"admin/ocp",
     keygen_image:"alpine/k8s:1.30.3", vault_approle_role_id:"role-id",
     vault_approle_secret:"vault-approle-creds", vault_secret_store:"vault-eks-plataforma",
     local_jwks_url:"http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json",
     egress_authpolicy:"sign", issuer_domain:"bancogalicia.com.ar", namespace_setup_enabled:"false",
     authpolicy_api_version:"kuadrant.io/v1",
     managed_label:"egress-interceptor/managed",
+    instance_key:"egress-interceptor/instance", service_id:"svc-test",
     platform:$platform, interceptions:$interceptions }' > "$BATS_TEST_TMPDIR/ctx2.json"
   local out="$BATS_TEST_TMPDIR/out2"
   rm -rf "$out"
-  render_all_manifests "$BATS_TEST_TMPDIR/ctx2.json" "$out" cluster-keys | xargs -n1 basename
+  render_all_manifests "$BATS_TEST_TMPDIR/ctx2.json" "$out" | xargs -n1 basename
 }
 
 # doc <render> <kind>: el documento de ese kind, sin comentarios. Se borran a propósito: varios
@@ -120,8 +120,8 @@ rule() {  # <percent> [service]
   run render openshift "$(rule 100)"
   [[ "$output" != *"openresty"* ]]
   [[ "$output" != *"nginx"* ]]
-  # El unico Deployment que emitimos es el que sirve el JWKS; ninguno se mete en el camino del dato.
-  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment") | .metadata.name' | grep -vx jwks-egress | grep -c .)" -eq 0 ]
+  # El service no emite ningun Deployment: nada nuestro se mete en el camino del dato.
+  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment") | .metadata.name' | grep -c .)" -eq 0 ]
 }
 
 @test "el Gateway se auto-provisiona como ClusterIP: un gateway de egreso no se expone afuera" {
@@ -131,28 +131,6 @@ rule() {  # <percent> [service]
   [[ "$gw" != *"LoadBalancer"* ]]
   [[ "$gw" == *'kuadrant.io/gateway: "true"'* ]]
   [[ "$gw" == *"from: Same"* ]]
-}
-
-@test "la AuthPolicy firma con la clave de SU namespace, en RS256" {
-  run render openshift "$(rule 100)"
-  local ap; ap=$(doc "$output" AuthPolicy sign)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].name')" = "wristband-key-payments-g0" ]
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.signingKeyRefs[0].algorithm')" = "RS256" ]
-  [[ "$ap" != *"ES256"* ]]
-}
-
-@test "la AuthPolicy cuelga del Gateway, no de cada HTTPRoute" {
-  run render openshift "$(rule 100)"
-  local ap; ap=$(doc "$output" AuthPolicy sign)
-  [ "$(echo "$ap" | yq '.spec.targetRef.kind')" = "Gateway" ]
-  [ "$(echo "$ap" | yq '.spec.targetRef.name')" = "egress-gw" ]
-}
-
-@test "el claim de identidad es el namespace, y el token va sin prefijo Bearer" {
-  run render openshift "$(rule 100)"
-  local ap; ap=$(doc "$output" AuthPolicy sign)
-  [ "$(echo "$ap" | yq '.spec.rules.response.success.headers.x-egress-token.wristband.customClaims.src_namespace.value')" = "payments" ]
-  [[ "$ap" != *"Bearer"* ]]
 }
 
 @test "la HTTPRoute matchea las cuatro formas del Host" {
@@ -403,10 +381,9 @@ rule() {  # <percent> [service]
     {service_name:"ledger",  scope:"prod", scope_fqdn:"otro.example.io", percent:0, ingress_route:"k-8-s-ledger-internal"}]')"
   [ "$status" -eq 0 ]
   echo "$output" | yq 'true' >/dev/null
-  # Un solo Gateway y una sola AuthPolicy de firma para los dos, pero un validador por destino:
-  # cada uno cuelga de la route de SU scope.
+  # Un solo Gateway para los dos, pero un validador por destino: cada uno cuelga de la route de
+  # SU scope.
   [ "$(echo "$output" | yq -N '.kind' | grep -cx Gateway)" -eq 1 ]
-  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -cx sign)" -eq 1 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -c '^s2s-validator-')" -eq 2 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .metadata.name' | grep -c '^egress-gw-')" -eq 2 ]
 }
@@ -415,7 +392,6 @@ rule() {  # <percent> [service]
   INGRESS_AUTH_POLICY_CTX=false run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep '^s2s-validator-')" ]
-  [ "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -cx sign)" -eq 1 ]
   [ "$(echo "$output" | yq -N 'select(.kind == "HTTPRoute") | .metadata.name' | grep -cx s2s-ingress-reports)" -eq 1 ]
 }
 
@@ -438,17 +414,16 @@ rule() {  # <percent> [service]
 @test "todo lo que emite el render queda marcado como propio" {
   # El `delete` borra por egress-interceptor/managed. Los alias `<svc>-local` que provisiona
   # Terraform NO la llevan, y por eso sobreviven al delete de la instancia.
-  # Con origen OS son seis: Gateway, AuthPolicy, DestinationRule del peer, la route de egreso,
-  # la de ingreso —que vive en OTRO namespace y por eso el delete la borra aparte— y el validador
-  # que cuelga de esa route.
+  # Con origen OS son cinco: Gateway, DestinationRule del peer, la route de egreso, la de ingreso
+  # y el validador que cuelga de esa route.
   run render openshift "$(rule 100)"
-  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 6 ]
+  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 5 ]
   [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 
   # Con origen EKS y rama local hay un DestinationRule más, y también tiene que quedar marcado o
   # el delete lo dejaría huérfano.
   run render eks "$(rule 30)"
-  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 6 ]
+  [ "$(echo "$output" | grep -c 'egress-interceptor/managed: "true"')" -eq 5 ]
   [ "$(echo "$output" | yq -N 'select(. != null and .metadata.labels.nullplatform != "true") | .kind' | grep -c .)" -eq 0 ]
 }
 
@@ -555,7 +530,6 @@ rule() {  # <percent> [service]
   run rendered_files openshift "$(rule 50)"
   [ "$status" -eq 0 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
-  [[ "$output" == *"20-authpolicy.yaml"* ]]
   [[ "$output" == *"30-destinationrule-peer.yaml"* ]]
   [[ "$output" == *"50-httproute-egress.yaml"* ]]
   [[ "$output" == *"60-httproute-ingress.yaml"* ]]
@@ -571,19 +545,13 @@ rule() {  # <percent> [service]
   [[ "$output" != *"60-httproute-ingress"* ]]
 }
 
-@test "sin ninguna regla quedan el Gateway, su AuthPolicy y el keygen de la clave" {
-  # El keygen acompaña a la AuthPolicy y no a las reglas: la clave de firma tiene que existir
-  # desde que hay una AuthPolicy que la referencia, haya o no tráfico declarado todavía.
+@test "sin ninguna regla queda sólo el Gateway" {
   # El validador NO está: cuelga de la route de un destino, y sin reglas no hay destino.
   run rendered_files openshift '[]'
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | grep -c .)" -eq 5 ]
+  [ "$(echo "$output" | grep -c .)" -eq 1 ]
   [[ "$output" == *"10-gateway.yaml"* ]]
-  [[ "$output" == *"20-authpolicy.yaml"* ]]
-  [[ "$output" == *"15-keygen-rbac.yaml"* ]]
-  [[ "$output" == *"16-keygen-jobs.yaml"* ]]
   [[ "$output" != *"25-authpolicy-validator.yaml"* ]]
-  [[ "$output" == *"17-jwks-endpoint.yaml"* ]]
 }
 
 @test "el orden de aplicación pone al Gateway antes de lo que lo referencia" {
@@ -605,6 +573,19 @@ rule() {  # <percent> [service]
   run render_manifests "$BATS_TEST_TMPDIR/vacio.json" "$BATS_TEST_TMPDIR/salida"
   [ "$status" -ne 0 ]
   [[ "$output" == *"no tiene ningún"* ]]
+}
+
+@test "el render consulta SIGNING_MANIFESTS_DIR y un valor malo ABORTA nombrandolo" {
+  SIGNING_MANIFESTS_DIR="$BATS_TEST_TMPDIR/no-existe"
+  run render openshift "$(rule 50)"
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"no-existe"* ]]
+}
+
+@test "el service no emite la AuthPolicy de firma: la crea el chart del namespace" {
+  run render openshift "$(rule 50)"
+  [ "$status" -eq 0 ] || false
+  [ -z "$(echo "$output" | yq -N 'select(.kind == "AuthPolicy") | .metadata.name' | grep -x sign)" ]
 }
 
 @test "un template que no compila ABORTA nombrando el archivo" {
@@ -670,20 +651,6 @@ rule() {  # <percent> [service]
 }
 
 
-@test "el keygen vive en el namespace de origen pero su Role de claves en kuadrant-system" {
-  run render openshift "$(rule 100)"
-  local roles
-  roles=$(echo "$output" | yq -N 'select(.kind == "Role") | .metadata.name + " " + .metadata.namespace')
-  [[ "$roles" == *"rotador payments"* ]]
-  [[ "$roles" == *"rotador-payments kuadrant-system"* ]]
-}
-
-@test "el Role en kuadrant-system lleva el namespace en el nombre: ahi conviven todos" {
-  run render openshift "$(rule 100)"
-  [[ "$output" == *"rotador-payments"* ]]
-  [[ "$output" != *$'name: rotador\n  namespace: kuadrant-system'* ]]
-}
-
 @test "el keygen NO lleva el label managed: el delete de la instancia no lo barre" {
   run render openshift "$(rule 100)"
   local marcados
@@ -694,133 +661,13 @@ rule() {  # <percent> [service]
   [[ "$marcados" != *"ServiceAccount"* ]]
 }
 
-@test "el ExternalSecret que crea el Job nombra la clave con la generacion" {
-  run render openshift "$(rule 100)"
-  local init
-  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"')
-  [[ "$init" == *'KID="wristband-key-${ORIGIN_NS}-g0"'* ]]
-  [[ "$init" == *'namespace: ${KEYS_NS}'* ]]
-}
-
-@test "el Secret que materializa el ExternalSecret lleva los labels de busqueda" {
-  run render openshift "$(rule 100)"
-  local init
-  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"')
-  [[ "$init" == *'egress-interceptor/wristband-key: "true"'* ]]
-  [[ "$init" == *'egress-interceptor/origin-namespace: ${ORIGIN_NS}'* ]]
-  [[ "$init" == *'egress-interceptor/key-generation: "0"'* ]]
-  [[ "$init" == *'nullplatform: "true"'* ]]
-}
-
-@test "el Job es idempotente: si ya hay clave para el namespace no genera otra" {
-  run render openshift "$(rule 100)"
-  local init
-  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"')
-  [[ "$init" == *'kubectl get secret -n "${KEYS_NS}" -o name | grep -q "^secret/${PREFIJO}"'* ]]
-  [[ "$init" == *"no se toca"* ]]
-}
-
-@test "la rotacion escribe el ExternalSecret en kuadrant-system y parchea la policy en el origen" {
-  run render openshift "$(rule 100)"
-  local rot
-  rot=$(echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."rotate.sh"')
-  [[ "$rot" == *'SECRET_PREFIX="wristband-key-${ORIGIN_NS}-g"'* ]]
-  [[ "$rot" == *'kubectl wait --for=condition=Ready "externalsecret/${SECRET_PREFIX}${gen}" -n "${KEYS_NS}"'* ]]
-  [[ "$rot" == *'kubectl patch authpolicy "${AUTH_POLICY_NAME}" -n "${ORIGIN_NS}"'* ]]
-}
-
-@test "los scripts embebidos son bash valido" {
-  run render openshift "$(rule 100)"
-  local cm; cm="$BATS_TEST_TMPDIR/cm"
-  mkdir -p "$cm"
-  echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."init.sh"' > "$cm/init.sh"
-  echo "$output" | yq -N 'select(.kind == "ConfigMap") | .data."rotate.sh"' > "$cm/rotate.sh"
-  bash -n "$cm/init.sh"
-  bash -n "$cm/rotate.sh"
-}
-
-@test "el Job y el CronJob del keygen declaran requests y limits" {
-  run render openshift "$(rule 100)"
-  local r
-  for r in "$(doc "$output" Job | yq '.spec.template.spec.containers[0].resources')" \
-           "$(doc "$output" CronJob | yq '.spec.jobTemplate.spec.template.spec.containers[0].resources')"; do
-    [[ "$r" == *"requests"* ]]
-    [[ "$r" == *"limits"* ]]
-    [[ "$r" == *"cpu"* ]]
-    [[ "$r" == *"memory"* ]]
-  done
-}
-
-@test "el Role del rotador en kuadrant-system tiene watch: kubectl wait lo necesita" {
-  run render openshift "$(rule 100)"
-  local verbos
-  verbos=$(echo "$output" | yq -N 'select(.kind == "Role" and .metadata.namespace == "kuadrant-system") | .rules[] | select(.resources[] == "externalsecrets") | .verbs | join(",")')
-  [[ "$verbos" == *"watch"* ]]
-  [[ "$verbos" == *"list"* ]]
-  [[ "$verbos" == *"patch"* ]]
-}
-
-@test "el agente puede otorgar todo lo que el Role del rotador pide" {
-  # El API server rechaza por escalada de privilegios la creacion de un Role que otorgue algo que
-  # el creador no tiene. Si el Role del rotador suma un verbo y np-agent-keys no, el apply falla.
-  run render openshift "$(rule 100)"
-  local rotador agente
-  rotador=$(echo "$output" | yq -N 'select(.kind == "Role" and .metadata.namespace == "kuadrant-system") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
-  # El Role del rotador sólo lo crea el service con NAMESPACE_SETUP_ENABLED=true, así que el RBAC
-  # se rinde con ese mismo flag: con el alta delegada al chart, estos permisos no se piden.
-  agente=$(NAMESPACE_SETUP_ENABLED=true KEYS_NAMESPACE=kuadrant-system AGENT_SA=np-agent AGENT_NAMESPACE=nullplatform-tools TARGET_NAMESPACES=payments \
-    gomplate -f "${BATS_TEST_DIRNAME}/../../rbac/np-agent-rbac.yaml.tpl" \
-    | yq -N 'select(.kind == "Role" and .metadata.name == "np-agent-keys") | .rules[] | select(.resources[] == "externalsecrets") | .verbs[]' | sort -u)
-  [ -n "$rotador" ]
-  [ -z "$(comm -23 <(echo "$rotador") <(echo "$agente"))" ]
-}
-
-# La URL del JWKS aparece en el validador y el endpoint que la sirve son cuatro objetos distintos.
-# Nadie los compara, y divergir se manifiesta como "no lo firmó ninguna clave conocida" — el mismo
-# modo de falla que tuvimos cuando el remoteRef apuntaba a una ruta de Vault que nadie escribía.
-@test "el jwksUrl del validador apunta EXACTAMENTE al endpoint que emitimos" {
+# El endpoint que sirve esa URL lo crea el chart del namespace. Divergir se manifiesta como "no lo
+# firmó ninguna clave conocida", el mismo modo de falla que ya tuvimos.
+@test "el jwksUrl del validador apunta al endpoint que sirve el chart en ESTE namespace" {
   run render eks "$(rule 0)"
-  local url svc port ruta
+  local url
   url=$(echo "$output" | yq -N 'select(.kind == "AuthPolicy" and (.metadata.name | test("^s2s-validator-"))) | .spec.defaults.rules.authentication."local-payments".jwt.jwksUrl')
-  svc=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .metadata.name + "." + .metadata.namespace')
-  port=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .spec.ports[0].port')
-  ruta=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.template.spec.volumes[0].projected.sources[0].secret.items[0].path')
-  [ "$url" = "http://${svc}.svc.cluster.local:${port}/${ruta}" ]
-}
-
-@test "el Secret que sirve el endpoint es el que materializa su ExternalSecret" {
-  run render eks "$(rule 0)"
-  local vol target clave item
-  vol=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.template.spec.volumes[0].projected.sources[0].secret.name')
-  item=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.template.spec.volumes[0].projected.sources[0].secret.items[0].key')
-  target=$(echo "$output" | yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "jwks-gal-poc-payments") | .spec.target.name')
-  clave=$(echo "$output" | yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "jwks-gal-poc-payments") | .spec.data[0].secretKey')
-  [ "$vol" = "$target" ]
-  [ "$item" = "$clave" ]
-}
-
-@test "el ExternalSecret lee la ruta de Vault donde el keygen escribe el JWKS" {
-  run render eks "$(rule 0)"
-  local remoto init
-  remoto=$(echo "$output" | yq -N 'select(.kind == "ExternalSecret" and .metadata.name == "jwks-gal-poc-payments") | .spec.data[0].remoteRef.key')
-  [ "$remoto" = "gal-poc/payments/jwks" ]
-  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap" and .metadata.name == "rotador-script") | .data."init.sh"')
-  [[ "$init" == *'VAULT_KV_BASE="${VAULT_KV_CLUSTER}/${ORIGIN_NS}"'* ]]
-  [[ "$init" == *'vault_kv_put_file "${VAULT_KV_BASE}/jwks" jwks'* ]]
-}
-
-@test "el Service y el Deployment del endpoint se seleccionan entre si" {
-  run render eks "$(rule 0)"
-  local sel lbl
-  sel=$(echo "$output" | yq -N 'select(.kind == "Service" and .metadata.name == "jwks-egress") | .spec.selector.app')
-  lbl=$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.selector.matchLabels.app')
-  [ "$sel" = "$lbl" ]
-  [ -n "$sel" ]
-}
-
-@test "el volumen del JWKS es opcional: el pod arranca antes de que exista la clave" {
-  run render eks "$(rule 0)"
-  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" and .metadata.name == "jwks-egress") | .spec.template.spec.volumes[0].projected.sources[0].secret.optional')" = "true" ]
+  [ "$url" = "http://jwks-egress.payments.svc.cluster.local:8080/gal-poc/payments/jwks.json" ]
 }
 
 @test "el SNI al ingreso local sale del dominio de los scopes, no del host del Gateway" {
@@ -870,17 +717,6 @@ rule() {  # <percent> [service]
     'auth.identity.iss == "https://egress.gal-poc.bancogalicia.com.ar"' ]
 }
 
-@test "el property del ExternalSecret de la clave escapa el punto de key.pem" {
-  run render eks "$(rule 0)"
-  local init rot
-  init=$(echo "$output" | yq -N 'select(.kind == "ConfigMap" and .metadata.name == "rotador-script") | .data."init.sh"')
-  rot=$(echo "$output" | yq -N 'select(.kind == "ConfigMap" and .metadata.name == "rotador-script") | .data."rotate.sh"')
-  [[ "$init" == *'property: key\\.pem'* ]] || false
-  [[ "$rot" == *'property: key\\.pem'* ]] || false
-  [[ "$init" != *'property: key.pem'* ]] || false
-  [[ "$rot" != *'property: key.pem'* ]]
-}
-
 @test "el workflow no fija ningun valor que el script ya resuelve distinto" {
   local wf="${BATS_TEST_DIRNAME}/../workflows/openshift/create.yaml"
   local bc="${BATS_TEST_DIRNAME}/../scripts/k8s/build_context"
@@ -899,8 +735,7 @@ rule() {  # <percent> [service]
 
 @test "ningun manifiesto nombra objetos que hoy crea el chart con otro nombre" {
   local dir="${BATS_TEST_DIRNAME}/../manifests" viejos
-  viejos=$(grep -rn "s2s-egress\|s2s-jwks\|wristband-rotator\|wristband-init-\|wristband-rotate-\|vault-ocp-plataforma" "$dir" \
-    | grep -v "spiffe_role\|vault_spiffe_role" || true)
+  viejos=$(grep -rn "s2s-egress\|s2s-jwks\|wristband-rotator\|wristband-init-\|wristband-rotate-\|vault-ocp-plataforma" "$dir" || true)
   [ -z "$viejos" ] || { echo "$viejos" >&2; false; }
 }
 
@@ -925,13 +760,11 @@ sin_sigla() {
     else . end)'
 }
 
-@test "con sigla, cada objeto y cada pod template llevan el label" {
+@test "con sigla, cada objeto lleva el label" {
   export SIGLA_CTX=AYRM
   run render openshift "$(rule 100)"
   [ "$status" -eq 0 ]
   [ "$(echo "$output" | yq -N 'select(.metadata and (.metadata.name | test("^s2s-validator") | not)) | .metadata.labels.sigla' | sort -u)" = "AYRM" ]
-  [ "$(echo "$output" | yq -N 'select(.kind == "Deployment" or .kind == "Job") | .spec.template.metadata.labels.sigla' | sort -u)" = "AYRM" ]
-  [ "$(echo "$output" | yq -N 'select(.kind == "CronJob") | (.spec.jobTemplate.metadata.labels.sigla, .spec.jobTemplate.spec.template.metadata.labels.sigla)' | sort -u)" = "AYRM" ]
 }
 
 @test "el label sigla no cambia nada más del render" {
@@ -1086,4 +919,36 @@ sin_sigla() {
     grep -q '{ name: PEER_TLS_MODE, type: environment }' "$dir/$f" \
       || { echo "falta PEER_TLS_MODE en el output de $f" >&2; false; }
   done
+}
+
+dueno_de() {  # <render> <kind> <nombre>
+  doc "$1" "$2" "$3" | yq '.metadata.labels["egress-interceptor/instance"] // ""'
+}
+
+@test "cada objeto por intercepción lleva el dueño: sin él, otra instancia del namespace lo barre" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  [ "$(dueno_de "$output" HTTPRoute egress-gw-reports)" = svc-test ] || false
+  [ "$(dueno_de "$output" AuthPolicy s2s-validator-k-8-s-reports-internal)" = svc-test ] || false
+}
+
+@test "la route de ingreso de OpenShift también lleva el dueño" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  [ "$(dueno_de "$output" HTTPRoute s2s-ingress-reports)" = svc-test ] || false
+}
+
+@test "los objetos compartidos del namespace NO llevan dueño: los aplican todas las instancias" {
+  run render eks "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  [[ "$(doc "$output" Gateway egress-gw)" != *"egress-interceptor/instance"* ]] || false
+  [[ "$(doc "$output" DestinationRule egress-gw-local-ingress)" != *"egress-interceptor/instance"* ]] || false
+}
+
+@test "el DestinationRule del peer tampoco lleva dueño" {
+  run render openshift "$(rule 100)"
+  [ "$status" -eq 0 ] || false
+  local dr; dr=$(doc "$output" DestinationRule egress-gw-peer)
+  [ -n "$dr" ] || false
+  [[ "$dr" != *"egress-interceptor/instance"* ]]
 }

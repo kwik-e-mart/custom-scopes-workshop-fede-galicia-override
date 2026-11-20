@@ -8,9 +8,11 @@ metadata:
   namespace: {{ $.namespace | quote }}
 {{- if .original.ports }}
   annotations:
+    {{ $.instance_key }}: {{ $.service_id | quote }}
     {{ $.original_selector_annotation }}: {{ .original.selector | data.ToJSON | quote }}
 {{- else }}
   labels:
+    {{ $.instance_key }}: {{ $.service_id | quote }}
     {{ $.managed_label }}: "true"
     {{ $.role_label }}: gateway-service
     nullplatform: "true"

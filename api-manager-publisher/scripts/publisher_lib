@@ -5,7 +5,7 @@ source "$PUBLISHER_LIB_DIR/subscriber_lib"
 source "$PUBLISHER_LIB_DIR/auth_policy"
 source "$PUBLISHER_LIB_DIR/../../shared/scripts/application_type"
 
-LEGAJO_PATTERN='^l[0-9]{7}$'
+LEGAJO_PATTERN='^[la][0-9]{7}$'
 WINDOW_PATTERN='^[0-9]+(ms|s|m|h)$'
 
 require_legajo() {
@@ -16,7 +16,7 @@ require_legajo() {
     LEGAJO="$LEGAJO_OVERRIDE"
   fi
   if [[ ! "$LEGAJO" =~ $LEGAJO_PATTERN ]]; then
-    fail "publisher: APIM necesita el legajo de quien ejecuta la acción (formato l#######) y sale de su mail; '$LEGAJO' no lo es. Para probar con otro usuario configurá LEGAJO_OVERRIDE en el agente."
+    fail "publisher: APIM necesita el legajo de quien ejecuta la acción (formato l####### o a#######) y sale de su mail; '$LEGAJO' no lo es. Para probar con otro usuario configurá LEGAJO_OVERRIDE en el agente."
   fi
 }
 

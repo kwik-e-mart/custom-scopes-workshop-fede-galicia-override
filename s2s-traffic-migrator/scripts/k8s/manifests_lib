@@ -107,9 +107,9 @@ fi
 
 if ! type -t render_all_manifests >/dev/null 2>&1; then
 render_all_manifests() {
-  local ctx="$1" outdir="$2" strategy="$3" shared signing
+  local ctx="$1" outdir="$2" shared signing
   shared=$(render_manifests "$ctx" "$outdir") || return 1
-  signing=$(render_manifests_from "$SIGNING_MANIFESTS_DIR/$strategy" "$ctx" "$outdir") || return 1
+  signing=$(render_manifests_from "$SIGNING_MANIFESTS_DIR" "$ctx" "$outdir") || return 1
   printf '%s\n%s\n' "$shared" "$signing" | grep -v '^$' | LC_ALL=C sort -u
 }
 fi

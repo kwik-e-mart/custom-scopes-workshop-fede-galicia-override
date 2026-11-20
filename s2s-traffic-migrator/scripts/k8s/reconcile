@@ -4,14 +4,13 @@ set -euo pipefail
 ACTION="${ARGS:-${1:-apply}}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/manifests_lib"
-source "$HERE/gitops_lib"
 
 GATEWAY_NAME="${EGRESS_GATEWAY_NAME:-egress-gw}"
 MANAGED_LABEL="egress-interceptor/managed"
 ROLE_LABEL="egress-interceptor/role"
+INSTANCE_KEY="egress-interceptor/instance"
 ORIGINAL_SELECTOR_ANNOTATION="egress-interceptor/original-selector"
 MANAGED_KINDS="httproute.gateway.networking.k8s.io,destinationrule.networking.istio.io,authpolicy.kuadrant.io"
-[ "${NAMESPACE_SETUP_ENABLED:-false}" = "true" ] && MANAGED_KINDS="${MANAGED_KINDS},gateway.gateway.networking.k8s.io"
 GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\"}"
 
 # `set -euo pipefail` está arriba pero NO alcanza: el runner de workflows del CLI ejecuta cada step
@@ -21,6 +20,13 @@ GATEWAY_SELECTOR="{\"gateway.networking.k8s.io/gateway-name\":\"${GATEWAY_NAME}\
 # El `exit` explícito SÍ corta la corrida (por eso el delete usa `return 0` al final, a propósito).
 # Conclusión operativa: todo comando cuyo fallo importe se guarda a mano con `|| die`.
 die() { log error "$@"; exit 1; }
+
+[ -n "${SERVICE_ID:-}" ] \
+  || die "egress-interceptor: falta service.id. Sin el no hay forma de distinguir los objetos de esta instancia de los de otra en el mismo namespace."
+
+owned_selector() {
+  printf '%s=true,%s=%s' "$MANAGED_LABEL" "$INSTANCE_KEY" "$SERVICE_ID"
+}
 
 # --type=json y no merge: un merge patch FUSIONA el mapa del selector en vez de reemplazarlo, y
 # el Service se queda sin endpoints. Sólo parecía andar mientras ambos selectores compartían la
@@ -80,7 +86,7 @@ revert_service() {
     log error "egress-interceptor: el selector de '$svc' no volvió a '$orig'. La annotation se deja."
     exit 1
   fi
-  kubectl -n "$NAMESPACE" annotate svc "$svc" "${ORIGINAL_SELECTOR_ANNOTATION}-"
+  kubectl -n "$NAMESPACE" annotate svc "$svc" "${ORIGINAL_SELECTOR_ANNOTATION}-" "${INSTANCE_KEY}-"
 }
 
 # En OpenShift el Service ya existe y se le roba el selector. En EKS no hay nada que robar: la app
@@ -163,12 +169,18 @@ route_conditions() {  # <ns> <route>
 }
 
 intercepted_services() {
-  kubectl -n "$NAMESPACE" get svc -o json \
-    | jq -r ".items[] | select(.metadata.annotations[\"$ORIGINAL_SELECTOR_ANNOTATION\"]) | .metadata.name"
+  local json
+  json=$(kubectl -n "$NAMESPACE" get svc -o json) || return 1
+  printf %s "$json" \
+    | jq -r --arg a "$ORIGINAL_SELECTOR_ANNOTATION" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" \
+        '.items[]
+         | select((.metadata.annotations // {})[$a])
+         | select((.metadata.annotations // {})[$k] == $id)
+         | .metadata.name'
 }
 
 own_gateway_services() {
-  kubectl -n "$NAMESPACE" get svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=gateway-service" \
+  kubectl -n "$NAMESPACE" get svc -l "$(owned_selector),${ROLE_LABEL}=gateway-service" \
     -o jsonpath='{.items[*].metadata.name}'
 }
 
@@ -180,8 +192,39 @@ delete_own_services() {  # <rol>
   # `!gateway.networking.k8s.io/gateway-name` excluye lo que auto-provisiona Istio para el
   # Gateway: hereda nuestras labels y no es nuestro para borrar.
   kubectl -n "$NAMESPACE" delete svc \
-    -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=$1,!gateway.networking.k8s.io/gateway-name" \
+    -l "$(owned_selector),${ROLE_LABEL}=$1,!gateway.networking.k8s.io/gateway-name" \
     --ignore-not-found
+}
+
+delete_interception_objects() {  # <svc>
+  kubectl -n "$NAMESPACE" delete svc -l "$(owned_selector),${ROLE_LABEL}=gateway-service" \
+    --field-selector "metadata.name=${1}" --ignore-not-found || return 1
+  kubectl -n "$NAMESPACE" delete svc -l "$(owned_selector),${ROLE_LABEL}=local-alias" \
+    --field-selector "metadata.name=${1}-local" --ignore-not-found || return 1
+  kubectl -n "$NAMESPACE" delete \
+    "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${1}" \
+    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${1}-scope" --ignore-not-found || return 1
+  kubectl -n "$NAMESPACE" delete \
+    "httproute.gateway.networking.k8s.io/s2s-ingress-${1}" --ignore-not-found || return 1
+}
+
+gc_undeclared() {
+  local intercepted own svc
+  intercepted=$(intercepted_services) \
+    || { log error "egress-interceptor: no se pudo listar los Services interceptados de $NAMESPACE."; return 1; }
+  own=$(own_gateway_services) \
+    || { log error "egress-interceptor: no se pudo listar los Services que creo el interceptor en $NAMESPACE."; return 1; }
+
+  for svc in $intercepted; do
+    if printf '%s\n' "$DECLARED_SERVICES" | grep -qx "$svc"; then continue; fi
+    revert_service "$svc"
+    delete_interception_objects "$svc" || return 1
+  done
+
+  for svc in $own; do
+    if printf '%s\n' "$DECLARED_SERVICES" | grep -qx "$svc"; then continue; fi
+    delete_interception_objects "$svc" || return 1
+  done
 }
 
 # Cada validador cuelga de UNA route y es nuestro entero, así que no hay merge con nadie: se
@@ -195,7 +238,7 @@ reconcile_ingress_validator() {  # <archivo rendeado>
 # cambiado entre el apply y el delete si el scope se redesplegó.
 delete_ingress_validator_rules() {
   kubectl -n "$NAMESPACE" delete authpolicy.kuadrant.io \
-    -l "${MANAGED_LABEL}=true" --ignore-not-found
+    -l "$(owned_selector)" --ignore-not-found
 }
 
 delete_route_validators() {
@@ -208,8 +251,6 @@ delete_route_validators() {
 }
 
 if [ "$ACTION" = "delete" ]; then
-  gitops_publish_removal \
-    || die "falló la publicación del borrado al repo gitops. No se borró nada del cluster."
   # Revertir ANTES de borrar el Gateway: al revés, el Service queda apuntando a un selector sin
   # endpoints y el namespace pierde el servicio.
   #
@@ -238,8 +279,9 @@ if [ "$ACTION" = "delete" ]; then
   SVC_JSON=$(kubectl -n "$NAMESPACE" get svc -o json) \
     || die "no se pudo listar los Services de $NAMESPACE. No se borra nada: no hay cómo verificar que ninguno siga apuntando al Gateway."
   STILL_HIJACKED=$(printf %s "$SVC_JSON" \
-    | jq -r --arg sel "$GATEWAY_SELECTOR" '.items[]
+    | jq -r --arg sel "$GATEWAY_SELECTOR" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" '.items[]
         | select((.metadata.labels // {})["gateway.networking.k8s.io/gateway-name"] | not)
+        | select((((.metadata.annotations // {})[$k] // (.metadata.labels // {})[$k]) // $id) == $id)
         | select((.spec.selector // {}) == ($sel | fromjson)) | .metadata.name') \
     || die "no se pudo interpretar el listado de Services de $NAMESPACE."
   if [ -n "$STILL_HIJACKED" ]; then
@@ -247,12 +289,10 @@ if [ "$ACTION" = "delete" ]; then
     log error "  No se borra nada más: sin el Gateway quedarían sin endpoints."
     exit 1
   fi
-  kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "${MANAGED_LABEL}=true" --ignore-not-found \
+  kubectl -n "$NAMESPACE" delete "$MANAGED_KINDS" -l "$(owned_selector)" --ignore-not-found \
     || die "falló el borrado de los objetos del interceptor en $NAMESPACE."
-  if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-    delete_ingress_validator_rules \
-      || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
-  fi
+  delete_ingress_validator_rules \
+    || die "no se pudieron sacar las reglas de $NAMESPACE del validador de ingreso."
   log info "reconcile delete OK en ns $NAMESPACE"
   # `return` y no `exit`: el workflow sourcea los steps, así que un exit mata la corrida entera y
   # se saltea los steps siguientes. exit queda sólo para los errores.
@@ -321,7 +361,6 @@ jq -n \
   --arg namespace "$NAMESPACE" \
   --arg gateway_name "$GATEWAY_NAME" \
   --arg gateway_class "$GATEWAY_CLASS" \
-  --arg wristband_secret "$WRISTBAND_SECRET" \
   --arg egress_issuer "$EGRESS_ISSUER" \
   --arg peer_ca_secret "$PEER_CA_SECRET" \
   --arg peer_tls_mode "$PEER_TLS_MODE" \
@@ -337,30 +376,17 @@ jq -n \
   --arg managed_label "$MANAGED_LABEL" \
   --arg sigla "${SIGLA:-}" \
   --arg role_label "$ROLE_LABEL" \
+  --arg instance_key "$INSTANCE_KEY" \
+  --arg service_id "$SERVICE_ID" \
   --arg original_selector_annotation "$ORIGINAL_SELECTOR_ANNOTATION" \
   --arg authpolicy_api_version "${AUTHPOLICY_API_VERSION:-kuadrant.io/v1}" \
-  --arg signing_strategy "$SIGNING_STRATEGY" \
-  --arg vault_addr "$NETWORKING_VAULT_ADDR" \
-  --arg vault_namespace "$NETWORKING_VAULT_NAMESPACE" \
-  --arg vault_spiffe_mount "$NETWORKING_VAULT_SPIFFE_MOUNT" \
-  --arg vault_spiffe_role "$NETWORKING_VAULT_SPIFFE_ROLE" \
-  --arg vault_token_secret "$NETWORKING_VAULT_TOKEN_SECRET" \
-  --arg keygen_image "$KEYGEN_IMAGE" \
-  --arg vault_approle_role_id "$VAULT_APPROLE_ROLE_ID" \
-  --arg vault_approle_secret "$VAULT_APPROLE_SECRET" \
-  --arg vault_secret_store "$VAULT_SECRET_STORE" \
   --arg local_jwks_url "$LOCAL_JWKS_URL" \
-  --arg keys_namespace "$KEYS_NAMESPACE" \
   --arg peer_jwks_url "$PEER_JWKS_URL" \
   --arg ingress_authpolicy "$INGRESS_AUTHPOLICY" \
   --arg ingress_gateway_name "$INGRESS_GATEWAY_NAME" \
-  --arg vault_kv_mount "$VAULT_KV_MOUNT" \
   --arg vault_kv_cluster "$VAULT_KV_CLUSTER" \
-  --arg jwks_service "$JWKS_SERVICE_NAME" \
-  --arg jwks_image "$JWKS_IMAGE" \
   --arg egress_authpolicy "$EGRESS_AUTHPOLICY" \
   --arg issuer_domain "$ISSUER_DOMAIN" \
-  --arg namespace_setup_enabled "$NAMESPACE_SETUP_ENABLED" \
   --arg ingress_auth_policy_enabled "$INGRESS_AUTH_POLICY_ENABLED" \
   --argjson listen_port "$LISTEN_PORT" \
   --argjson token_duration "$TOKEN_DURATION" \
@@ -413,95 +439,58 @@ rm -f "$MANIFEST_DIR"/*.yaml
 MANIFEST_LIST="$NP_OUTPUT_DIR/manifest-list.txt"
 # La redirección no enmascara el estado de salida (a diferencia de `local x=$(...)`), así que un
 # render fallido aborta acá y no sigue hasta un apply de nada.
-render_all_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" "$SIGNING_STRATEGY" > "$MANIFEST_LIST" \
-  || die "falló el render de los manifiestos (estrategia de firma '$SIGNING_STRATEGY'). No se aplicó nada."
+render_all_manifests "$RENDER_CONTEXT" "$MANIFEST_DIR" > "$MANIFEST_LIST" \
+  || die "falló el render de los manifiestos. No se aplicó nada."
 mapfile -t MANIFESTS < "$MANIFEST_LIST"
 if [ "${#MANIFESTS[@]}" -eq 0 ]; then
   log error "egress-interceptor: el render no produjo ningún manifiesto con contenido."
   exit 1
 fi
 
-keygen_jobs_present() {
-  kubectl -n "$NAMESPACE" get job "rotar-$NAMESPACE-init" >/dev/null 2>&1 \
-    && kubectl -n "$NAMESPACE" get cronjob "rotar-$NAMESPACE" >/dev/null 2>&1
-}
 
-jwks_endpoint_present() {
-  kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1 \
-    && kubectl -n "$NAMESPACE" get svc "$JWKS_SERVICE_NAME" >/dev/null 2>&1 \
-    && kubectl -n "$NAMESPACE" get externalsecret "$JWKS_SERVICE_NAME" >/dev/null 2>&1
-}
 
 VALIDATOR_FILE=""
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    if [ "$(basename "$f")" = "25-authpolicy-validator.yaml" ]; then
-      VALIDATOR_FILE="$f"
-    else
-      KEEP+=("$f")
-    fi
-  done
-  MANIFESTS=("${KEEP[@]}")
-fi
+KEEP=()
+for f in "${MANIFESTS[@]}"; do
+  if [ "$(basename "$f")" = "25-authpolicy-validator.yaml" ]; then
+    VALIDATOR_FILE="$f"
+  else
+    KEEP+=("$f")
+  fi
+done
+MANIFESTS=("${KEEP[@]}")
 
-# El alta de namespace —RBAC y scripts del rotador, Job y CronJob, endpoint de JWKS y la
-# AuthPolicy que firma— la hace el chart del cliente, una vez por namespace. Acá se emite sólo con
-# el flag en true, para el namespace donde el chart no corrió o quedó a medias. Los nombres son
-# los mismos que usa el chart, así que lo que creemos no compite: o ya está, o lo reemplaza.
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
-  log info "egress-interceptor: NAMESPACE_SETUP_ENABLED=false, el alta de $NAMESPACE la hace el chart."
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    case "$(basename "$f")" in
-      10-gateway.yaml|15-keygen-rbac.yaml|16-keygen-jobs.yaml|17-jwks-endpoint.yaml|20-authpolicy.yaml) ;;
-      *) KEEP+=("$f") ;;
-    esac
-  done
-  MANIFESTS=("${KEEP[@]}")
-fi
+# El alta de namespace —Gateway de egreso, clave de firma, endpoint de JWKS y la AuthPolicy que
+# firma— la hace el chart del cliente, una vez por namespace.
+KEEP=()
+for f in "${MANIFESTS[@]}"; do
+  case "$(basename "$f")" in
+    10-gateway.yaml) ;;
+    *) KEEP+=("$f") ;;
+  esac
+done
+MANIFESTS=("${KEEP[@]}")
 
 # El par ServiceEntry + DestinationRule que alcanza al peer es del chart: uno mete el host en el
 # registro de Istio y el otro define el SNI con el que se le habla. Separarlos entre dos dueños es
 # cómo se fabrica un BackendNotFound silencioso.
-if [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    case "$(basename "$f")" in
-      30-destinationrule-peer.yaml) ;;
-      *) KEEP+=("$f") ;;
-    esac
-  done
-  MANIFESTS=("${KEEP[@]}")
-  kubectl -n "$NAMESPACE" delete \
-    "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer" --ignore-not-found \
-    || die "no se pudo sacar el DestinationRule del peer que ahora administra el chart."
-fi
+KEEP=()
+for f in "${MANIFESTS[@]}"; do
+  case "$(basename "$f")" in
+    30-destinationrule-peer.yaml) ;;
+    *) KEEP+=("$f") ;;
+  esac
+done
+MANIFESTS=("${KEEP[@]}")
+kubectl -n "$NAMESPACE" delete \
+  "destinationrule.networking.istio.io/${GATEWAY_NAME}-peer" --ignore-not-found \
+  || die "no se pudo sacar el DestinationRule del peer que ahora administra el chart."
 
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && keygen_jobs_present; then
-  log info "egress-interceptor: el keygen de $NAMESPACE ya existe, no se reaplica el Job ni el CronJob."
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    [ "$(basename "$f")" = "16-keygen-jobs.yaml" ] || KEEP+=("$f")
-  done
-  MANIFESTS=("${KEEP[@]}")
-fi
-
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && jwks_endpoint_present; then
-  log info "egress-interceptor: el endpoint de JWKS de $NAMESPACE ya existe, no se reaplica."
-  KEEP=()
-  for f in "${MANIFESTS[@]}"; do
-    [ "$(basename "$f")" = "17-jwks-endpoint.yaml" ] || KEEP+=("$f")
-  done
-  MANIFESTS=("${KEEP[@]}")
-fi
 SERVICES_DIR="$NP_OUTPUT_DIR/services"
 mkdir -p "$SERVICES_DIR"
 rm -f "$SERVICES_DIR"/*.yaml
 render_manifests_from "$SERVICES_MANIFESTS_DIR" "$RENDER_CONTEXT" "$SERVICES_DIR" >/dev/null \
   || die "falló el render de los Services del interceptor. No se aplicó nada."
-gitops_publish "$RENDER_CONTEXT" "$MANIFEST_DIR" \
-  || die "falló la publicación de los manifiestos al repo gitops. NO se aplicó nada."
 if [ -f "$SERVICES_DIR/70-service-local.yaml" ]; then
   apply_manifests "$SERVICES_DIR/70-service-local.yaml" \
     || die "no se pudieron crear los alias <svc>-local; sin ellos el ingreso se queda sin backend."
@@ -512,7 +501,7 @@ if [ -n "$VALIDATOR_FILE" ]; then
   reconcile_ingress_validator "$VALIDATOR_FILE" \
     || die "falló el alta de las reglas de $NAMESPACE en el validador de ingreso $INGRESS_AUTHPOLICY."
 fi
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$INGRESS_AUTH_POLICY_ENABLED" = "false" ]; then
+if [ "$INGRESS_AUTH_POLICY_ENABLED" = "false" ]; then
   delete_route_validators \
     || die "no se pudieron sacar los validadores de las routes de una aplicación sin auth policy. El tráfico NO se desvió."
 fi
@@ -533,22 +522,11 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Available deploy \
   die "el deployment del data plane de $GATEWAY_NAME no llegó a Available. El tráfico NO se desvió."
 fi
 
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ]; then
-  if [ "$NAMESPACE_SETUP_ENABLED" = "true" ]; then
-    if ! kubectl -n "$NAMESPACE" wait --for=condition=Complete "job/rotar-$NAMESPACE-init" --timeout=180s; then
-      log error "el Job rotar-$NAMESPACE-init no terminó: sin él no hay clave de firma y la AuthPolicy nunca va a enforcear."
-      exit 1
-    fi
-  fi
-fi
-
-if [ "$SIGNING_STRATEGY" = "cluster-keys" ] && [ "$NAMESPACE_SETUP_ENABLED" != "true" ]; then
-  if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
-    log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
-    log error "  Sin él el validador no puede bajar las claves y el destino responde 401."
-    log error "  Ese objeto lo crea el chart del namespace, con validator.enabled."
-    exit 1
-  fi
+if ! kubectl -n "$NAMESPACE" get deploy "$JWKS_SERVICE_NAME" >/dev/null 2>&1; then
+  log error "no existe el endpoint de JWKS '$JWKS_SERVICE_NAME' en '$NAMESPACE'."
+  log error "  Sin él el validador no puede bajar las claves y el destino responde 401."
+  log error "  Ese objeto lo crea el chart del namespace, con validator.enabled."
+  exit 1
 fi
 
 # `Accepted=True` sólo dice que Kuadrant entendió el objeto. Sin esperar `Enforced=True`, el swap
@@ -557,12 +535,7 @@ if ! kubectl -n "$NAMESPACE" wait --for=condition=Enforced "authpolicy/$EGRESS_A
   log error "la AuthPolicy $EGRESS_AUTHPOLICY no llegó a Enforced=True. El tráfico NO se desvió."
   log error "$(kubectl -n "$NAMESPACE" get "authpolicy/$EGRESS_AUTHPOLICY" \
     -o jsonpath='{range .status.conditions[*]}  {.type}={.status} ({.reason}) {.message}{"\n"}{end}')"
-  if [ "$SIGNING_STRATEGY" = "spiffe" ]; then
-    log error "  Causa típica: el Secret $NETWORKING_VAULT_TOKEN_SECRET no existe en kuadrant-system o está vacío."
-    log error "  Lo puebla el CronJob de login a Vault (specs/prerequisites/manifests/55-vault-login-cronjob.yaml)."
-  else
-    log error "  Causa típica: el Secret de firma '$WRISTBAND_SECRET' no existe en $KEYS_NAMESPACE, o no está en PKCS#1."
-  fi
+  log error "  Causa típica: el Secret de firma '$WRISTBAND_SECRET' no existe en $KEYS_NAMESPACE, o no está en PKCS#1."
   exit 1
 fi
 
@@ -602,12 +575,12 @@ fi
 
 # Kuadrant NO enforcea una AuthPolicy que no esté en el camino de ninguna route, y no falla
 # ruidosamente: queda Accepted=True y el destino acepta tráfico sin validar el wristband. Se espera
-# siempre que el validador sea nuestro —con cluster-keys lo emite este service—, y no sólo con
-# origen OpenShift como cuando era un prerequisito del layer.
+# siempre que el validador sea nuestro, y no sólo con origen OpenShift como cuando era un
+# prerequisito del layer.
 if [ -n "$VALIDATOR_FILE" ]; then
   VALIDATOR_NS="$NAMESPACE"
   for POL in $(kubectl -n "$VALIDATOR_NS" get authpolicy.kuadrant.io \
-      -l "${MANAGED_LABEL}=true" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+      -l "$(owned_selector)" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     if ! kubectl -n "$VALIDATOR_NS" wait --for=condition=Enforced "authpolicy/$POL" --timeout=180s; then
       log error "el validador '$POL' no llegó a Enforced=True en $VALIDATOR_NS."
       log error "$(kubectl -n "$VALIDATOR_NS" get "authpolicy/$POL" \
@@ -636,7 +609,8 @@ for svc in $DECLARED_SERVICES; do
     [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }
     # ANTES del swap y con el fallo cortando: si la annotation no queda y el selector sí cambia,
     # el Service apunta al Gateway sin ningún registro de su selector original — irrecuperable.
-    kubectl -n "$NAMESPACE" annotate svc "$svc" "$ORIGINAL_SELECTOR_ANNOTATION=$CURRENT_SELECTOR" --overwrite \
+    kubectl -n "$NAMESPACE" annotate svc "$svc" \
+      "$ORIGINAL_SELECTOR_ANNOTATION=$CURRENT_SELECTOR" "$INSTANCE_KEY=$SERVICE_ID" --overwrite \
       || die "no se pudo anotar el selector original de '$svc'. NO se desvía: sin ese dato no habría vuelta atrás."
   fi
   set_selector "$svc" "$GATEWAY_SELECTOR" \
@@ -653,23 +627,7 @@ done
 # Mismo cuidado que en el delete: los dos listados se capturan por separado y con su chequeo. Un
 # fallo acá no borra nada de más, pero deja Services hijackeados que ya no están declarados —o sea
 # apuntando a un Gateway que no los va a atender— sin que nada lo diga.
-INTERCEPTED=$(intercepted_services) \
-  || die "no se pudo listar los Services interceptados de $NAMESPACE."
-OWN_GATEWAY=$(own_gateway_services) \
-  || die "no se pudo listar los Services que creó el interceptor en $NAMESPACE."
-STALE_SERVICES=$(printf '%s\n%s\n' "$INTERCEPTED" "$(printf '%s' "$OWN_GATEWAY" | tr ' ' '\n')" | grep -v '^$' | sort -u)
-for svc in $STALE_SERVICES; do
-  echo "$DECLARED_SERVICES" | grep -qx "$svc" && continue
-  revert_service "$svc"
-  kubectl -n "$NAMESPACE" delete svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=gateway-service" \
-    --field-selector "metadata.name=${svc}" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete svc -l "${MANAGED_LABEL}=true,${ROLE_LABEL}=local-alias" \
-    --field-selector "metadata.name=${svc}-local" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete \
-    "httproute.gateway.networking.k8s.io/${GATEWAY_NAME}-${svc}" \
-    "destinationrule.networking.istio.io/${GATEWAY_NAME}-${svc}-scope" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete \
-    "httproute.gateway.networking.k8s.io/s2s-ingress-${svc}" --ignore-not-found
-done
+gc_undeclared \
+  || die "no se pudieron limpiar las intercepciones que esta instancia ya no declara en $NAMESPACE."
 
 log info "reconcile apply OK en ns $NAMESPACE (gateway $GATEWAY_NAME, $(echo "$DECLARED_SERVICES" | grep -c .) servicio(s))"

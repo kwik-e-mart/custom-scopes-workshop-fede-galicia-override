@@ -69,78 +69,31 @@ encoding. Y el `kid` del token lo deriva Authorino del **nombre del Secret**: si
 el `kid` del JWKS que publica el destino, ninguna clave se prueba y todo da 401 con los objetos
 en verde.
 
-## Estrategia de firma
+## Firma del tráfico de egreso
 
-`S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` elige quién le da identidad al tráfico que sale del
-namespace. El header es `x-egress-token` en las dos, y el `Gateway`, las `HTTPRoute` y las
-`DestinationRule` son las mismas: lo único que cambia es la `AuthPolicy` de egreso y el validador
-del ingreso.
+El tráfico que sale del namespace lleva su identidad en el header `x-egress-token`: un wristband
+que firma Authorino con una clave del cluster, el `Secret <ns>-wristband-key` de `kuadrant-system`.
+El `Gateway`, las `HTTPRoute` y las `DestinationRule` no participan de la identidad: sólo la
+`AuthPolicy` de egreso y el validador del ingreso.
 
-| | `spiffe` | `cluster-keys` (default) |
-|---|---|---|
-| quién firma | Vault, con el secrets engine `spiffe` | Authorino, con una clave del cluster |
-| qué firma | un JWT-SVID | un wristband |
-| dónde vive el material de firma | dentro de Vault, no sale nunca | `Secret <ns>-wristband-key` en `kuadrant-system` |
-| qué hay en el cluster | el `client_token` de Vault, TTL 1 h, rotado cada 30 min, acotado a mintear un solo role | la clave privada RSA, sin rotación |
-| granularidad de la identidad | **una sola para toda la plataforma** (un role, un `sub`) | **una por namespace** (clave y JWKS propios, claim `src_namespace`) |
-| el destino puede autorizar por namespace | no | sí |
-| qué tiene que existir en el cluster | el CronJob de login y el validador de `spiffe` | el endpoint de JWKS, el `ExternalName` al JWKS del peer y la clave por namespace |
-| qué tiene que existir afuera | un mount `spiffe` en Vault y **un** role | nada |
+El validador del ingreso es del layer de plataforma y no lo crea el service, así que el orden de
+rollout no es negociable:
 
-**El default es `cluster-keys`.** Una instancia que reconcilie sin declarar la variable cambia de
-mecanismo en esa corrida. El validador del ingreso es del layer de plataforma y no lo crea el
-service, así que el orden de rollout no es negociable:
-
-1. Aplicar en el cluster el set de prerequisites de `cluster-keys` (`30-`, `35-`, `40-` y `50-`).
+1. Aplicar en el cluster el set de prerequisites (`30-`, `35-`, `40-` y `50-`).
 2. Recién después, reconciliar las instancias.
 
-Al revés, el tráfico que cruza muere con un 401 en el ingreso del peer. Para usar Vault, la
-instancia declara `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY: spiffe`.
+Al revés, el tráfico que cruza muere con un 401 en el ingreso del peer.
 
-Las dos estrategias no son intercambiables en caliente entre clusters: el que emite y el que valida
-tienen que estar en la misma. Y con `spiffe`, `TOKEN_DURATION` y `WRISTBAND_SECRET_NAME` dejan de
-tener efecto — el TTL pasa a ser config del role de Vault. `build_context` avisa por log si vienen
-declaradas con un valor distinto del default, en vez de aceptarlas en silencio.
+### La identidad es por namespace
 
-### Aislamiento: las dos estrategias NO son equivalentes
+Hay una clave y un JWKS **por namespace**, y el token lleva `iss` y `src_namespace` propios de ese
+namespace. El validador de destino los chequea explícitamente (`auth.identity.iss` y
+`auth.identity.src_namespace`) y puede decir "este namespace sí, este no"; el JWKS por namespace es
+lo que impide que otro los falsifique.
 
-**`spiffe` no distingue namespaces.** Es la diferencia más importante entre las dos y hay que
-tenerla presente antes de prender el default.
-
-Con `cluster-keys` hay una clave y un JWKS **por namespace**, y el token lleva `iss` y
-`src_namespace` propios de ese namespace. El validador de destino los chequea explícitamente
-(`auth.identity.iss` y `auth.identity.src_namespace`) y puede decir "este namespace sí, este no";
-el JWKS por namespace es lo que impide que otro los falsifique.
-
-Con `spiffe` hay **un solo role en Vault para toda la plataforma**:
-
-```
-spiffe/role/<NETWORKING_VAULT_SPIFFE_ROLE>
-  template: {"sub": "spiffe://<trust-domain>/s2s-egress"}
-```
-
-Todos los namespaces de los dos clusters mintean de ese role, así que todos los tokens salen con el
-**mismo `sub` y el mismo `iss`**, y la `aud` es el `PEER_GATEWAY_HOST` del emisor: una por sentido de
-tráfico, no por namespace. El validador exige esa `aud`, lo que corta el replay de un token minteado
-para otro destino, pero sólo si cada ingreso se alcanza con un nombre distinto: si los dos clusters
-usan el mismo `PEER_GATEWAY_HOST`, la `aud` no distingue sentidos. El validador de destino no tiene con qué
-distinguir de qué namespace vino un request: lo único que puede afirmar es "esto lo firmó nuestro
-Vault para nuestra plataforma". En la práctica, cualquier workload que alcance el Gateway de egreso
-de su namespace puede hablar con cualquier destino habilitado.
-
-Lo que sigue acotando el tráfico con `spiffe` es la capa de red y de ruteo —la `NetworkPolicy` del
-namespace, y que las `HTTPRoute` de egreso sólo existen para los servicios declarados en cada
-instancia— no el token.
-
-Si hace falta volver a distinguir por namespace, hay que ir a un role de Vault por namespace, con el
-namespace dentro del `sub`, y un predicado por namespace en el validador. No es un cambio de este
-service: es config de Vault más el `45-`.
-
-En las dos estrategias, además, quien pueda crear una `AuthPolicy` en cualquier namespace del cluster
-alcanza todos los `Secret` de `kuadrant-system` — porque ahí es donde Kuadrant crea el `AuthConfig`
-y donde Authorino resuelve `signingKeyRefs` y `sharedSecretRef`. Es la misma superficie que ya
-existe hoy, pero con `spiffe` el `Secret` alcanzable es uno para toda la plataforma en vez de uno
-por namespace. Si eso importa, se acota con RBAC sobre `authpolicies`.
+Quien pueda crear una `AuthPolicy` en cualquier namespace del cluster alcanza todos los `Secret` de
+`kuadrant-system` — porque ahí es donde Kuadrant crea el `AuthConfig` y donde Authorino resuelve
+`signingKeyRefs` y `sharedSecretRef`. Si eso importa, se acota con RBAC sobre `authpolicies`.
 
 ## Templating
 
@@ -166,101 +119,19 @@ Los manifests son templates de **gomplate**, renderizados contra un contexto JSO
   Los cuatro condicionales renderean vacío cuando su condición no se cumple. `kubectl apply -f`
   sobre un archivo vacío falla, así que el loop los descarta — y gomplate directamente no crea el
   archivo cuando la salida es vacía.
-- `manifests/signing/<estrategia>/` — el único objeto que cambia según la estrategia de firma. Se
-  rendea al mismo directorio que el set compartido y la lista de aplicación se reordena por nombre,
-  así que el `20-authpolicy.yaml` queda entre el `10-gateway` y el `30-destinationrule` igual que
-  antes. Ver [Estrategia de firma](#estrategia-de-firma).
+- `manifests/signing/` — el validador del ingreso. Se rendea al mismo directorio que el set
+  compartido y la lista de aplicación se reordena por nombre, así que queda entre el `10-gateway` y
+  el `30-destinationrule`. Ver [Firma del tráfico de egreso](#firma-del-tráfico-de-egreso).
 
   | archivo | objeto | cuándo se emite |
   |---|---|---|
-  | `cluster-keys/20-authpolicy.yaml.tpl` | `AuthPolicy` que firma el wristband con una clave del cluster | siempre, con `cluster-keys` |
-  | `spiffe/20-authpolicy.yaml.tpl` | `AuthPolicy` que mintea un JWT-SVID contra Vault | siempre, con `spiffe` |
+  | `25-authpolicy-validator.yaml.tpl` | `AuthPolicy` que valida el wristband en el ingreso | salvo que la aplicación quede exenta por su `application_type` |
 - `rbac/np-agent-rbac.yaml.tpl` (en la raíz del repo) — usa `{{ getenv "VAR" }}` porque se
   renderiza a mano, fuera del workflow.
 
 Los valores que vienen de los attributes de la instancia se tipan (`conv.ToInt`) o se escapan
 (`quote`) en el template: es lo que impide que un valor con saltos de línea inyecte claves en un
 manifest que después se aplica con credenciales del cluster.
-
-## Publicación a un repo GitOps
-
-El `reconcile` **sigue aplicando los manifiestos con `kubectl`**. Además, si hay un repo
-configurado, los publica antes de aplicarlos. Por ahora el repo es un **registro del estado
-deseado** que nadie reconcilia: es la pata 1 del camino a GitOps y lo que fija es el contrato de
-layout del que va a depender la pata 2.
-
-El árbol tiene **dos niveles**, porque los manifiestos no tienen la misma cardinalidad: cuatro son
-uno por namespace y dos son uno por servicio interceptado.
-
-```
-eks/<namespace>/                              openshift/<namespace>/
-├── 10-gateway.yaml                           ├── 10-gateway.yaml
-├── 20-authpolicy.yaml                        ├── 20-authpolicy.yaml
-├── 30-destinationrule-peer.yaml              ├── 30-destinationrule-peer.yaml
-├── 40-destinationrule-local-ingress.yaml     └── <svc>/
-└── <svc>/                                        ├── 50-httproute-egress.yaml
-    └── 50-httproute-egress.yaml                  └── 60-httproute-ingress.yaml
-```
-
-El segmento de substrato es el valor de la dimensión `site` de la instancia; no se configura. Va primero para que "todo el
-estado deseado de este cluster" sea un prefijo contiguo (`eks/`): en la pata 2 eso es un solo
-`Application` de Argo o un solo `Kustomization` de Flux.
-
-⚠️ El substrato hace de identificador del cluster, y eso sirve **mientras haya un cluster por
-substrato**. Dos EKS escribirían los dos en `eks/<namespace>/` y, como el publisher reemplaza el
-subárbol entero, se borrarían mutuamente sin que ninguno falle. Hay que volver a meter un segmento
-de cluster cuando caiga el Gap #1 o aparezca un segundo EKS por multi-región; el cambio es
-`gitops_subtree` y nada más.
-
-El publisher es **autoritativo sobre el subárbol del namespace**: cada corrida lo borra y lo
-reescribe, así que sacar una regla borra su hoja y el `delete` borra el subárbol entero. Corolario:
-**una sola instancia del service por (cluster, namespace)** — que ya es la única configuración sana,
-porque el `Gateway` se llama `s2s-egress` y es uno por namespace.
-
-### Configuración
-
-| variable | default | qué es |
-|---|---|---|
-| `GITOPS_REPO_URL` | — | la URL del repo, con la credencial adentro. Prende el publisher. |
-| `GITOPS_BRANCH` | `main` | branch destino. |
-| `GITOPS_PATH_PREFIX` | vacío | subdirectorio raíz, para que el repo pueda hostear otras cosas. |
-| `GITOPS_PUSH_RETRIES` | `5` | intentos de push ante contención. |
-
-**Sin URL el publisher está apagado** y el `reconcile` anda como siempre. Con URL presente,
-cualquier otro error es **fallo duro**: se aborta sin haber movido tráfico.
-
-La URL lleva la credencial (`https://$GITHUB_TOKEN@host/org/repo.git`) y llega **solo por el env del
-agente**, igual que `CLUSTER_LABEL`:
-
-```bash
-np-agent ... -command-executor-env "...,GITOPS_REPO_URL=https://$GITHUB_TOKEN@github.com/cliente/gitops.git"
-```
-
-`-command-executor-env` separa por **coma**, así que el valor no puede contener una (una URL de
-GitHub no tiene).
-
-Por llevar el token, la URL **no va en el `configuration:` de los workflows** —esos YAML están
-versionados en este repo— ni en sus `output:`, que es la maquinaria que el runner del CLI puede
-loguear. `build_context` no la lee: la resuelve `gitops_lib` en el momento de usarla. Todo log propio
-y el stderr de git pasan por un scrub que la reemplaza por `https://***@…`.
-
-Se aceptan **solo** dos formas de URL: `https://[credencial@]host[:puerto]/path`, o un path absoluto
-local. Cualquier otra cosa se rechaza antes de invocar git — en particular `ext::<comando>`, que es un
-transporte de git que ejecuta comandos arbitrarios. **Riesgo aceptado en esta versión:** el token
-queda en el `argv` del `git clone`, visible por `ps` para otros procesos del host; se cierra al pasar
-a GitHub App o a `http.extraHeader`.
-
-### Dos cosas para la pata 2
-
-**El path es ownership, no el namespace del objeto.** `60-httproute-ingress` declara un `HTTPRoute`
-en el namespace `gateways` y vive igual bajo el path del namespace de la app, porque su ciclo de vida
-es el de la intercepción. Un `Kustomization` sobre este subárbol **no puede forzar el namespace**:
-todos los manifiestos traen el suyo puesto, y reescribirlo mandaría la route de ingreso al namespace
-equivocado.
-
-**El subárbol describe el plano de ruteo, no el estado completo.** El swap de selector del `Service`
-y el alias `<svc>-local` son imperativos —se calculan en runtime a partir del `Service` real— y no
-salen de ningún template.
 
 ## Instalación
 
@@ -328,16 +199,18 @@ Son de la instalación, no del formulario, así que las pasa quien levanta el ag
 | `PATH` | tiene que resolver `bash` **>= 4**, `kubectl`, `jq`, `gomplate` y `git`. En macOS el `/bin/bash` 3.2 rompe el `logging` con *bad substitution*. |
 | `APPLICATION_TYPES_WITH_NO_AUTH_POLICY` | opcional: `application_type` de la metadata de la aplicación, separados por coma, cuyas routes de ingreso quedan sin validador (default `BFF,SPA`; vacía, todas lo llevan). Con `cluster-keys` el apply borra el validador que la route ya tuviera. |
 
-Y las del publisher GitOps, opcionales — ver **Configuración** más arriba:
-`GITOPS_REPO_URL`, `GITOPS_BRANCH`, `GITOPS_PATH_PREFIX`, `GITOPS_PUSH_RETRIES`.
-
-⚠️ **`GITOPS_REPO_URL` lleva la credencial adentro: nunca va en el `configuration:` de un workflow**,
 que está versionado. Va sólo por el env del agente.
 
 ### 2. Direcciones del sustrato: van en el `configuration:` de los workflows
 
 Esas sí están versionadas, en `workflows/openshift/*.yaml`. Son iguales para todas las instancias de
 un cluster y ninguna es un secreto:
+
+La mayoría no hace falta declararlas: `defaults.json` tiene el valor que
+corresponde a cada **sustrato** y **entorno**, y de ahí salen el Gateway de ingreso, su namespace,
+la dirección del peer y el cluster del que se arma `PEER_JWKS_URL`. Declarar una la saca de la
+tabla, y un `*_OVERRIDE` le gana a todo. El ingreso local y la URL del JWKS del peer no están en
+la tabla porque se derivan de los otros valores.
 
 | clave | qué es |
 |---|---|
@@ -347,16 +220,10 @@ un cluster y ninguna es un secreto:
 | `GATEWAY_NAMESPACE` | namespace del Gateway de ingreso. |
 | `INGRESS_AUTHPOLICY` | la `AuthPolicy` que valida el token en el ingreso. El service no la crea: espera a que quede `Enforced` después de colgarle su route. |
 | `EGRESS_ISSUER_URL` | el `iss` del token, con `{namespace}` sustituido. Default `https://egress.{namespace}.s2s.local`. Tiene que coincidir con el `__EGRESS_ISSUER__` del validador del cluster. |
-| `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` | `cluster-keys` (default) o `spiffe`. Cualquier otro valor aborta. Ver [Estrategia de firma](#estrategia-de-firma). |
-| `NETWORKING_VAULT_ADDR` | sólo con `spiffe`, **obligatoria**: `https://host[:puerto]` del Vault que mintea. Sin default. |
-| `NETWORKING_VAULT_NAMESPACE` | sólo con `spiffe`, opcional: el namespace de Vault Enterprise/HCP. Vacío no emite el header `X-Vault-Namespace`. |
-| `NETWORKING_VAULT_SPIFFE_MOUNT` | sólo con `spiffe`: path del mount del secrets engine. Default `spiffe`. |
-| `NETWORKING_VAULT_SPIFFE_ROLE` | sólo con `spiffe`: el role que mintea, uno para toda la plataforma. Default `s2s-egress`. |
-| `NETWORKING_VAULT_TOKEN_SECRET` | sólo con `spiffe`: Secret de `kuadrant-system` con el `client_token`, lo puebla el CronJob. Default `s2s-vault-token`. |
-| `WRISTBAND_SECRET_NAME` | sólo con `cluster-keys`: Secret con la clave de firma. `{namespace}` se interpola. |
+| `WRISTBAND_SECRET_NAME` | Secret con la clave de firma. `{namespace}` se interpola. |
 | `PEER_CA_SECRET` | CA con la que se valida el cert del peer, y el del ingreso local sólo con `LOCAL_INGRESS_TLS_MODE=certificate`. |
 | `GATEWAY_CLASS`, `LISTEN_PORT` | del Gateway. |
-| `TOKEN_DURATION` | sólo con `cluster-keys`. Con `spiffe` el TTL es config del role de Vault. |
+| `TOKEN_DURATION` | vigencia del wristband, en segundos. |
 
 ⚠️ **Los valores que vienen en este repo son los de la PoC** y hay que cambiarlos antes de usarlo.
 El más importante es `PEER_GATEWAY_HOST`: apunta a un overlay de Tailscale, que era el andamiaje
@@ -380,10 +247,6 @@ Este service **no provisiona el layer de plataforma**. Da por hecho, en cada clu
 
 Todo eso está como manifiesto listo para aplicar en
 [`specs/prerequisites/manifests/`](./specs/prerequisites/manifests).
-
-Con `GITOPS_REPO_URL` configurada, además: la **rama destino tiene que existir** en el repo —el
-publisher clona con `--branch`— y el token necesita permiso de escritura sobre ella. Si la rama está
-protegida contra push directo, el publisher falla en cada corrida y aborta el reconcile.
 
 ## Tests
 
@@ -425,10 +288,6 @@ con una lista explícita de namespaces (`TARGET_NAMESPACES`): mismo `ClusterRole
 un `RoleBinding` por namespace en vez de un `ClusterRoleBinding`. Las instrucciones para activarla
 están en el propio archivo. Ojo con dos cosas: la lista tiene que incluir `gateways`, y onboardear
 una app nueva pasa a requerir un `RoleBinding` más.
-
-Con el apply delegado a un reconciler de GitOps va `rbac/np-agent-rbac-gitops.yaml.tpl` en su lugar:
-sólo lectura, salvo el Secret de la api key del `api-manager-publisher`, que se emite por link y no
-puede publicarse en un repo.
 
 Ajustar `AGENT_SA`/`AGENT_NAMESPACE` al ServiceAccount real del agente en el cluster.
 

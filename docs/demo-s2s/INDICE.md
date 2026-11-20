@@ -4,6 +4,27 @@ Documentación de la PoC que sostiene a los dos services de este repo. No es de 
 particular: el `egress-interceptor` es el lado emisor y el `api-manager` publica sobre el mismo
 Gateway de ingreso, así que la demo los cruza.
 
+## Cómo está funcionando hoy (2026-11-10)
+
+Estos documentos son el registro de la PoC. El service siguió evolucionando después, y esto es lo
+que vale hoy aunque el resto de los archivos no lo diga:
+
+- **Una sola forma de firmar.** El wristband lo firma Authorino con la clave RSA del namespace
+  emisor, el `Secret <ns>-wristband-key` de `kuadrant-system`. La alternativa que minteaba un
+  JWT-SVID contra el secrets engine `spiffe` de Vault existió en el código y se sacó: ya no hay
+  `S2S_TRAFFIC_MIGRATOR_SIGNING_STRATEGY` ni variables `NETWORKING_VAULT_*`.
+- **El alta de namespace la hace el chart del cliente**, no el service: el Gateway de egreso, la
+  clave de firma, el endpoint de JWKS, la `AuthPolicy` que firma y el `DestinationRule` del peer.
+  El service emite las `HTTPRoute`, los `Service` y el validador de ingreso de cada scope.
+- **La configuración por sustrato y entorno sale de `defaults.json`**, no del `configuration:` del
+  workflow: `PEER_GATEWAY_HOST`, `PEER_INGRESS_HOST`, `PEER_CLUSTER`, `INGRESS_GATEWAY_NAME` y
+  `GATEWAY_NAMESPACE` tienen un default por `(sustrato, entorno)`, y una variable del agente lo pisa.
+- **No hay publicación a ningún repo GitOps.** El service aplica contra el cluster y nada más.
+
+Cuando estos documentos dicen **SPIFFE** se refieren al de Istio —identidad de workload por mTLS,
+`spiffe://cluster.local/ns/<ns>/sa/<sa>`, Ambient— evaluado como alternativa y descartado. No es el
+secrets engine de Vault del primer punto: mismo nombre, mecanismos distintos.
+
 ## Para correrla
 
 | Archivo | Qué es |

@@ -7,7 +7,6 @@ setup() {
   }
   command -v yq >/dev/null || { echo "bats necesita yq." >&2; return 1; }
   MANIFESTS="${BATS_TEST_DIRNAME}/../specs/prerequisites/manifests"
-  VALIDATOR="$MANIFESTS/45-authpolicy-validator-spiffe.yaml"
   VALIDATOR_KEYS="$MANIFESTS/40-authpolicy-validator.yaml"
 }
 
@@ -19,61 +18,6 @@ sustituir_keys() {  # <archivo>
       "$1"
 }
 
-sustituir() {  # <archivo>
-  sed -e 's|__NETWORKING_VAULT_ADDR__|https://vault.example.io:8200|g' \
-      -e 's|__NETWORKING_VAULT_NAMESPACE__|admin/spiffe|g' \
-      -e 's|__NETWORKING_VAULT_SPIFFE_MOUNT__|spiffe|g' \
-      -e 's|__NETWORKING_VAULT_ISSUER__|https://vault.example.io:8200|g' \
-      -e 's|__NETWORKING_VAULT_SPIFFE_SUB__|spiffe://td.example/egress-gw|g' \
-      -e 's|__S2S_INGRESS_AUDIENCE__|kuadrant.peer.example.io|g' \
-      "$1"
-}
-
-aud_predicate() {
-  sustituir "$VALIDATOR" |
-    yq '.spec.rules.authorization.emisor-habilitado.patternMatching.patterns[] | select(.predicate | test("aud")) | .predicate'
-}
-
-@test "el validador exige la audiencia: Authorino no la chequea solo" {
-  local p; p=$(aud_predicate)
-  [[ "$p" == *'"kuadrant.peer.example.io" in'* ]]
-}
-
-@test "el chequeo de aud acepta string o lista y no rompe si falta el claim" {
-  local p; p=$(aud_predicate)
-  [[ "$p" == *"has(auth.identity.aud) &&"* ]]
-  [[ "$p" == *"type(auth.identity.aud) == string ? [auth.identity.aud] : auth.identity.aud"* ]]
-}
-
-@test "el jwksUrl lleva el namespace de Vault en el path" {
-  local url
-  url=$(sustituir "$VALIDATOR" | yq '.spec.rules.authentication.vault-spiffe.jwt.jwksUrl')
-  [ "$url" = "https://vault.example.io:8200/v1/admin/spiffe/spiffe/.well-known/keys" ]
-}
-
-@test "el jwksUrl no se arma sólo con el mount: sin el namespace Vault devuelve 404" {
-  local linea
-  linea=$(grep "jwksUrl:" "$VALIDATOR")
-  [[ "$linea" == *"__NETWORKING_VAULT_NAMESPACE__"* ]]
-  [[ "$linea" == *"/v1/__NETWORKING_VAULT_NAMESPACE__/__NETWORKING_VAULT_SPIFFE_MOUNT__/"* ]]
-}
-
-@test "sustituidos los placeholders, el validador es YAML válido y no queda ninguno suelto" {
-  local out="$BATS_TEST_TMPDIR/45.yaml"
-  sustituir "$VALIDATOR" >"$out"
-  [ -z "$(grep -o '__[A-Z0-9_]*__' "$out")" ]
-  [ "$(yq '.kind' "$out")" = "AuthPolicy" ]
-  [ "$(yq '.metadata.name' "$out")" = "s2s-validator" ]
-  [ "$(yq '.spec.rules.authentication.vault-spiffe.credentials.customHeader.name' "$out")" = "x-egress-token" ]
-}
-
-@test "el validador crea el mismo objeto que el de cluster-keys, o el service espera uno que no existe" {
-  local spiffe keys
-  spiffe=$(yq '.metadata.name + "/" + .metadata.namespace' "$VALIDATOR")
-  keys=$(yq '.metadata.name + "/" + .metadata.namespace' "$MANIFESTS/40-authpolicy-validator.yaml")
-  [ "$spiffe" = "$keys" ]
-}
-
 @test "todo placeholder de los manifiestos está documentado en el README" {
   local readme="${BATS_TEST_DIRNAME}/../specs/prerequisites/README.md" p
   for p in $(grep -rho '__[A-Z0-9_]*__' "$MANIFESTS" | sort -u); do
@@ -81,7 +25,14 @@ aud_predicate() {
   done
 }
 
-@test "el validador de cluster-keys exige el token en x-egress-token, igual que el de spiffe" {
+@test "el README no documenta placeholders que ya no existen" {
+  local readme="${BATS_TEST_DIRNAME}/../specs/prerequisites/README.md" p
+  for p in $(grep -o '__[A-Z0-9_]*__' "$readme" | sort -u); do
+    grep -rq -- "$p" "$MANIFESTS" || { echo "documentado y sin usar: $p"; return 1; }
+  done
+}
+
+@test "el validador de cluster-keys exige el token en x-egress-token" {
   local out="$BATS_TEST_TMPDIR/40.yaml"
   sustituir_keys "$VALIDATOR_KEYS" >"$out"
   [ "$(yq '.spec.rules.authentication.local-payments.credentials.customHeader.name' "$out")" = "x-egress-token" ]
