@@ -173,9 +173,12 @@ intercepted_services() {
   json=$(kubectl -n "$NAMESPACE" get svc -o json) || return 1
   printf %s "$json" \
     | jq -r --arg a "$ORIGINAL_SELECTOR_ANNOTATION" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" \
+        --arg declared "${DECLARED_SERVICES:-}" \
         '.items[]
          | select((.metadata.annotations // {})[$a])
-         | select((.metadata.annotations // {})[$k] == $id)
+         | ((.metadata.annotations // {})[$k] // (.metadata.labels // {})[$k]) as $owner
+         | select($owner == $id
+                  or ($owner == null and ((.metadata.name) as $n | ($declared | split("\n") | index($n)) != null)))
          | .metadata.name'
 }
 
@@ -191,9 +194,16 @@ own_gateway_services() {
 delete_own_services() {  # <rol>
   # `!gateway.networking.k8s.io/gateway-name` excluye lo que auto-provisiona Istio para el
   # Gateway: hereda nuestras labels y no es nuestro para borrar.
+  local svc suffix=""
   kubectl -n "$NAMESPACE" delete svc \
     -l "$(owned_selector),${ROLE_LABEL}=$1,!gateway.networking.k8s.io/gateway-name" \
-    --ignore-not-found
+    --ignore-not-found || return 1
+  if [ "$1" = "local-alias" ]; then suffix="-local"; fi
+  for svc in ${DECLARED_SERVICES:-}; do
+    kubectl -n "$NAMESPACE" delete svc \
+      -l "${ROLE_LABEL}=$1,!${INSTANCE_KEY},!gateway.networking.k8s.io/gateway-name" \
+      --field-selector "metadata.name=${svc}${suffix}" --ignore-not-found || return 1
+  done
 }
 
 delete_interception_objects() {  # <svc>
@@ -250,6 +260,58 @@ delete_route_validators() {
   done
 }
 
+still_hijacked() {  # <json de los Services>
+  printf %s "$1" \
+    | jq -r --arg sel "$GATEWAY_SELECTOR" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" --arg r "$ROLE_LABEL" '.items[]
+        | select((.metadata.labels // {})["gateway.networking.k8s.io/gateway-name"] | not)
+        | select((.metadata.labels // {})[$r] != "gateway-service")
+        | select((((.metadata.annotations // {})[$k] // (.metadata.labels // {})[$k]) // $id) == $id)
+        | select((.spec.selector // {}) == ($sel | fromjson)) | .metadata.name'
+}
+
+converge_service() {  # <svc> (ya existe)
+  local svc="$1" json owner role original current
+  json=$(kubectl -n "$NAMESPACE" get svc "$svc" -o json) \
+    || die "no se pudo leer el Service '$svc' de $NAMESPACE."
+  owner=$(printf %s "$json" | jq -r --arg k "$INSTANCE_KEY" \
+    '(.metadata.annotations // {})[$k] // (.metadata.labels // {})[$k] // ""') \
+    || die "no se pudo interpretar el Service '$svc'."
+  role=$(printf %s "$json" | jq -r --arg r "$ROLE_LABEL" '(.metadata.labels // {})[$r] // ""') \
+    || die "no se pudo interpretar el Service '$svc'."
+  original=$(printf %s "$json" | jq -r --arg a "$ORIGINAL_SELECTOR_ANNOTATION" '(.metadata.annotations // {})[$a] // ""') \
+    || die "no se pudo interpretar el Service '$svc'."
+  current=$(printf %s "$json" | jq -c '.spec.selector // {}') \
+    || die "no se pudo interpretar el Service '$svc'."
+
+  if [ -n "$owner" ] && [ "$owner" != "$SERVICE_ID" ]; then
+    die "egress-interceptor: '$svc' ya está intervenido por la instancia $owner. Una sola instancia puede declarar un mismo Service en el namespace."
+  fi
+
+  if [ -n "$original" ]; then
+    if [ -z "$owner" ]; then
+      kubectl -n "$NAMESPACE" annotate svc "$svc" "$INSTANCE_KEY=$SERVICE_ID" --overwrite \
+        || die "no se pudo marcar '$svc' como de esta instancia."
+    fi
+  elif [ "$role" = "gateway-service" ]; then
+    kubectl -n "$NAMESPACE" label svc "$svc" "$INSTANCE_KEY=$SERVICE_ID" "$MANAGED_LABEL=true" --overwrite \
+      || die "no se pudo marcar '$svc' como de esta instancia."
+  fi
+
+  if [ "$current" = "$GATEWAY_SELECTOR" ]; then return 0; fi
+  if [ -z "$original" ] && [ "$role" != "gateway-service" ]; then
+    kubectl -n "$NAMESPACE" annotate svc "$svc" \
+      "$ORIGINAL_SELECTOR_ANNOTATION=$current" "$INSTANCE_KEY=$SERVICE_ID" --overwrite \
+      || die "no se pudo anotar el selector original de '$svc'. NO se desvía: sin ese dato no habría vuelta atrás."
+  fi
+  set_selector "$svc" "$GATEWAY_SELECTOR" \
+    || die "no se pudo apuntar '$svc' al Gateway de egreso."
+  if [ "$(current_selector "$svc")" != "$GATEWAY_SELECTOR" ]; then
+    die "el selector de '$svc' no quedó apuntando al Gateway. La intercepción NO está activa."
+  fi
+}
+
+DECLARED_SERVICES=$(echo "$INTERCEPTIONS_JSON" | jq -r '.[].service_name')
+
 if [ "$ACTION" = "delete" ]; then
   # Revertir ANTES de borrar el Gateway: al revés, el Service queda apuntando a un selector sin
   # endpoints y el namespace pierde el servicio.
@@ -278,11 +340,7 @@ if [ "$ACTION" = "delete" ]; then
   # cortaría el script.
   SVC_JSON=$(kubectl -n "$NAMESPACE" get svc -o json) \
     || die "no se pudo listar los Services de $NAMESPACE. No se borra nada: no hay cómo verificar que ninguno siga apuntando al Gateway."
-  STILL_HIJACKED=$(printf %s "$SVC_JSON" \
-    | jq -r --arg sel "$GATEWAY_SELECTOR" --arg k "$INSTANCE_KEY" --arg id "$SERVICE_ID" '.items[]
-        | select((.metadata.labels // {})["gateway.networking.k8s.io/gateway-name"] | not)
-        | select((((.metadata.annotations // {})[$k] // (.metadata.labels // {})[$k]) // $id) == $id)
-        | select((.spec.selector // {}) == ($sel | fromjson)) | .metadata.name') \
+  STILL_HIJACKED=$(still_hijacked "$SVC_JSON") \
     || die "no se pudo interpretar el listado de Services de $NAMESPACE."
   if [ -n "$STILL_HIJACKED" ]; then
     log error "egress-interceptor: estos Services siguen apuntando al Gateway de egreso: $STILL_HIJACKED"
@@ -298,8 +356,6 @@ if [ "$ACTION" = "delete" ]; then
   # se saltea los steps siguientes. exit queda sólo para los errores.
   return 0
 fi
-
-DECLARED_SERVICES=$(echo "$INTERCEPTIONS_JSON" | jq -r '.[].service_name')
 
 if [ "$PLATFORM" != "eks" ]; then
   # Con percent < 100 una parte del tráfico va al backend local: si no tiene endpoints, ese
@@ -600,25 +656,7 @@ for svc in $DECLARED_SERVICES; do
       || die "no se pudo crear el Service '$svc' que captura el tráfico; la intercepción no existe."
     continue
   fi
-  CURRENT_SELECTOR=$(kubectl -n "$NAMESPACE" get svc "$svc" -o jsonpath='{.spec.selector}')
-  [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && continue
-  # El selector original se captura una sola vez: es el dato con el que se revierte.
-  ALREADY_ANNOTATED=$(original_selector "$svc")
-  if [ -z "$ALREADY_ANNOTATED" ]; then
-    # Guardar el selector del propio Gateway como "original" haría que el revert no revierta nada.
-    [ "$CURRENT_SELECTOR" = "$GATEWAY_SELECTOR" ] && { log error "egress-interceptor: '$svc' ya apunta al Gateway y no tiene annotation; no se anota para no perder el original"; exit 1; }
-    # ANTES del swap y con el fallo cortando: si la annotation no queda y el selector sí cambia,
-    # el Service apunta al Gateway sin ningún registro de su selector original — irrecuperable.
-    kubectl -n "$NAMESPACE" annotate svc "$svc" \
-      "$ORIGINAL_SELECTOR_ANNOTATION=$CURRENT_SELECTOR" "$INSTANCE_KEY=$SERVICE_ID" --overwrite \
-      || die "no se pudo anotar el selector original de '$svc'. NO se desvía: sin ese dato no habría vuelta atrás."
-  fi
-  set_selector "$svc" "$GATEWAY_SELECTOR" \
-    || die "no se pudo apuntar '$svc' al Gateway de egreso."
-  # Se relee: un patch que devuelve 0 sin aplicar dejaría la intercepción declarada pero inactiva.
-  if [ "$(current_selector "$svc")" != "$GATEWAY_SELECTOR" ]; then
-    die "el selector de '$svc' no quedó apuntando al Gateway. La intercepción NO está activa."
-  fi
+  converge_service "$svc"
 done
 
 # Los que ya no están declarados, por los dos caminos: el hijackeado de OpenShift lo delata su

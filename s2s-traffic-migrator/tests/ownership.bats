@@ -46,6 +46,14 @@ MOCK
   cargar intercepted_services
   cargar own_gateway_services
   cargar delete_own_services
+  cargar converge_service
+  cargar still_hijacked
+  cargar revert_service
+  cargar original_selector
+  cargar current_selector
+  cargar set_selector
+  die() { log error "$@"; exit 1; }
+  export -f die
 }
 
 cargar() {  # <nombre de funcion>
@@ -157,4 +165,174 @@ MOCK
   cargar_gc
   run gc_undeclared
   [ "$status" -ne 0 ]
+}
+
+
+kubectl_con_estado() {
+  export FAKE_STATE="$BATS_TEST_TMPDIR/state.json"
+  cat >"$BATS_TEST_TMPDIR/bin/kubectl" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$KUBECTL_CALLS"
+args=("$@")
+if [ "${args[0]}" = "-n" ]; then args=("${args[@]:2}"); fi
+verbo="${args[0]}"
+nombre=""
+if [ "${#args[@]}" -gt 2 ] && [[ "${args[2]}" != -* ]]; then nombre="${args[2]}"; fi
+sobrescribe=0
+selector=""
+campo=""
+salida=""
+parche=""
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    --overwrite) sobrescribe=1 ;;
+    -l) selector="${args[$((i + 1))]}" ;;
+    --field-selector) campo="${args[$((i + 1))]#metadata.name=}" ;;
+    -o) salida="${args[$((i + 1))]}" ;;
+    -p) parche="${args[$((i + 1))]}" ;;
+  esac
+done
+escribir() { jq -c "$@" "$FAKE_STATE" >"$FAKE_STATE.tmp" && mv "$FAKE_STATE.tmp" "$FAKE_STATE"; }
+existe() { jq -e --arg n "$nombre" '.items[] | select(.metadata.name == $n)' "$FAKE_STATE" >/dev/null; }
+no_encontrado() { echo "Error from server (NotFound): services \"$nombre\" not found" >&2; exit 1; }
+case "$verbo" in
+  get)
+    if [ -z "$nombre" ]; then cat "$FAKE_STATE"; exit 0; fi
+    existe || no_encontrado
+    case "$salida" in
+      json) jq -c --arg n "$nombre" '.items[] | select(.metadata.name == $n)' "$FAKE_STATE" ;;
+      *spec.selector*) jq -c --arg n "$nombre" '.items[] | select(.metadata.name == $n) | .spec.selector // {}' "$FAKE_STATE" ;;
+      *original-selector*) jq -r --arg n "$nombre" '.items[] | select(.metadata.name == $n) | (.metadata.annotations // {})["egress-interceptor/original-selector"] // ""' "$FAKE_STATE" ;;
+    esac ;;
+  label|annotate)
+    existe || no_encontrado
+    campo_mapa=labels
+    [ "$verbo" = annotate ] && campo_mapa=annotations
+    for arg in "${args[@]:3}"; do
+      case "$arg" in
+        --*) ;;
+        *-) escribir --arg n "$nombre" --arg m "$campo_mapa" --arg k "${arg%-}" '(.items[] | select(.metadata.name == $n) | .metadata[$m]) |= del(.[$k])' ;;
+        *=*)
+          clave="${arg%%=*}"
+          valor="${arg#*=}"
+          previo=$(jq -r --arg n "$nombre" --arg m "$campo_mapa" --arg k "$clave" '.items[] | select(.metadata.name == $n) | .metadata[$m][$k] // empty' "$FAKE_STATE")
+          if [ -n "$previo" ] && [ "$previo" != "$valor" ] && [ "$sobrescribe" -eq 0 ]; then
+            echo "error: '$clave' already has a value ($previo), and --overwrite is false" >&2
+            exit 1
+          fi
+          escribir --arg n "$nombre" --arg m "$campo_mapa" --arg k "$clave" --arg v "$valor" '(.items[] | select(.metadata.name == $n) | .metadata[$m]) |= ((. // {}) + {($k): $v})' ;;
+      esac
+    done ;;
+  patch)
+    existe || no_encontrado
+    nuevo=$(printf '%s' "$parche" | jq -c '.[0].value')
+    escribir --arg n "$nombre" --argjson v "$nuevo" '(.items[] | select(.metadata.name == $n) | .spec.selector) = $v' ;;
+  delete)
+    terminos=$(printf '%s' "$selector" | tr ',' '\n' | jq -R . | jq -s .)
+    escribir --argjson t "$terminos" --arg nombre "$campo" '
+      def coincide: . as $o | all($t[];
+        if startswith("!") then (($o.metadata.labels // {})[.[1:]] == null)
+        else (split("=") as $p | ($o.metadata.labels // {})[$p[0]] == $p[1]) end);
+      .items |= map(select((coincide and ($nombre == "" or .metadata.name == $nombre)) | not))' ;;
+esac
+exit 0
+MOCK
+  chmod +x "$BATS_TEST_TMPDIR/bin/kubectl"
+}
+
+servicio() {  # <nombre> <labels json> <annotations json> <selector json>
+  jq -nc --arg n "$1" --argjson l "$2" --argjson a "$3" --argjson s "$4" \
+    '{metadata: {name: $n, labels: $l, annotations: $a}, spec: {selector: $s}}'
+}
+
+estado() {  # <servicio json>...
+  printf '%s\n' "$@" | jq -sc '{items: .}' >"$FAKE_STATE"
+}
+
+selector_de() {
+  jq -c --arg n "$1" '.items[] | select(.metadata.name == $n) | .spec.selector' "$FAKE_STATE"
+}
+
+dueno_de() {
+  jq -r --arg n "$1" '.items[] | select(.metadata.name == $n) | ((.metadata.annotations // {})["egress-interceptor/instance"] // (.metadata.labels // {})["egress-interceptor/instance"] // "")' "$FAKE_STATE"
+}
+
+existe_servicio() {
+  jq -e --arg n "$1" '.items[] | select(.metadata.name == $n)' "$FAKE_STATE" >/dev/null
+}
+
+captura_sin_marcar() {
+  servicio "$1" '{"egress-interceptor/managed":"true","egress-interceptor/role":"gateway-service"}' '{}' "$GATEWAY_SELECTOR"
+}
+
+@test "un Service de captura sin marcar se adopta en el apply y el delete termina limpio" {
+  kubectl_con_estado
+  estado "$(captura_sin_marcar reports)"
+  DECLARED_SERVICES="reports"
+
+  converge_service reports
+  [ "$(dueno_de reports)" = "svc-b" ] || false
+  [ "$(selector_de reports)" = "$GATEWAY_SELECTOR" ] || false
+
+  delete_own_services gateway-service
+  ! existe_servicio reports || false
+  [ -z "$(still_hijacked "$(cat "$FAKE_STATE")")" ]
+}
+
+@test "delete_own_services borra el declarado sin marca de instancia" {
+  kubectl_con_estado
+  estado "$(captura_sin_marcar reports)"
+  DECLARED_SERVICES="reports"
+  delete_own_services gateway-service
+  ! existe_servicio reports || false
+}
+
+@test "delete_own_services NO borra el declarado con marca de otra instancia" {
+  kubectl_con_estado
+  estado "$(servicio reports '{"egress-interceptor/managed":"true","egress-interceptor/role":"gateway-service","egress-interceptor/instance":"svc-a"}' '{}' "$GATEWAY_SELECTOR")"
+  DECLARED_SERVICES="reports"
+  delete_own_services gateway-service
+  existe_servicio reports || false
+}
+
+@test "un Service hijackeado sin marcar adopta la marca sin re-swapear el selector" {
+  kubectl_con_estado
+  estado "$(servicio pagos '{}' '{"egress-interceptor/original-selector":"{\"app\":\"pagos\"}"}' '{"app":"otro"}')"
+  converge_service pagos
+  [ "$(dueno_de pagos)" = "svc-b" ] || false
+  [ "$(selector_de pagos)" = '{"app":"otro"}' ]
+  ! grep -q "patch" "$KUBECTL_CALLS" || false
+}
+
+@test "un Service marcado por otra instancia hace fallar el apply y nombra al dueño" {
+  kubectl_con_estado
+  estado "$(servicio pagos '{"egress-interceptor/instance":"svc-a"}' '{}' "$GATEWAY_SELECTOR")"
+  run converge_service pagos
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"instancia svc-a"* ]] || false
+}
+
+@test "un Service marcado por esta instancia converge el selector y las labels" {
+  kubectl_con_estado
+  estado "$(servicio reports '{"egress-interceptor/instance":"svc-b","egress-interceptor/role":"gateway-service"}' '{}' '{"app":"viejo"}')"
+  converge_service reports
+  [ "$(selector_de reports)" = "$GATEWAY_SELECTOR" ] || false
+  [ "$(jq -r '.items[0].metadata.labels["egress-interceptor/managed"]' "$FAKE_STATE")" = "true" ]
+}
+
+@test "intercepted_services incluye al hijackeado sin dueño que esta instancia declara" {
+  kubectl_con_estado
+  estado "$(servicio viejo '{}' '{"egress-interceptor/original-selector":"{\"app\":\"viejo\"}"}' "$GATEWAY_SELECTOR")" \
+         "$(servicio ajeno '{}' '{"egress-interceptor/original-selector":"{\"app\":\"a\"}"}' "$GATEWAY_SELECTOR")"
+  DECLARED_SERVICES="viejo"
+  run intercepted_services
+  [ "$status" -eq 0 ] || false
+  [ "$output" = "viejo" ]
+}
+
+@test "still_hijacked no cuenta los Services de captura pero sí los hijackeados" {
+  kubectl_con_estado
+  estado "$(captura_sin_marcar reports)" \
+         "$(servicio pagos '{}' '{"egress-interceptor/original-selector":"{\"app\":\"pagos\"}"}' "$GATEWAY_SELECTOR")"
+  [ "$(still_hijacked "$(cat "$FAKE_STATE")")" = "pagos" ]
 }
