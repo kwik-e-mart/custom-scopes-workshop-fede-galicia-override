@@ -39,6 +39,9 @@ spec:
     - {{ printf "%s.%s" $svc $.namespace | quote }}
     - {{ printf "%s.%s.svc" $svc $.namespace | quote }}
     - {{ printf "%s.%s.svc.cluster.local" $svc $.namespace | quote }}
+{{- if and (eq $.platform "openshift") $.apps_domain }}
+    - {{ printf "%s-%s.%s" $svc $.namespace $.apps_domain | quote }}
+{{- end }}
   rules:
     # Los filtros van a nivel de regla: Gateway API no los soporta por backendRef cuando hay más
     # de un backend (istio#39136).
