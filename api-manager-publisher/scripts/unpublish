@@ -11,11 +11,10 @@ unpublish() {
   load_notification
   require_publisher_config
 
-  local service_id action_id api_id message
+  local service_id action_id message
   service_id=$(notification_field '.service.id')
   action_id=$(notification_field '.id')
   require_action_ids "$service_id" "$action_id"
-  api_id=$(notification_field '.service.attributes.api_id')
   require_legajo
 
   require_source_repository "$(echo "${CONTEXT-}" | jq -r '.application.repository_url // empty')"
@@ -43,13 +42,11 @@ unpublish() {
 
   case "$APIM_HTTP_CODE" in
     202)
-      detach_scope_auth_policies "$service_id" "$PROVIDER_NAMESPACE" "$api_id"
       report_progress "Baja en curso en APIM. APIM avisa cuando la API quede dada de baja." \
         "$(echo "$APIM_BODY" | jq -c '{deletion_id: .deletionId}')" \
         || log error "publisher: no se pudo guardar el avance; la acción la cierra APIM igual."
       ;;
     404)
-      detach_scope_auth_policies "$service_id" "$PROVIDER_NAMESPACE" "$api_id"
       close_action success "La API no tiene manifests publicados en APIM: no hay nada que dar de baja."
       ;;
     *)
