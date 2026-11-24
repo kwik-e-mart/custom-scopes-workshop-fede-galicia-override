@@ -613,3 +613,29 @@ set_application_type() {
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM rechazó la modificación (HTTP 404)"*"no tiene manifiestos publicados"* ]] || false
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
+
+@test "si modify responde que no hay cambios el update cierra success sin tocar las AuthPolicies" {
+  as_update
+  queue_response 400 '{"status":"error","message":"No hay cambios en los manifiestos de payments-test-kuadrant-b2c-1; no se realizó ningún cambio."}'
+  run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *NEXT_STEP_RAN* ]] || false
+  [ "$(np_last_update_flag --status)" = "success" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"No hay cambios en los manifiestos"* ]] || false
+  [ ! -s "$KUBECTL_CALLS_LOG" ]
+}
+
+@test "otro 400 de modify sigue cerrando failed" {
+  as_update
+  queue_response 400 '{"status":"error","message":"Hay una operación en curso sobre payments-test-kuadrant-b2c-1; reintentá cuando termine."}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 400"*"operación en curso"* ]] || false
+}
+
+@test "un publish que responde no hay cambios sigue cerrando failed" {
+  queue_response 400 '{"status":"error","message":"No hay cambios en los manifiestos."}'
+  run_step
+  [ "$(np_last_update_flag --status)" = "failed" ]
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM rechazó la publicación (HTTP 400)"*"No hay cambios"* ]]
+}

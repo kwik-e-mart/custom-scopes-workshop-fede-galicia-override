@@ -89,6 +89,11 @@ publish() {
   local status message results
   status=$(echo "$APIM_BODY" | jq -r '.status // empty' 2>/dev/null) || status=""
   message=$(echo "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
+  if [ "$method" = "PUT" ] && [ "$APIM_HTTP_CODE" = "400" ] && echo "$message" | grep -qi 'no hay cambios'; then
+    log info "publisher: APIM no tiene cambios para aplicar: $message"
+    close_action success "$(apim_problem_detail "$message")"
+    return 0
+  fi
   if [ "$APIM_HTTP_CODE" != "200" ]; then
     fail "publisher: APIM rechazó la $operation (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
   fi

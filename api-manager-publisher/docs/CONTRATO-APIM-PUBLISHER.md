@@ -12,7 +12,7 @@ forma asíncrona: si sincroniza registra la API (`Synced` / `Registered`); si fa
 los manifiestos (`RolledBack`).
 
 `PUT /v1/kuadrant/manifests/modify` recibe el mismo body y regenera una API ya publicada; si Argo no sincroniza,
-restaura los manifiestos anteriores. Es lo que usa la acción de actualizar.
+restaura los manifiestos anteriores. Es lo que usa la acción de actualizar, que toma el `400` "no hay cambios" como success.
 
 Respuestas: `200` con `status` `commited` / `synced` / `canceled`, o `400` con `{status: "error", message}`
 para validación o fallas del workflow (clone, push).
