@@ -151,7 +151,7 @@ require_subscription_id_format() {
 }
 
 apim_request() {
-  local method="$1" path="$2" body="${3-}" idempotency_key="${4-}"
+  local method="$1" path="$2" body="${3-}" idempotency_key="${4-}" handled_codes="${5-}"
   local retries="${APIM_RETRIES:-3}" delay="${APIM_RETRY_DELAY:-5}"
   local attempt=0 response_file curl_error_file code insecure="${APIM_TLS_INSECURE-false}"
   local url="${APIM_URL-${API_SUBSCRIBER_URL-}}" token="${APIM_TOKEN-${API_SUBSCRIBER_TOKEN-}}"
@@ -197,7 +197,7 @@ apim_request() {
   if [ "$code" = "000" ]; then
     APIM_BODY=$(tr -d '\000-\011\013-\037\177' <"$curl_error_file" | tail -n 1)
     log error "apim: $method $url$path sin respuesta (HTTP 000): $APIM_BODY"
-  elif [[ ! "$code" =~ ^2 ]]; then
+  elif [[ ! "$code" =~ ^2 ]] && [[ " $handled_codes " != *" $code "* ]]; then
     log warn "apim: $method $url$path respondió HTTP $code: $(echo "$APIM_BODY" | tr -d '\000-\011\013-\037\177' | head -c "$APIM_LOG_BODY_MAX_CHARS")"
   fi
   rm -f "$response_file" "$curl_error_file"
