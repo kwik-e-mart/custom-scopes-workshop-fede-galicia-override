@@ -90,8 +90,8 @@ publish() {
   status=$(echo "$APIM_BODY" | jq -r '.status // empty' 2>/dev/null) || status=""
   message=$(echo "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
   if [ "$method" = "PUT" ] && [ "$APIM_HTTP_CODE" = "400" ] && echo "$message" | grep -qi 'no hay cambios'; then
-    log info "publisher: APIM no tiene cambios para aplicar: $message"
-    close_action success "$(apim_problem_detail "$message")"
+    log info "publisher: sin cambios. El HTTP 400 de APIM no es un error: la API ya está publicada con esta versión y este rate limit, no hay nada que modificar y la acción termina en success."
+    close_action success "Sin cambios: la API ya está publicada en APIM con esta versión y este rate limit. APIM: $(apim_problem_detail "$message")"
     return 0
   fi
   if [ "$APIM_HTTP_CODE" != "200" ]; then

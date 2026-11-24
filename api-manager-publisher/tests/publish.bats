@@ -621,7 +621,8 @@ set_application_type() {
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   [ "$(np_last_update_flag --status)" = "success" ]
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"No hay cambios en los manifiestos"* ]] || false
+  [[ "$output" == *"El HTTP 400 de APIM no es un error"*"la acción termina en success"* ]] || false
+  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == "Sin cambios: la API ya está publicada en APIM con esta versión y este rate limit."*"No hay cambios en los manifiestos"* ]] || false
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
