@@ -71,10 +71,10 @@ publish() {
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')
 
-  local method endpoint operation operation_title verb
+  local method endpoint operation operation_title verb handled_codes=""
   case "$(notification_field '.type')" in
     update)
-      method=PUT endpoint=/v1/kuadrant/manifests/modify
+      method=PUT endpoint=/v1/kuadrant/manifests/modify handled_codes=400
       operation=modificación operation_title=Modificación verb=modificando
       ;;
     *)
@@ -84,11 +84,17 @@ publish() {
   esac
 
   log info "publisher: $verb $SOURCE_ORGANIZATION/$SOURCE_REPOSITORY (release $DEPLOYED_RELEASE) en $PUBLISH_ENVIRONMENT hacia $SCOPE_DOMAIN."
-  apim_request "$method" "$endpoint" "$body" ""
+  apim_request "$method" "$endpoint" "$body" "" "$handled_codes"
 
   local status message results
   status=$(echo "$APIM_BODY" | jq -r '.status // empty' 2>/dev/null) || status=""
   message=$(echo "$APIM_BODY" | jq -r '.message // empty' 2>/dev/null) || message=""
+  if [ "$method" = "PUT" ] && [ "$APIM_HTTP_CODE" = "400" ] && echo "$message" | grep -qi 'no hay cambios'; then
+    local no_changes="⚠️ Sin cambios en el OpenAPI ni en el rate limit. La API ya está publicada con el OpenAPI desplegado. Publicación exitosa."
+    log warn "publisher: $no_changes"
+    close_action success "$no_changes"
+    return 0
+  fi
   if [ "$APIM_HTTP_CODE" != "200" ]; then
     fail "publisher: APIM rechazó la $operation (HTTP $APIM_HTTP_CODE): $(apim_problem_detail "${message:-$APIM_BODY}")"
   fi
