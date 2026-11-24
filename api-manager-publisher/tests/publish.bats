@@ -621,8 +621,9 @@ set_application_type() {
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   [ "$(np_last_update_flag --status)" = "success" ]
-  [[ "$output" == *"El HTTP 400 de APIM no es un error"*"la acción termina en success"* ]] || false
-  [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == "Sin cambios: la API ya está publicada en APIM con esta versión y este rate limit."*"No hay cambios en los manifiestos"* ]] || false
+  [[ "$output" == *"⚠️ Sin cambios en el OpenAPI ni en el rate limit. La API ya está publicada con el OpenAPI desplegado. Publicación exitosa."* ]] || false
+  [[ "$output" != *"respondió HTTP 400"* ]] || false
+  [ "$(np_last_update_flag --messages | jq -r '.[0].message')" = "⚠️ Sin cambios en el OpenAPI ni en el rate limit. La API ya está publicada con el OpenAPI desplegado. Publicación exitosa." ]
   [ ! -s "$KUBECTL_CALLS_LOG" ]
 }
 
@@ -632,11 +633,13 @@ set_application_type() {
   run_step
   [ "$(np_last_update_flag --status)" = "failed" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"HTTP 400"*"operación en curso"* ]] || false
+  [[ "$output" == *"APIM rechazó la modificación (HTTP 400)"*"operación en curso"* ]] || false
 }
 
 @test "un publish que responde no hay cambios sigue cerrando failed" {
   queue_response 400 '{"status":"error","message":"No hay cambios en los manifiestos."}'
   run_step
+  [[ "$output" == *"respondió HTTP 400"* ]] || false
   [ "$(np_last_update_flag --status)" = "failed" ]
   [[ "$(np_last_update_flag --messages | jq -r '.[0].message')" == *"APIM rechazó la publicación (HTTP 400)"*"No hay cambios"* ]]
 }
