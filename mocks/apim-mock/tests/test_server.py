@@ -490,9 +490,11 @@ def publish_body(**overrides):
         "environment": "qas",
         "tenant": "b2c",
         "origen": "nullplatform",
+        "channel": "nullplatform",
+        "platform": "kuadrant",
         "cluster": "cluster1",
-        "legajo": "l0510541",
-        "sigla": "zosc",
+        "user": "l0510541",
+        "producerSigla": "zosc",
         "project": "zosc-zosconnect",
         "callbackUrl": CALLBACK,
         "metadata": {
@@ -508,14 +510,15 @@ def publish_body(**overrides):
 
 
 PUBLISH = "/v1/kuadrant/manifests/publish"
-DELETE = "/v1/kuadrant/manifests/delete"
+DELETE = "/v1/kuadrant/manifests"
+DELETION = "/v1/kuadrant/manifests/deletions"
 MODIFY = "/v1/kuadrant/manifests/modify"
 DELETE_CALLBACK = "https://api.nullplatform.com/service/svc-1/action/act-9"
 
 
 def delete_body(**overrides):
-    body = {"sigla": "zosc", "proyecto": "zosc-zosconnect", "environment": "qas", "tenant": "b2c", "cluster": "cluster1",
-            "name": "test-kuadrant", "namespace": "test-kuadrant", "legajo": "l0510541", "origen": "nullplatform"}
+    body = {"producerSigla": "zosc", "project": "zosc-zosconnect", "environment": "qas", "tenant": "b2c", "cluster": "cluster1",
+            "name": "test-kuadrant", "namespace": "test-kuadrant", "user": "l0510541", "channel": "nullplatform", "platform": "kuadrant"}
     body.update(overrides)
     return body
 
@@ -619,7 +622,7 @@ class PublisherTest(unittest.TestCase):
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
         body = publish_body(branch="develop")
-        body.pop("sigla")
+        body.pop("producerSigla")
         status, _ = call(app, "PUT", MODIFY, body)
         self.assertEqual(status, 400)
 
@@ -628,7 +631,7 @@ class PublisherTest(unittest.TestCase):
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
         call(app, "PUT", MODIFY, publish_body(branch="develop"))
-        status, _ = call(app, "POST", DELETE, delete_body())
+        status, _ = call(app, "DELETE", DELETE, delete_body())
         self.assertEqual(status, 400)
 
     def test_una_modificacion_pendiente_se_reprograma_al_reiniciar(self):
@@ -662,7 +665,7 @@ class PublisherTest(unittest.TestCase):
 
     def test_legajo_con_formato_invalido_responde_400(self):
         app, _, _, _ = make_app()
-        status, _ = call(app, "POST", PUBLISH, publish_body(legajo="510541"))
+        status, _ = call(app, "POST", PUBLISH, publish_body(user="510541"))
         self.assertEqual(status, 400)
 
     def test_ambiente_invalido_responde_400(self):
@@ -685,9 +688,29 @@ class PublisherTest(unittest.TestCase):
         status, _ = call(app, "POST", PUBLISH, body)
         self.assertEqual(status, 400)
 
+    def test_publicar_con_los_nombres_viejos_sigue_funcionando(self):
+        app, _, _, _ = make_app()
+        body = publish_body(sigla="zosc", legajo="l0510541")
+        for field in ("producerSigla", "user", "channel", "platform"):
+            body.pop(field)
+        status, response = call(app, "POST", PUBLISH, body)
+        self.assertEqual(status, 200, response)
+
+    def test_un_campo_nuevo_vacio_usa_el_nombre_viejo(self):
+        app, _, _, _ = make_app()
+        status, response = call(app, "POST", PUBLISH, publish_body(producerSigla="", sigla="zosc", user="", legajo="l0510541"))
+        self.assertEqual(status, 200, response)
+
+    def test_publicar_con_un_legajo_viejo_invalido_responde_400(self):
+        app, _, _, _ = make_app()
+        body = publish_body(legajo="510541")
+        body.pop("user")
+        status, _ = call(app, "POST", PUBLISH, body)
+        self.assertEqual(status, 400)
+
     def test_publicar_sin_sigla_o_project_responde_400(self):
         app, _, _, _ = make_app()
-        for field in ("sigla", "project"):
+        for field in ("producerSigla", "project"):
             body = publish_body()
             body.pop(field)
             status, response = call(app, "POST", PUBLISH, body)
@@ -698,7 +721,7 @@ class PublisherTest(unittest.TestCase):
         app, _, notifier, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        status, body = call(app, "POST", DELETE, delete_body(callbackUrl=DELETE_CALLBACK))
+        status, body = call(app, "DELETE", DELETE, delete_body(callbackUrl=DELETE_CALLBACK))
         self.assertEqual(status, 202)
         self.assertEqual(body["status"], "Commited")
         self.assertEqual(body["apiId"], "apim-svc-1")
@@ -708,7 +731,7 @@ class PublisherTest(unittest.TestCase):
         scheduler.run_all()
         self.assertEqual(notifier.calls[-1]["status"], "success")
         self.assertEqual(notifier.calls[-1]["url"], DELETE_CALLBACK)
-        status, deletion = call(app, "GET", f"{DELETE}/{body['deletionId']}")
+        status, deletion = call(app, "GET", f"{DELETION}/{body['deletionId']}")
         self.assertEqual(status, 200)
         self.assertEqual(deletion["status"], "Deleted")
         self.assertTrue(deletion["final"])
@@ -717,17 +740,17 @@ class PublisherTest(unittest.TestCase):
 
     def test_baja_de_una_api_sin_manifests_responde_404(self):
         app, _, _, _ = make_app()
-        status, _ = call(app, "POST", DELETE, delete_body())
+        status, _ = call(app, "DELETE", DELETE, delete_body())
         self.assertEqual(status, 404)
 
     def test_baja_sin_campos_obligatorios_responde_400(self):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        for field in ("sigla", "proyecto", "environment", "tenant", "cluster", "name", "namespace", "legajo"):
+        for field in ("producerSigla", "project", "environment", "tenant", "cluster", "name", "namespace"):
             body = delete_body()
             body.pop(field)
-            status, response = call(app, "POST", DELETE, body)
+            status, response = call(app, "DELETE", DELETE, body)
             self.assertEqual(status, 400, field)
             self.assertIn(field, response["message"])
 
@@ -735,22 +758,50 @@ class PublisherTest(unittest.TestCase):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        status, _ = call(app, "POST", DELETE, delete_body(legajo="510541"))
+        status, _ = call(app, "DELETE", DELETE, delete_body(user="510541"))
         self.assertEqual(status, 400)
+
+    def test_baja_con_los_nombres_viejos_sigue_funcionando(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        body = delete_body(sigla="zosc", proyecto="zosc-zosconnect", legajo="l0510541", origen="nullplatform")
+        for field in ("producerSigla", "project", "user", "channel", "platform"):
+            body.pop(field)
+        status, response = call(app, "DELETE", DELETE, body)
+        self.assertEqual(status, 202, response)
+
+    def test_baja_sin_usuario_responde_202(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        body = delete_body()
+        body.pop("user")
+        status, response = call(app, "DELETE", DELETE, body)
+        self.assertEqual(status, 202, response)
+
+    def test_el_post_viejo_de_la_baja_ya_no_existe(self):
+        app, _, _, scheduler = make_app()
+        call(app, "POST", PUBLISH, publish_body())
+        scheduler.run_all()
+        status, _ = call(app, "POST", "/v1/kuadrant/manifests/delete", delete_body())
+        self.assertEqual(status, 404)
+        _, state = call(app, "GET", "/mock/state")
+        self.assertIn("apim-svc-1", state["publications"])
 
     def test_baja_en_curso_responde_400(self):
         app, _, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        call(app, "POST", DELETE, delete_body())
-        status, response = call(app, "POST", DELETE, delete_body())
+        call(app, "DELETE", DELETE, delete_body())
+        status, response = call(app, "DELETE", DELETE, delete_body())
         self.assertEqual(status, 400)
         self.assertIn("en curso", response["message"])
 
     def test_baja_durante_la_publicacion_responde_400(self):
         app, _, _, _ = make_app()
         call(app, "POST", PUBLISH, publish_body())
-        status, response = call(app, "POST", DELETE, delete_body())
+        status, response = call(app, "DELETE", DELETE, delete_body())
         self.assertEqual(status, 400)
         self.assertIn("en curso", response["message"])
 
@@ -758,10 +809,10 @@ class PublisherTest(unittest.TestCase):
         app, k8s, notifier, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body())
         scheduler.run_all()
-        _, body = call(app, "POST", DELETE, delete_body(legajo=server.LEGAJO_ROLLBACK))
+        _, body = call(app, "DELETE", DELETE, delete_body(user=server.LEGAJO_ROLLBACK))
         scheduler.run_all()
         self.assertEqual(notifier.calls[-1]["status"], "failed")
-        _, deletion = call(app, "GET", f"{DELETE}/{body['deletionId']}")
+        _, deletion = call(app, "GET", f"{DELETION}/{body['deletionId']}")
         self.assertEqual(deletion["status"], "RolledBack")
         self.assertTrue(deletion["final"])
         _, state = call(app, "GET", "/mock/state")
@@ -770,7 +821,7 @@ class PublisherTest(unittest.TestCase):
 
     def test_consultar_una_baja_inexistente_responde_404(self):
         app, _, _, _ = make_app()
-        status, _ = call(app, "GET", f"{DELETE}/no-existe")
+        status, _ = call(app, "GET", f"{DELETION}/no-existe")
         self.assertEqual(status, 404)
 
     def test_ya_no_existe_el_delete_provisorio(self):
@@ -918,6 +969,11 @@ class HttpTest(unittest.TestCase):
 
     def test_un_content_length_invalido_responde_400(self):
         status = self.send("POST", "/v1/subscriptions", {"Authorization": "Bearer secreto", "Content-Length": "-1"})
+        self.assertEqual(status, 400)
+
+    def test_acepta_delete_con_body(self):
+        body = b"{}"
+        status = self.send("DELETE", "/v1/kuadrant/manifests", {"Authorization": "Bearer secreto", "Content-Length": str(len(body))}, body)
         self.assertEqual(status, 400)
 
     def test_acepta_put(self):
@@ -1177,7 +1233,7 @@ class PublishedObjectsTest(unittest.TestCase):
         app, k8s, _, scheduler = make_app()
         call(app, "POST", PUBLISH, publish_body(window="1m", hitsPerWindow=100))
         scheduler.run_all()
-        call(app, "POST", DELETE, delete_body())
+        call(app, "DELETE", DELETE, delete_body())
         scheduler.run_all()
         for path in (ROUTE, AUTH, RLP):
             self.assertNotIn(path, k8s.objects)
