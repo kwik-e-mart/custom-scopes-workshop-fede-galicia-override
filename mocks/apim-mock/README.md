@@ -43,10 +43,10 @@ además la credencial que lee Authorino en `credentialSecrets.gatewayNamespace` 
 
 | Endpoint | Comportamiento |
 |---|---|
-| `POST /v1/kuadrant/manifests/publish` | Valida la firma, `sigla` y `project` incluidos (`400 {status: error, message}`); `200 commited` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
+| `POST /v1/kuadrant/manifests/publish` | Valida la firma: `producerSigla` (o `sigla`), `project` y `origen`; `user` (o `legajo`) opcional (`400 {status: error, message}`); `200 commited` con `apiId` y `hostname`; después avisa `success` al `callbackUrl` (o `failed` si el repo empieza con `fail-`). |
 | `PUT /v1/kuadrant/manifests/modify` | Mismo body que el publish, sobre una API ya registrada: `200 commited` y después avisa `success` al `callbackUrl` nuevo. Si el cluster rechaza los manifiestos o el repo empieza con `fail-`, avisa `failed` (`Modify RolledBack`) y vuelve a la versión anterior. Sin publicar → `404`; sin cambios en los manifiestos, o publicación, modificación o baja en curso → `400`. |
-| `POST /v1/kuadrant/manifests/delete` | Busca la API por `name`, `namespace`, `tenant` y `environment`: `202 Commited` con el `deletionId`; a los `callbackDelaySeconds` borra los objetos y avisa `success` (`Deleted`). Con legajo `l9990666` avisa `failed` (`RolledBack`) y deja la API. Sin manifests → `404`; publicación o baja en curso → `400`. |
-| `GET /v1/kuadrant/manifests/delete/{deletionId}` | Estado de la baja o `404`. |
+| `DELETE /v1/kuadrant/manifests` | Pide `producerSigla` (o `sigla`) y `project` (o `proyecto`). Busca la API por `name`, `namespace`, `tenant` y `environment`: `202 Commited` con el `deletionId`; a los `callbackDelaySeconds` borra los objetos y avisa `success` (`Deleted`). Con `user` (o `legajo`) `l9990666` avisa `failed` (`RolledBack`) y deja la API. Sin manifests → `404`; publicación o baja en curso → `400`. |
+| `GET /v1/kuadrant/manifests/deletions/{deletionId}` | Estado de la baja o `404`. |
 
 El `apiId` es `apim-<serviceId>`, con el service sacado del `callbackUrl`; sin callback de service,
 `<namespace>-<name>-<tenant>-1`. Publicar un `apiId` que ya existe → `400 ya se encontraba publicada`; para
