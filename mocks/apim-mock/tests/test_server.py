@@ -457,7 +457,7 @@ class SubscriberTest(unittest.TestCase):
         app, _, _, _ = make_app()
         status, body = call(app, "GET", "/v1/plans")
         self.assertEqual(status, 200)
-        self.assertEqual(body["items"], [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}])
+        self.assertEqual(body["items"], [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}, {"id": "fede_plan", "maxTps": 22}])
 
     def test_operacion_inexistente_responde_404(self):
         app, _, _, _ = make_app()
