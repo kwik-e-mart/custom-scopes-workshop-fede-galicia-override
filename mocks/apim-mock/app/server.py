@@ -13,7 +13,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PLANS = [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}]
+PLANS = [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}, {"id": "fede_plan", "maxTps": 22}]
 PLAN_IDS = [plan["id"] for plan in PLANS]
 ENVIRONMENTS = ["dev", "int", "qas", "prd"]
 LEGAJO_PATTERN = re.compile(r"l[0-9]{7}")
