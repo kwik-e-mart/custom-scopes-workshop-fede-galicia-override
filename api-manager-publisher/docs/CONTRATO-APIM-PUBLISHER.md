@@ -18,7 +18,10 @@ Respuestas: `200` con `status` `commited` / `synced` / `canceled`, o `400` con `
 para validación o fallas del workflow (clone, push).
 
 La firma no declara autenticación: el service manda `Authorization: Bearer` solo si el agente tiene
-`APIM_PUBLISHER_TOKEN`. El body exige `origen`; el service manda `nullplatform`.
+`APIM_PUBLISHER_TOKEN`. El body exige `origen`; el service manda `nullplatform` ahí y en `channel`, y `platform: kuadrant`.
+La sigla viaja como `producerSigla`, el proyecto como `project` y el legajo como `user`, también en la baja
+(`DELETE /v1/kuadrant/manifests`); APIM sigue aceptando `sigla`, `proyecto` y `legajo` como alias.
+En la baja también va `proyecto`, porque la firma lo sigue teniendo en `required`.
 
 `callbackUrl` está en la firma: APIM manda ahí el resultado final (`Synced`, `Registered` o `RolledBack`),
 con el formato del mini doc de avisos (`PATCH https://api.nullplatform.com/service/{service_id}/action/{action_id}`).
@@ -32,7 +35,7 @@ con el formato del mini doc de avisos (`PATCH https://api.nullplatform.com/servi
 | `environment` | Hoy no se publica en `dev`. |
 | `tenant` | `b2b` o `b2c`. **A investigar de dónde sale**; por ahora todo `b2c`. |
 | `cluster` | Nombre del cluster donde vive la API publicada. |
-| `legajo` | El del usuario que publica (`l#######`). |
+| `user` (antes `legajo`) | El del usuario que publica (`l#######`). |
 | `metadata.name` | Nombre de la API = nombre del repo. |
 | `metadata.namespace` | Namespace donde está la app en el cluster. |
 | `metadata.labels.app` | Nombre del repo. |
