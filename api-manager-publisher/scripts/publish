@@ -57,7 +57,7 @@ publish() {
     --arg cluster "$CLUSTER_NAME" \
     --arg sigla "$PUBLISH_SIGLA" \
     --arg project "$PUBLISH_PROJECT" \
-    --arg legajo "$LEGAJO" \
+    --arg user "$LEGAJO" \
     --arg window "$window" \
     --arg hits "$hits" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
@@ -66,7 +66,8 @@ publish() {
     --arg destination "$SCOPE_DOMAIN" \
     --argjson parent_refs "$PARENT_REFS" \
     '{organization: $organization, repository: $repository, tag: $tag, environment: $environment,
-      tenant: $tenant, origen: "nullplatform", sigla: $sigla, project: $project, cluster: $cluster, callbackUrl: $callback, legajo: $legajo,
+      tenant: $tenant, origen: "nullplatform", channel: "nullplatform", platform: "kuadrant", producerSigla: $sigla, project: $project,
+      cluster: $cluster, callbackUrl: $callback, user: $user,
       metadata: {name: $repository, namespace: $namespace, labels: {app: $repository}, parentRefs: $parent_refs,
                  backend: ($backend + {destinationFqdn: $destination})}}
      + (if $window == "" then {} else {window: $window, hitsPerWindow: ($hits | tonumber)} end)')

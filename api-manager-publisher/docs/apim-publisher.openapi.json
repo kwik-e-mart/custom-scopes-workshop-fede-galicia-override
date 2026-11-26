@@ -7,8 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://api-publisher-kuad-kuadrantorqs-dev.apps.paas-dev.bancogalicia.com.ar:34443",
-      "description": "Generated server url"
+      "url": "/"
     }
   ],
   "paths": {
@@ -167,50 +166,6 @@
         }
       }
     },
-    "/v1/kuadrant/manifests/delete": {
-      "post": {
-        "tags": [
-          "Publicación de manifests"
-        ],
-        "summary": "Elimina los manifests publicados de una API",
-        "description": "Elimina `httproute.yaml`, `ratelimitpolicy.yaml` (tambien `ratelimit.yaml`), `authpolicy.yaml` y `apiproduct.yaml` de `clusters/{cluster}/apis/{namespace}/{name}--{tenant}` en el repo de manifiestos del ambiente y hace commit/push (`Commited`). La confirmación en Argo y la baja en el API register continúan en segundo plano; el estado se consulta con `GET /v1/kuadrant/manifests/delete/{deletionId}`.\n\nEstados: `Commited` y `Synced` (en progreso), `Deleted` (final OK) y `RolledBack` (final con error: se restauran los manifiestos previos). Al dar de baja la API en el API register se agrega el commit `Delete Registered`, que cierra la baja en Git (el commit `Deleted` solo se hace si la baja en el API register está deshabilitada). Si el request incluye `callbackUrl` (o si está configurada `PLATFORM_URL`), se envía el mismo callback que en la publicación: mensajes informativos en `Commited` y `Synced`, `status` `success` al quedar `Deleted` y `status` `failed` al revertir (`RolledBack`).",
-        "operationId": "deleteManifests",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteManifestRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Manifiestos eliminados del repositorio; la baja sigue en curso.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManifestDeletionStatus"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Request inválido, publicación/baja en curso o fallo de Git.",
-            "content": {
-              "application/json": {}
-            }
-          },
-          "404": {
-            "description": "La API no tiene manifiestos publicados.",
-            "content": {
-              "application/json": {}
-            }
-          }
-        }
-      }
-    },
     "/v1/kuadrant/reconciliations": {
       "get": {
         "tags": [
@@ -289,7 +244,7 @@
         }
       }
     },
-    "/v1/kuadrant/manifests/delete/{deletionId}": {
+    "/v1/kuadrant/manifests/deletions/{deletionId}": {
       "get": {
         "tags": [
           "Publicación de manifests"
@@ -319,6 +274,50 @@
           },
           "404": {
             "description": "No existe una baja con ese identificador en esta instancia.",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/v1/kuadrant/manifests": {
+      "delete": {
+        "tags": [
+          "Publicación de manifests"
+        ],
+        "summary": "Elimina los manifests publicados de una API",
+        "description": "Elimina `httproute.yaml`, `ratelimitpolicy.yaml` (tambien `ratelimit.yaml`), `authpolicy.yaml` y `apiproduct.yaml` de `clusters/{cluster}/apis/{namespace}/{name}--{tenant}` en el repo de manifiestos del ambiente y hace commit/push (`Commited`). La confirmación en Argo y la baja en el API register continúan en segundo plano; el estado se consulta con `GET /v1/kuadrant/manifests/deletions/{deletionId}`.\n\nEstados: `Commited` y `Synced` (en progreso), `Deleted` (final OK) y `RolledBack` (final con error: se restauran los manifiestos previos). Al dar de baja la API en el API register se agrega el commit `Delete Registered`, que cierra la baja en Git (el commit `Deleted` solo se hace si la baja en el API register está deshabilitada). Si el request incluye `callbackUrl` (o si está configurada `PLATFORM_URL`), se envía el mismo callback que en la publicación: mensajes informativos en `Commited` y `Synced`, `status` `success` al quedar `Deleted` y `status` `failed` al revertir (`RolledBack`).",
+        "operationId": "deleteManifests",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteManifestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Manifiestos eliminados del repositorio; la baja sigue en curso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestDeletionStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request inválido, publicación/baja en curso o fallo de Git.",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "404": {
+            "description": "La API no tiene manifiestos publicados.",
             "content": {
               "application/json": {}
             }
@@ -570,6 +569,138 @@
           }
         }
       },
+      "ReconciliationEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "apiId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "deletionId": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "PublicationTrace": {
+        "type": "object",
+        "properties": {
+          "publicationId": {
+            "type": "string"
+          },
+          "apiId": {
+            "type": "string"
+          },
+          "apiName": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "tenant": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "currentState": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StateEvent"
+            }
+          },
+          "pushAttempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushAttempt"
+            }
+          }
+        }
+      },
+      "PushAttempt": {
+        "type": "object",
+        "properties": {
+          "push": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "result": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "StateEvent": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
       "ManifestDeletionStatus": {
         "type": "object",
         "properties": {
@@ -734,138 +865,6 @@
             "description": "Canal que se envía al API register como `service.channel`.",
             "nullable": true,
             "example": "nullplatform"
-          }
-        }
-      },
-      "ReconciliationEntry": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "timestamp": {
-            "type": "string"
-          },
-          "environment": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "stage": {
-            "type": "string"
-          },
-          "apiId": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "commit": {
-            "type": "string"
-          },
-          "deletionId": {
-            "type": "string"
-          },
-          "attempt": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "maxAttempts": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "outcome": {
-            "type": "string"
-          },
-          "detail": {
-            "type": "string"
-          }
-        }
-      },
-      "PublicationTrace": {
-        "type": "object",
-        "properties": {
-          "publicationId": {
-            "type": "string"
-          },
-          "apiId": {
-            "type": "string"
-          },
-          "apiName": {
-            "type": "string"
-          },
-          "namespace": {
-            "type": "string"
-          },
-          "tenant": {
-            "type": "string"
-          },
-          "environment": {
-            "type": "string"
-          },
-          "cluster": {
-            "type": "string"
-          },
-          "startedAt": {
-            "type": "string"
-          },
-          "currentState": {
-            "type": "string"
-          },
-          "updatedAt": {
-            "type": "string"
-          },
-          "states": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StateEvent"
-            }
-          },
-          "pushAttempts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PushAttempt"
-            }
-          }
-        }
-      },
-      "PushAttempt": {
-        "type": "object",
-        "properties": {
-          "push": {
-            "type": "string"
-          },
-          "attempt": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "maxAttempts": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "result": {
-            "type": "string"
-          },
-          "timestamp": {
-            "type": "string"
-          },
-          "detail": {
-            "type": "string"
-          }
-        }
-      },
-      "StateEvent": {
-        "type": "object",
-        "properties": {
-          "state": {
-            "type": "string"
-          },
-          "timestamp": {
-            "type": "string"
-          },
-          "detail": {
-            "type": "string"
           }
         }
       }

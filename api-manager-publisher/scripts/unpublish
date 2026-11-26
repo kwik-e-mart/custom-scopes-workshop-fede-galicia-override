@@ -32,13 +32,13 @@ unpublish() {
     --arg cluster "$CLUSTER_NAME" \
     --arg name "$SOURCE_REPOSITORY" \
     --arg namespace "$PROVIDER_NAMESPACE" \
-    --arg legajo "$LEGAJO" \
+    --arg user "$LEGAJO" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
-    '{sigla: $sigla, proyecto: $project, environment: $environment, tenant: $tenant, cluster: $cluster,
-      name: $name, namespace: $namespace, legajo: $legajo, origen: "nullplatform", callbackUrl: $callback}')
+    '{producerSigla: $sigla, project: $project, proyecto: $project, environment: $environment, tenant: $tenant, cluster: $cluster,
+      name: $name, namespace: $namespace, user: $user, channel: "nullplatform", platform: "kuadrant", callbackUrl: $callback}')
 
   log info "publisher: pidiendo la baja de $SOURCE_REPOSITORY en $PUBLISH_ENVIRONMENT."
-  apim_request POST /v1/kuadrant/manifests/delete "$body" ""
+  apim_request DELETE /v1/kuadrant/manifests "$body" ""
 
   case "$APIM_HTTP_CODE" in
     202)

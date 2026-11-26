@@ -25,10 +25,10 @@ deleting() {
   run_step
   [ "$status" -eq 0 ]
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
-  grep -q '^POST https://publisher.test/v1/kuadrant/manifests/delete idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
+  grep -q '^DELETE https://publisher.test/v1/kuadrant/manifests idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"sigla":"zosc","proyecto":"zosc-pagos","environment":"qas","tenant":"b2c","cluster":"gal-kuadrant-poc",
- "name":"test-kuadrant","namespace":"payments","legajo":"l0510541","origen":"nullplatform",
+{"producerSigla":"zosc","project":"zosc-pagos","proyecto":"zosc-pagos","environment":"qas","tenant":"b2c","cluster":"gal-kuadrant-poc",
+ "name":"test-kuadrant","namespace":"payments","user":"l0510541","channel":"nullplatform","platform":"kuadrant",
  "callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-3"}
 JSON
 )" ]
@@ -74,7 +74,7 @@ JSON
   set_user_email l1015317@bancogalicia.com.ar
   queue_response 202 "$(deleting)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
 }
 
 @test "LEGAJO_OVERRIDE reemplaza el legajo del mail en la baja" {
@@ -82,14 +82,14 @@ JSON
   export LEGAJO_OVERRIDE=l0000002
   queue_response 202 "$(deleting)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
 }
 
 @test "un legajo que empieza con a tambien es valido en la baja" {
   set_user_email a1015317@bancogalicia.com.ar
   queue_response 202 "$(deleting)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "a1015317" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "a1015317" ]
 }
 
 @test "un mail que no es de legajo falla sin llamar a APIM" {
