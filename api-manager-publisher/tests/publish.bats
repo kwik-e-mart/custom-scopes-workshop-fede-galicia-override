@@ -40,8 +40,8 @@ as_update() {
   [[ "$output" == *NEXT_STEP_RAN* ]] || false
   grep -q '^POST https://publisher.test/v1/kuadrant/manifests/publish idem= auth=Bearer pub-tok ' "$CURL_CALLS_LOG"
   [ "$(jq -cS . "$CURL_BODIES_DIR/0.json")" = "$(jq -cS . <<'JSON'
-{"organization":"zosc-zosconnect","repository":"test-kuadrant","tag":"0.2.5","environment":"qas","tenant":"b2c","origen":"nullplatform","sigla":"zosc","project":"zosc-pagos",
- "cluster":"gal-kuadrant-poc","legajo":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
+{"organization":"zosc-zosconnect","repository":"test-kuadrant","tag":"0.2.5","environment":"qas","tenant":"b2c","origen":"nullplatform","channel":"nullplatform","platform":"kuadrant","producerSigla":"zosc","project":"zosc-pagos",
+ "cluster":"gal-kuadrant-poc","user":"l0510541","callbackUrl":"https://api.nullplatform.com/service/svc-1/action/act-1",
  "metadata":{"name":"test-kuadrant","namespace":"payments","labels":{"app":"test-kuadrant"},
    "parentRefs":[{"group":"gateway.networking.k8s.io","kind":"Gateway","name":"s2s-ingress","namespace":"gateways"}],
    "backend":{"kind":"Service","name":"s2s-ingress-istio","namespace":"gateways","port":443,
@@ -144,14 +144,14 @@ JSON
   set_user_email l1015317@bancogalicia.com.ar
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
 }
 
 @test "un legajo que empieza con a tambien es valido" {
   set_user_email A1015317@bancogalicia.com.ar
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "a1015317" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "a1015317" ]
 }
 
 @test "un legajo con otra letra falla sin llamar a APIM" {
@@ -165,7 +165,7 @@ JSON
   set_user_email L1015317@BancoGalicia.com.ar
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "l1015317" ]
 }
 
 @test "un mail que no es de legajo falla sin llamar a APIM y nombra LEGAJO_OVERRIDE" {
@@ -188,7 +188,7 @@ JSON
   export LEGAJO_OVERRIDE=l0000002
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .legajo "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
+  [ "$(jq -r .user "$CURL_BODIES_DIR/0.json")" = "l0000002" ]
 }
 
 @test "un LEGAJO_OVERRIDE con otro formato falla sin llamar a APIM" {
@@ -334,7 +334,7 @@ JSON
   set_request '{}' '{"scope":"main"}' qas PLCL-PlatformOps
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "PLCL" ]
+  [ "$(jq -r .producerSigla "$CURL_BODIES_DIR/0.json")" = "PLCL" ]
   [ "$(jq -r .project "$CURL_BODIES_DIR/0.json")" = "PLCL-PlatformOps" ]
 }
 
@@ -351,7 +351,7 @@ JSON
   export APIM_SIGLA=arqc APIM_PROJECT=arqc-kuadrant
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
+  [ "$(jq -r .producerSigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
   [ "$(jq -r .project "$CURL_BODIES_DIR/0.json")" = "arqc-kuadrant" ]
 }
 
@@ -361,7 +361,7 @@ JSON
   queue_response 200 "$(pushed)"
   run_step
   [ "$status" -eq 0 ]
-  [ "$(jq -r .sigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
+  [ "$(jq -r .producerSigla "$CURL_BODIES_DIR/0.json")" = "arqc" ]
 }
 
 @test "acepta la url del repo con .git" {
@@ -397,7 +397,7 @@ JSON
   set_request '{"scope":"main","ref_type":"branch","ref":"main","legajo":"l0000001"}' '{"ref_type":"commit","ref":"a1b2c3d"}' qas
   queue_response 200 "$(pushed)"
   run_step
-  [ "$(jq -c '{branch, tag, commit, legajo}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"0.2.5","commit":null,"legajo":"l0510541"}' ]
+  [ "$(jq -c '{branch, tag, commit, user}' "$CURL_BODIES_DIR/0.json")" = '{"branch":null,"tag":"0.2.5","commit":null,"user":"l0510541"}' ]
 }
 
 @test "el parentRefs es el gateway de ingreso que usa el s2s" {
