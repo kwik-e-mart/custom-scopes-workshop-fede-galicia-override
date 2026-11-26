@@ -13,7 +13,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PLANS = [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}]
+PLANS = [{"id": "bronze", "maxTps": 5}, {"id": "gold", "maxTps": 20}, {"id": "no-limits"}, {"id": "fede_plan", "maxTps": 22}]
 PLAN_IDS = [plan["id"] for plan in PLANS]
 ENVIRONMENTS = ["dev", "int", "qas", "prd"]
 LEGAJO_PATTERN = re.compile(r"l[0-9]{7}")
@@ -30,7 +30,7 @@ RITM_UNAVAILABLE = "RITM9990503"
 RITM_ROLLBACK = "RITM9990666"
 LEGAJO_ROLLBACK = "l9990666"
 PLAN_CHANGE_FIELDS = ("planId", "approvalRef", "callbackUrl")
-DELETE_FIELDS = ("sigla", "proyecto", "environment", "tenant", "cluster", "name", "namespace", "legajo")
+DELETE_FIELDS = ("environment", "tenant", "cluster", "name", "namespace")
 FINAL_FAILED_STATES = ("RolledBack", "Failed")
 PUBLIC_OPERATION_FIELDS = ("id", "kind", "state", "target", "error")
 GENERATED_FILES = ["httproute.yaml", "ratelimitpolicy.yaml", "authpolicy.yaml", "apiproduct.yaml"]
@@ -407,9 +407,9 @@ class App:
             return self.publish(body, outbox)
         if path == "/v1/kuadrant/manifests/modify" and method == "PUT":
             return self.modify(body, outbox)
-        if path == "/v1/kuadrant/manifests/delete" and method == "POST":
+        if path == "/v1/kuadrant/manifests" and method == "DELETE":
             return self.delete_publication(body, outbox)
-        match = re.fullmatch(r"/v1/kuadrant/manifests/delete/([^/]+)", path)
+        match = re.fullmatch(r"/v1/kuadrant/manifests/deletions/([^/]+)", path)
         if match and method == "GET":
             deletion = self.state["deletions"].get(match.group(1))
             if not deletion:
@@ -689,15 +689,17 @@ class App:
             return "Falta origen."
         if not is_text(body.get("tenant")):
             return "El tenant de publicación es obligatorio."
-        for field in ("organization", "repository", "environment", "cluster", "sigla", "project"):
+        for field in ("organization", "repository", "environment", "cluster", "project"):
             if not is_text(body.get(field)):
                 return f"El campo {field} es obligatorio."
+        if not is_text(aliased(body, "producerSigla", "sigla")):
+            return "El campo producerSigla (o sigla) es obligatorio."
         if body["environment"] not in ENVIRONMENTS:
             return f"El ambiente {body['environment']} no es válido; tiene que ser uno de {', '.join(ENVIRONMENTS)}."
         ref = publication_ref(body)
         if not is_text(ref):
             return "Se requiere al menos uno de branch, tag o commit."
-        legajo = body.get("legajo")
+        legajo = aliased(body, "user", "legajo")
         if legajo is not None and not (isinstance(legajo, str) and LEGAJO_PATTERN.fullmatch(legajo)):
             return "El legajo tiene que tener el formato l#######."
         window, hits = body.get("window"), body.get("hitsPerWindow")
@@ -880,9 +882,14 @@ class App:
         for field in DELETE_FIELDS:
             if not is_text(body.get(field)):
                 return f"El campo {field} es obligatorio."
+        if not is_text(aliased(body, "producerSigla", "sigla")):
+            return "El campo producerSigla (o sigla) es obligatorio."
+        if not is_text(aliased(body, "project", "proyecto")):
+            return "El campo project (o proyecto) es obligatorio."
         if body["environment"] not in ENVIRONMENTS:
             return f"El ambiente {body['environment']} no es válido; tiene que ser uno de {', '.join(ENVIRONMENTS)}."
-        if not LEGAJO_PATTERN.fullmatch(body["legajo"]):
+        legajo = aliased(body, "user", "legajo")
+        if legajo is not None and not (isinstance(legajo, str) and LEGAJO_PATTERN.fullmatch(legajo)):
             return "El legajo tiene que tener el formato l#######."
         return None
 
@@ -904,7 +911,7 @@ class App:
             "deletionId": str(uuid.uuid4()), "status": "Commited", "message": "Manifiestos eliminados del repositorio; la baja sigue en curso.",
             "apiId": publication["apiId"], "apiName": publication["apiName"], "namespace": publication["namespace"],
             "tenant": publication["tenant"], "environment": publication["environment"], "manifestPath": publication["manifestPath"],
-            "deletedFiles": GENERATED_FILES, "final": False, "legajo": body["legajo"],
+            "deletedFiles": GENERATED_FILES, "final": False, "legajo": aliased(body, "user", "legajo") or "",
             "callbackUrl": callback_url if isinstance(callback_url, str) else "",
         }
         self.state["deletions"][deletion["deletionId"]] = deletion
@@ -934,6 +941,11 @@ class App:
         if publication:
             self.delete_api_objects(publication)
         self.notifier.notify(*notification[:2], **notification[2])
+
+
+def aliased(body, name, legacy):
+    value = body.get(name)
+    return value if value not in (None, "") else body.get(legacy)
 
 
 def public_deletion(deletion):
