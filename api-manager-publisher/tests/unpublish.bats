@@ -36,6 +36,14 @@ JSON
   [ "$(np_last_update_flag --results | jq -c .)" = '{"deletion_id":"del-1"}' ]
 }
 
+@test "la baja manda en name el nombre del repo sin la sigla" {
+  CONTEXT=$(echo "$CONTEXT" | jq -c '.application.repository_url = "https://github.com/zosc-zosconnect/zosc-test-kuadrant"')
+  queue_response 202 "$(deleting)"
+  run_step
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .name "$CURL_BODIES_DIR/0.json")" = "test-kuadrant" ]
+}
+
 @test "la baja sin APIM_PUBLISHER_URL toma el entorno de la notificacion" {
   unset APIM_PUBLISHER_URL
   NP_ACTION_CONTEXT=$(echo "$NP_ACTION_CONTEXT" | jq -c '.notification.service.dimensions.environment = "sandbox"')
