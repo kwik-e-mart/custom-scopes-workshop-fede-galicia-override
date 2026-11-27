@@ -23,7 +23,7 @@ Contrato con APIM: [`docs/CONTRATO-APIM-PUBLISHER.md`](./docs/CONTRATO-APIM-PUBL
   está en `APPLICATION_TYPES_WITH_NO_AUTH_POLICY`, la route queda abierta y la autenticación queda en la aplicación.
 - **Después del 200 del publish** vuelve a colgar la AuthPolicy con el `apiId` que devolvió APIM y borra las del
   scope con otro `apiId`. Para los tipos sin AuthPolicy borra las del scope.
-- **Borrar**: pide la baja a APIM (`DELETE /v1/kuadrant/manifests`, con el legajo de quien borra en `user`). Las AuthPolicies
+- **Borrar**: pide la baja a APIM (`DELETE /v1/kuadrant/manifests`, con el legajo de quien borra en `user` y el nombre del repo sin la sigla en `name`). Las AuthPolicies
   quedan: la route sigue cerrada. La acción queda abierta hasta el callback de APIM.
 - **Linkear una app = suscribirla.** El link pide el ticket aprobado y el plan, sin validar su formato, y lo pide al API Subscriber
   con el cliente de `scripts/subscriber_lib` y el callback del link. Editar el link cambia el plan

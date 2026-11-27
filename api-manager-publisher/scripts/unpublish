@@ -30,7 +30,7 @@ unpublish() {
     --arg environment "$PUBLISH_ENVIRONMENT" \
     --arg tenant "$PUBLISH_TENANT" \
     --arg cluster "$CLUSTER_NAME" \
-    --arg name "$SOURCE_REPOSITORY" \
+    --arg name "${SOURCE_REPOSITORY#"$PUBLISH_SIGLA"-}" \
     --arg namespace "$PROVIDER_NAMESPACE" \
     --arg user "$LEGAJO" \
     --arg callback "$(callback_url "$service_id" "$action_id")" \
